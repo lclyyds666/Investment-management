@@ -28,6 +28,12 @@
         <el-col :span="6"><div class="m-box"><div class="m-label">审批中合同</div><div class="m-val">{{ result.metrics.pending_contracts }}</div></div></el-col>
       </el-row>
 
+      <div class="ai-engine">
+        <el-tag :type="result.engine === 'deepseek' ? 'success' : 'info'" size="small" effect="dark">
+          {{ result.engine === 'deepseek' ? 'DeepSeek 大模型' : '内置规则引擎' }}
+        </el-tag>
+      </div>
+
       <div class="ai-cols">
         <div class="ai-col">
           <div class="col-title"><el-icon><WarningFilled /></el-icon> 业务风险预警</div>
@@ -47,7 +53,9 @@
           </div>
         </div>
       </div>
-      <div class="ai-foot">※ 以上为 AI 智能体基于当前平台数据的模拟分析结果，仅供经营决策参考。</div>
+      <div class="ai-foot">
+        ※ 以上由 AI 智能体基于平台真实经营/财务/审批数据实时分析生成，仅供经营决策参考。
+      </div>
     </div>
   </el-card>
 </template>
@@ -68,10 +76,10 @@ async function diagnose() {
   loading.value = true
   result.value = null
   try {
-    // 模拟 AI 推理耗时，增强"分析中"体验
-    const [res] = await Promise.all([aiDiagnose(), new Promise((r) => setTimeout(r, 1200))])
+    // 至少展示 800ms「分析中」动画，避免快速返回时闪烁
+    const [res] = await Promise.all([aiDiagnose(), new Promise((r) => setTimeout(r, 800))])
     result.value = res
-    ElMessage.success('AI 诊断完成')
+    ElMessage.success(res?.engine === 'deepseek' ? 'AI 诊断完成（DeepSeek）' : 'AI 诊断完成')
   } finally {
     loading.value = false
   }
@@ -94,6 +102,7 @@ async function diagnose() {
 .ai-summary { margin-bottom: 14px; }
 .summary-text { font-size: 13px; line-height: 1.7; }
 .ai-metrics { margin-bottom: 8px; }
+.ai-engine { margin: 6px 0 2px; }
 .m-box { background: rgba(28,155,230,0.08); border: 1px solid rgba(96,150,210,0.16); border-radius: 8px; padding: 10px 12px; text-align: center; }
 .m-label { font-size: 12px; color: #7f9ec6; }
 .m-val { margin-top: 4px; font-size: 20px; font-weight: 700; color: #dcecff; }

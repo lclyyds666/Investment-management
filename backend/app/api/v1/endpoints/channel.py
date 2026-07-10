@@ -12,6 +12,7 @@ from app.schemas.channel import (
     ChannelCreate, ChannelDataIn, ChannelDataOut, ChannelOut, ChannelUpdate,
 )
 from app.schemas.common import Response
+from app.services.channel_etl import sync_channel_to_operation
 
 router = APIRouter()
 
@@ -80,7 +81,8 @@ def import_channel_data(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """导入外部导出的表格数据（列 + 行），覆盖式保存，导入后前端可进入编辑模式。"""
+    """导入外部导出的表格数据（列 + 行 + 列映射），覆盖式保存；若配置了映射，
+    则按映射把数据汇入经营数据表（biz_operation_data），联动首页与大屏图表。"""
     ch = db.get(Channel, cid)
     if not ch:
         raise HTTPException(status_code=404, detail="渠道不存在")
@@ -90,6 +92,14 @@ def import_channel_data(
         db.add(data)
     data.columns = payload.columns
     data.rows = payload.rows
+    mapping = payload.mapping.model_dump() if payload.mapping else None
+    data.mapping = mapping
     db.commit()
     db.refresh(data)
-    return Response.ok(ChannelDataOut.model_validate(data))
+
+    # 按映射汇入经营表（覆盖式、幂等）；无映射时返回未同步说明
+    sync = sync_channel_to_operation(db, ch, data.columns or [], data.rows or [], mapping)
+
+    out = ChannelDataOut.model_validate(data)
+    out.sync = sync
+    return Response.ok(out)

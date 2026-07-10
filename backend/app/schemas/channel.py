@@ -43,9 +43,32 @@ class ChannelOut(ChannelBase):
         return CHANNEL_CATEGORY_LABELS.get(self.category, self.category)
 
 
+class ChannelMapping(BaseModel):
+    """渠道表格列 → 经营指标字段映射。business_line 为空时后端用渠道名兜底。"""
+
+    date_col: str = ""       # 日期列（支持 2026-06 / 2026-06-01 / 2026年6月 等）
+    revenue_col: str = ""    # 营收/交易金额列
+    cost_col: str = ""       # 成本列（可选）
+    order_col: str = ""      # 订单数列（可选）
+    business_line: str = ""  # 汇入经营表时使用的业务条线（建议每渠道唯一）
+
+
 class ChannelDataIn(BaseModel):
     columns: list[str] = []
     rows: list[list] = []
+    mapping: Optional[ChannelMapping] = None
+
+
+class SyncResult(BaseModel):
+    """渠道数据汇入经营表的结果摘要。"""
+
+    synced: bool = False
+    reason: str = ""
+    business_line: str = ""
+    months: int = 0
+    rows_used: int = 0
+    rows_skipped: int = 0
+    total_revenue: float = 0.0
 
 
 class ChannelDataOut(BaseModel):
@@ -54,3 +77,5 @@ class ChannelDataOut(BaseModel):
     channel_id: int
     columns: Optional[list] = None
     rows: Optional[list] = None
+    mapping: Optional[ChannelMapping] = None
+    sync: Optional[SyncResult] = None

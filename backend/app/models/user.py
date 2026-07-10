@@ -1,9 +1,14 @@
 """用户模型（含组织架构与电子签名资产）。"""
 from sqlalchemy import Boolean, Enum as SAEnum, String, Text
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import Role
 from app.db.base import Base
+
+# 电子签名以图片 data-URI 存储，真实扫描签名可能超过 TEXT 的 64KB 上限，
+# 故在 MySQL 上使用 MEDIUMTEXT（约 16MB），其他数据库回退 TEXT。
+SignatureText = Text().with_variant(MEDIUMTEXT, "mysql")
 
 
 class User(Base):
@@ -24,6 +29,6 @@ class User(Base):
     )
     department: Mapped[str] = mapped_column(String(64), default="", comment="所属部门")
     # 纸质签名图片（Mock：存 data-URI 或附件路径），审批时作为电子签章附加
-    signature: Mapped[str | None] = mapped_column(Text, nullable=True, comment="电子签名(图片data-uri或路径)")
+    signature: Mapped[str | None] = mapped_column(SignatureText, nullable=True, comment="电子签名(图片data-uri或路径)")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否超级管理员")

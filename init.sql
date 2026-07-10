@@ -38,7 +38,7 @@ CREATE TABLE `sys_user` (
   `role`            VARCHAR(32)  NOT NULL DEFAULT 'business_handler'
       COMMENT '7级角色: business_handler/business_reviewer/risk_auditor/finance_handler/finance_reviewer/scm_director/invest_director',
   `department`      VARCHAR(64)  NOT NULL DEFAULT ''     COMMENT '所属部门',
-  `signature`       TEXT                                 COMMENT '电子签名(图片data-uri或路径)',
+  `signature`       MEDIUMTEXT                           COMMENT '电子签名(图片data-uri或路径)',
   `is_active`       TINYINT(1)   NOT NULL DEFAULT 1      COMMENT '是否启用',
   `is_superuser`    TINYINT(1)   NOT NULL DEFAULT 0      COMMENT '是否超级管理员',
   `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -87,7 +87,7 @@ CREATE TABLE `biz_approval` (
   `approver_role`      VARCHAR(32) NOT NULL DEFAULT ''     COMMENT '审批人当时角色',
   `action`             VARCHAR(16) NOT NULL                COMMENT '动作: approve=通过 / reject=驳回',
   `comment`            TEXT                                COMMENT '审批意见/驳回原因',
-  `signature_snapshot` TEXT                                COMMENT '电子签名快照',
+  `signature_snapshot` MEDIUMTEXT                          COMMENT '电子签名快照',
   `created_at`         DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at`         DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -200,6 +200,7 @@ CREATE TABLE IF NOT EXISTS `biz_channel_data` (
   `channel_id` INT NOT NULL                COMMENT '关联渠道',
   `columns`    JSON                         COMMENT '表头列',
   `rows`       JSON                         COMMENT '数据行(二维数组)',
+  `mapping`    JSON                         COMMENT '列映射{date_col,revenue_col,cost_col,order_col,business_line}',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -222,6 +223,51 @@ CREATE TABLE IF NOT EXISTS `biz_invoice` (
   `updated_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='发票';
+
+-- -------------------------------------------------------------
+-- 财务经营指标（平台对账单回款）+ 投入成本配置
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `biz_financial_metrics` (
+  `id`             INT           NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `platform`       VARCHAR(16)   NOT NULL                COMMENT '平台 douyin/meituan/ctrip',
+  `period`         VARCHAR(32)   NOT NULL                COMMENT '账期，如 2026-06-24~06-30',
+  `realized_scale` DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '已实现业务规模(出版应得到账金额)',
+  `gross_income`   DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '已实现业务毛收入(应扣出版预付/回款)',
+  `gmv`            DECIMAL(18,2)          DEFAULT NULL    COMMENT '订单实收GMV(可选)',
+  `order_count`    INT           NOT NULL DEFAULT 0      COMMENT '订单数',
+  `room_nights`    INT           NOT NULL DEFAULT 0      COMMENT '间夜',
+  `created_at`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_platform_period` (`platform`, `period`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台对账单财务指标';
+
+CREATE TABLE IF NOT EXISTS `biz_finance_config` (
+  `id`                  INT           NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `total_invested_cost` DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '投入成本(手工录入)',
+  `available_funds`     DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '可用资金(手工录入)',
+  `created_at`          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='财务投入成本配置';
+
+-- 供管公司项目经营指标（年度项目投入/回款/毛利）
+CREATE TABLE IF NOT EXISTS `biz_project_metrics` (
+  `id`              INT           NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `seq`             INT           NOT NULL DEFAULT 0      COMMENT '序号',
+  `project_name`    VARCHAR(200)  NOT NULL                COMMENT '项目名称',
+  `platforms`       VARCHAR(200)  NOT NULL DEFAULT ''     COMMENT '平台(标签)',
+  `invested_amount` DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '投入金额(元)=现存业务规模/已投入本金',
+  `realized_scale`  DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '回款小计(元)=已实现业务规模',
+  `gross_profit`    DECIMAL(18,2) NOT NULL DEFAULT 0.00   COMMENT '实现毛利(元)=已实现业务毛收入',
+  `profit_rate`     DECIMAL(9,4)           DEFAULT NULL   COMMENT '收益率(小数)',
+  `pay_date`        DATE                   DEFAULT NULL   COMMENT '付款日期',
+  `term_months`     VARCHAR(16)   NOT NULL DEFAULT ''     COMMENT '合同期限(月)',
+  `created_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_project_paydate` (`project_name`, `pay_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供管公司项目经营指标';
 
 -- 完成
 SELECT '数据库初始化完成！账号: admin/op/review/risk/fin/finr/scm/inv，密码均为 123456' AS message;

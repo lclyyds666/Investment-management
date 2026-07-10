@@ -4,10 +4,14 @@
 保留全部审批历史，构成详情页流转时间轴与打印审批单的签章来源。
 """
 from sqlalchemy import Enum as SAEnum, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ApprovalAction
 from app.db.base import Base
+
+# 与用户签名同宽，容纳真实扫描签名图快照
+SignatureText = Text().with_variant(MEDIUMTEXT, "mysql")
 
 
 class Approval(Base):
@@ -33,7 +37,7 @@ class Approval(Base):
     comment: Mapped[str] = mapped_column(Text, default="", comment="审批意见/驳回原因")
     # 审批时附加的电子签名快照（取自审批人 signature，实现"自动电子签章"）
     signature_snapshot: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="电子签名快照"
+        SignatureText, nullable=True, comment="电子签名快照"
     )
 
     contract = relationship("Contract", back_populates="approvals")

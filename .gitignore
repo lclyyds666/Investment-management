@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 真实业务数据文件（对账单 / 项目统计表等）——含敏感财务数据，勿上传 GitHub
+# 换电脑时请通过 U 盘 / 私有网盘单独拷贝，不要提交到仓库
+*.xlsx
+*.xls
+*.csv

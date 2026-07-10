@@ -92,7 +92,7 @@ import { useUserStore } from '@/store/user'
 import BaseChart from '@/components/BaseChart.vue'
 import CountTo from '@/components/screen/CountTo.vue'
 import ScreenMap from '@/components/screen/ScreenMap.vue'
-import { getDashboard, aiDiagnose } from '@/api/operation'
+import { getDashboard, aiDiagnose, getFinancial } from '@/api/operation'
 import { listContracts } from '@/api/contract'
 
 const props = defineProps({ fullscreen: { type: Boolean, default: false } })
@@ -121,6 +121,7 @@ function tickClock() {
 
 /* 数据 */
 const dash = ref({ kpi: {}, trend: [] })
+const fin = ref(null)
 const pendingCount = ref(0)
 const ai = ref(null)
 const provinceData = [
@@ -141,19 +142,23 @@ function onProvince(name) { region.value = name; mode.value = 'region'; flipKey.
 function resetNational() { mode.value = 'national'; flipKey.value++ }
 
 const metricCards = computed(() => {
-  const k = dash.value.kpi || {}
-  let revenue = Number(k.total_revenue || 0)
-  let profit = Number(k.total_profit || 0)
-  let orders = Number(k.total_orders || 0)
+  // 省份下钻视图：沿用地图联动的示意数据
   if (mode.value === 'region') {
     const p = provinceData.find((d) => d.name === region.value)
     const v = p ? p.value : 800000
-    revenue = v; profit = Math.round(v * 0.3); orders = Math.round(v / 7250)
+    return [
+      { label: '区域营收(元)', value: v, color: '#2de1c2', ico: '💰', prefix: '¥' },
+      { label: '区域利润(元)', value: Math.round(v * 0.3), color: '#39c5ff', ico: '📈', prefix: '¥' },
+      { label: '订单总数', value: Math.round(v / 7250), color: '#ffd34e', ico: '📦' },
+      { label: '待审批合同', value: pendingCount.value, color: '#ff7ac6', ico: '📝' }
+    ]
   }
+  // 全国视图：展示真实对账单财务指标（与经营页同源，实时同步）
+  const f = fin.value || {}
   return [
-    { label: '总营收(元)', value: revenue, color: '#2de1c2', ico: '💰', prefix: '¥' },
-    { label: '总利润(元)', value: profit, color: '#39c5ff', ico: '📈', prefix: '¥' },
-    { label: '订单总数', value: orders, color: '#ffd34e', ico: '📦' },
+    { label: '已实现业务规模', value: Number(f.total_realized_scale || 0), color: '#2de1c2', ico: '📊', prefix: '¥' },
+    { label: '已实现毛收入(回款)', value: Number(f.total_gross_income || 0), color: '#39c5ff', ico: '💰', prefix: '¥' },
+    { label: '可用资金', value: Number(f.available_funds || 0), color: '#ffd34e', ico: '💵', prefix: '¥' },
     { label: '待审批合同', value: pendingCount.value, color: '#ff7ac6', ico: '📝' }
   ]
 })
@@ -178,18 +183,15 @@ const areaOption = computed(() => {
   }
 })
 
-/* 审批跑马灯 */
+/* 审批跑马灯：实时读取数据库中处于审批中的真实合同 */
 const pauseMarquee = ref(false)
-const mockFlow = [
-  { no: 'HT-2026-002', title: '数字出版平台技术服务合同', role: '业务复核' },
-  { no: 'HT-2026-014', title: '2026秋季教材物流配送', role: '风控审核' },
-  { no: 'HT-2026-018', title: '景区文创产品采购', role: '财务经办' },
-  { no: 'HT-2026-021', title: '酒店渠道数据服务', role: '财务复核' },
-  { no: 'HT-2026-025', title: '仓储智能化改造项目', role: '供管公司负责人' },
-  { no: 'HT-2026-030', title: '数字阅读平台合作', role: '投资公司负责人' }
-]
-const marquee = ref([...mockFlow])
-const marqueeLoop = computed(() => [...marquee.value, ...marquee.value])
+const marquee = ref([])
+const marqueeLoop = computed(() => {
+  const base = marquee.value.length
+    ? marquee.value
+    : [{ no: '—', title: '当前暂无审批中的合同', role: '待提交' }]
+  return [...base, ...base] // 复制一份用于无缝滚动
+})
 
 /* AI 雷达 + 打字机 */
 const radarOption = computed(() => {
@@ -249,20 +251,36 @@ function startTyper() {
 }
 function stopTyper() { if (typerTimer) { clearTimeout(typerTimer); typerTimer = null } }
 
-onMounted(async () => {
-  tickClock(); clockTimer = setInterval(tickClock, 1000)
+/* 实时数据加载（大屏常驻，定时轮询保持与数据库同步） */
+async function loadDashboard() {
   try { dash.value = await getDashboard(2026) } catch (e) { /* ignore */ }
+}
+async function loadFinancial() {
+  try { fin.value = await getFinancial() } catch (e) { /* ignore */ }
+}
+async function loadContracts() {
   try {
     const list = await listContracts()
-    pendingCount.value = list.filter((c) => c.status === 'pending').length
-    const real = list.filter((c) => c.status === 'pending')
-      .map((c) => ({ no: c.contract_no, title: c.title, role: c.current_role_label || '审批中' }))
-    marquee.value = [...real, ...mockFlow]
+    const pending = list.filter((c) => c.status === 'pending')
+    pendingCount.value = pending.length
+    marquee.value = pending.map((c) => ({
+      no: c.contract_no, title: c.title, role: c.current_role_label || '审批中'
+    }))
   } catch (e) { /* ignore */ }
+}
+
+let pollTimer = null
+onMounted(async () => {
+  tickClock(); clockTimer = setInterval(tickClock, 1000)
+  await loadDashboard()
+  await loadFinancial()
+  await loadContracts()
   try { ai.value = await aiDiagnose(2026) } catch (e) { /* ignore */ }
   startTyper()
+  // 经营/财务数据与审批流每 20s 轮询刷新（AI 诊断成本较高，仅首屏加载一次）
+  pollTimer = setInterval(() => { loadDashboard(); loadFinancial(); loadContracts() }, 20000)
 })
-onBeforeUnmount(() => { clearInterval(clockTimer); stopTyper() })
+onBeforeUnmount(() => { clearInterval(clockTimer); clearInterval(pollTimer); stopTyper() })
 </script>
 
 <style scoped lang="scss">

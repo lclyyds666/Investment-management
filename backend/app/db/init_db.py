@@ -18,8 +18,10 @@ from app.models.approval import Approval  # noqa: F401
 from app.models.channel import Channel, ChannelData
 from app.models.contract import Contract  # noqa: F401
 from app.models.customer import Customer
+from app.models.financial import FinanceConfig, FinancialMetrics  # noqa: F401
 from app.models.invoice import Invoice
 from app.models.operation import OperationData
+from app.models.project import ProjectMetrics  # noqa: F401
 from app.models.user import User
 
 
@@ -120,6 +122,43 @@ def seed_channels(db: Session) -> None:
     db.commit()
 
 
+def seed_channel_data(db: Session) -> None:
+    """为示例渠道「携程商旅」写入一份带列映射的回传数据，并汇入经营表，
+    开箱即可在首页/大屏看到"渠道 → 经营看板"的真实联动效果。"""
+    ch = db.scalar(select(Channel).where(Channel.name == "携程商旅"))
+    if not ch:
+        return
+    existing = db.scalar(select(ChannelData).where(ChannelData.channel_id == ch.id))
+    if existing and existing.mapping:
+        return  # 已有真实配置（含映射）则尊重用户数据，不覆盖
+
+    columns = ["日期", "订单数", "核销数", "交易金额(元)", "成本(元)"]
+    rows = [
+        ["2026-01-15", "320", "300", "960000", "610000"],
+        ["2026-02-15", "300", "285", "900000", "575000"],
+        ["2026-03-15", "360", "340", "1080000", "690000"],
+        ["2026-04-15", "390", "370", "1170000", "748000"],
+        ["2026-05-15", "420", "400", "1260000", "806000"],
+        ["2026-06-15", "450", "430", "1350000", "864000"],
+    ]
+    mapping = {
+        "date_col": "日期",
+        "revenue_col": "交易金额(元)",
+        "cost_col": "成本(元)",
+        "order_col": "订单数",
+        "business_line": "携程商旅",
+    }
+    if existing:
+        existing.columns, existing.rows, existing.mapping = columns, rows, mapping
+    else:
+        db.add(ChannelData(channel_id=ch.id, columns=columns, rows=rows, mapping=mapping))
+    db.commit()
+
+    # 按映射汇入经营数据表（覆盖式、幂等），联动看板/大屏图表
+    from app.services.channel_etl import sync_channel_to_operation
+    sync_channel_to_operation(db, ch, columns, rows, mapping)
+
+
 def seed_invoices(db: Session) -> None:
     if db.scalar(select(Invoice).limit(1)):
         return
@@ -133,6 +172,14 @@ def seed_invoices(db: Session) -> None:
     db.commit()
 
 
+def seed_finance_config(db: Session) -> None:
+    """确保存在一行投入成本配置（默认 0，由领导在经营页录入真实值）。"""
+    if db.scalar(select(FinanceConfig).limit(1)):
+        return
+    db.add(FinanceConfig(total_invested_cost=Decimal("0")))
+    db.commit()
+
+
 def init() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -141,7 +188,9 @@ def init() -> None:
         seed_operation(db)
         seed_customers(db)
         seed_channels(db)
+        seed_channel_data(db)
         seed_invoices(db)
+        seed_finance_config(db)
         print("数据库初始化完成：已建表并写入种子数据。")
         print("默认账号(密码均为 123456)：")
         print("  admin(超管) / op(业务经办) / review(业务复核) / risk(风控审核)")

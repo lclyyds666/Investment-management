@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = []
 
+    # AI 智能体（DeepSeek，OpenAI 兼容协议）
+    # 未配置 DEEPSEEK_API_KEY 时，AI 诊断自动回退到内置规则引擎，不影响可用性。
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+    AI_TIMEOUT_SECONDS: float = 40.0
+
+    @property
+    def AI_ENABLED(self) -> bool:
+        """是否具备调用真实大模型的条件。"""
+        return bool(self.DEEPSEEK_API_KEY.strip())
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v):

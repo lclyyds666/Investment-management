@@ -34,5 +34,8 @@ class ChannelData(Base):
     )
     columns: Mapped[list | None] = mapped_column(JSON, nullable=True, comment="表头列")
     rows: Mapped[list | None] = mapped_column(JSON, nullable=True, comment="数据行(二维数组)")
+    # 列 → 经营指标字段映射：{date_col, revenue_col, cost_col, order_col, business_line}
+    # 配置后，回传数据将按此映射汇入 biz_operation_data，联动首页/大屏图表。
+    mapping: Mapped[dict | None] = mapped_column(JSON, nullable=True, comment="列映射配置")
 
     channel = relationship("Channel", back_populates="dataset")

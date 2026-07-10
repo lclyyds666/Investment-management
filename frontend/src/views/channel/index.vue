@@ -59,6 +59,44 @@
         title="导入外部平台导出的表格数据后，系统内表格切换为『可修改模式』，可直接编辑单元格并保存。"
       />
 
+      <!-- 列映射：配置后保存时自动汇入经营看板（首页/大屏营收利润联动） -->
+      <el-card v-if="columns.length" shadow="never" class="map-card">
+        <template #header>
+          <span class="map-title">📊 汇入经营看板 · 列映射</span>
+          <span class="map-tip">选择哪几列代表日期/营收/成本/订单，保存后按「业务条线」写入经营数据表</span>
+        </template>
+        <div class="map-grid">
+          <div class="map-item">
+            <label>日期列 <em>*</em></label>
+            <el-select v-model="mapping.date_col" clearable placeholder="选择日期列" size="small">
+              <el-option v-for="c in columns" :key="c" :label="c" :value="c" />
+            </el-select>
+          </div>
+          <div class="map-item">
+            <label>营收列 <em>*</em></label>
+            <el-select v-model="mapping.revenue_col" clearable placeholder="选择营收/金额列" size="small">
+              <el-option v-for="c in columns" :key="c" :label="c" :value="c" />
+            </el-select>
+          </div>
+          <div class="map-item">
+            <label>成本列</label>
+            <el-select v-model="mapping.cost_col" clearable placeholder="可选" size="small">
+              <el-option v-for="c in columns" :key="c" :label="c" :value="c" />
+            </el-select>
+          </div>
+          <div class="map-item">
+            <label>订单数列</label>
+            <el-select v-model="mapping.order_col" clearable placeholder="可选" size="small">
+              <el-option v-for="c in columns" :key="c" :label="c" :value="c" />
+            </el-select>
+          </div>
+          <div class="map-item">
+            <label>业务条线</label>
+            <el-input v-model="mapping.business_line" :placeholder="activeChannel?.name || '默认用渠道名'" size="small" />
+          </div>
+        </div>
+      </el-card>
+
       <el-empty v-if="!columns.length" description="暂无数据，请导入 CSV 或填充示例数据" />
       <el-table v-else :data="rowObjs" border stripe size="small">
         <el-table-column v-for="(col, ci) in columns" :key="ci" :label="col" min-width="140">
@@ -113,6 +151,8 @@ const columns = ref([])
 const rows = ref([]) // 每项 { cells: [...] }
 const editable = ref(false)
 const saving = ref(false)
+const emptyMapping = () => ({ date_col: '', revenue_col: '', cost_col: '', order_col: '', business_line: '' })
+const mapping = ref(emptyMapping())
 
 const rowObjs = computed(() => rows.value)
 
@@ -121,10 +161,12 @@ async function openData(c) {
   columns.value = []
   rows.value = []
   editable.value = false
+  mapping.value = emptyMapping()
   dataVisible.value = true
   const d = await getChannelData(c.id)
   columns.value = d.columns || []
   rows.value = (d.rows || []).map((r) => ({ cells: [...r] }))
+  if (d.mapping) mapping.value = { ...emptyMapping(), ...d.mapping }
   editable.value = columns.value.length > 0
 }
 
@@ -150,8 +192,13 @@ function fillDemo() {
     { cells: ['2026-06-02', '96', '90', '28800'] },
     { cells: ['2026-06-03', '154', '150', '41200'] }
   ]
+  // 示例数据一并给出推荐映射，便于直接体验「汇入经营看板」
+  mapping.value = {
+    date_col: '日期', revenue_col: '交易金额(元)', cost_col: '', order_col: '订单数',
+    business_line: activeChannel.value?.name || ''
+  }
   editable.value = true
-  ElMessage.success('已填充示例数据，进入可修改模式')
+  ElMessage.success('已填充示例数据并预设列映射，进入可修改模式')
 }
 function addRow() {
   rows.value.push({ cells: columns.value.map(() => '') })
@@ -160,8 +207,19 @@ async function save() {
   saving.value = true
   try {
     const payloadRows = rows.value.map((r) => r.cells)
-    await importChannelData(activeChannel.value.id, columns.value, payloadRows)
-    ElMessage.success('数据已保存回传')
+    const hasMapping = mapping.value.date_col && mapping.value.revenue_col
+    const res = await importChannelData(
+      activeChannel.value.id, columns.value, payloadRows,
+      hasMapping ? mapping.value : null
+    )
+    const sync = res?.sync
+    if (sync?.synced) {
+      ElMessage.success(sync.reason || '数据已保存并汇入经营看板')
+    } else if (hasMapping) {
+      ElMessage.warning(sync?.reason || '数据已保存，但未能汇入经营看板')
+    } else {
+      ElMessage.success('数据已保存（未配置映射，如需联动看板请设置日期列与营收列）')
+    }
   } finally { saving.value = false }
 }
 
@@ -185,4 +243,9 @@ onMounted(load)
 .flex-1 { flex: 1; }
 .mb { margin-bottom: 12px; }
 .add-row { margin-top: 10px; }
+.map-card { margin-bottom: 12px; :deep(.el-card__header) { padding: 10px 14px; } :deep(.el-card__body) { padding: 12px 14px; } }
+.map-title { font-weight: 700; margin-right: 10px; }
+.map-tip { color: #909399; font-size: 12px; }
+.map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.map-item { display: flex; flex-direction: column; gap: 4px; label { font-size: 12px; color: #606266; em { color: #f56c6c; font-style: normal; } } .el-select { width: 100%; } }
 </style>

@@ -4,17 +4,24 @@
 """
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_roles
-from app.core.enums import ContractStatus, DIRECTOR_ROLES, InvoiceStatus
+from app.core.enums import ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus
 from app.db.session import get_db
 from app.models.contract import Contract
 from app.models.invoice import Invoice
 from app.models.operation import OperationData
 from app.schemas.common import Response
+from app.schemas.financial import (
+    AvailableFundsIn,
+    FinancialDashboard,
+    InvestedCostIn,
+    ProjectUploadResult,
+    UploadResult,
+)
 from app.schemas.operation import (
     DashboardData,
     KpiSummary,
@@ -23,6 +30,9 @@ from app.schemas.operation import (
     OperationDataOut,
     TrendPoint,
 )
+from app.services.ai_agent import diagnose as ai_diagnose_service
+from app.services import financial as financial_svc
+from app.services import project_etl
 
 router = APIRouter()
 
@@ -120,10 +130,6 @@ def create_operation(
     return Response.ok(OperationDataOut.model_validate(row))
 
 
-def _yuan(v) -> str:
-    return f"¥{float(v):,.0f}"
-
-
 @router.get(
     "/ai-diagnose",
     response_model=Response[dict],
@@ -131,7 +137,8 @@ def _yuan(v) -> str:
     dependencies=[Depends(get_current_user)],
 )
 def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
-    """基于真实经营/发票/合同数据聚合，输出风险预警与闲置资金投资建议（模拟 AI Agent）。"""
+    """聚合真实经营/发票/合同数据，作为 Context 交由 AI 智能体（DeepSeek）产出风险预警与
+    闲置资金投资建议；未配置大模型时自动回退内置规则引擎。"""
     agg = db.execute(
         select(
             func.coalesce(func.sum(OperationData.revenue), 0),
@@ -151,40 +158,112 @@ def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
 
     idle = round(profit * 0.6)  # 估算可动用于投资的闲置资金
 
-    risks = []
-    if margin < 30:
-        risks.append({"level": "高", "title": "综合利润率偏低",
-                      "detail": f"当前综合利润率约 {margin:.1f}%，低于健康线 30%，建议优化成本结构、聚焦高毛利业务线。"})
-    else:
-        risks.append({"level": "低", "title": "盈利能力稳健",
-                      "detail": f"综合利润率约 {margin:.1f}%，处于健康区间，可适度扩张规模。"})
-    if pending_invoice > 0:
-        risks.append({"level": "中", "title": "应收/待开票资金占用",
-                      "detail": f"待开票金额约 {_yuan(pending_invoice)}，存在资金回笼与税务确认风险，建议加快开票与回款节奏。"})
-    if pending_contracts > 0:
-        risks.append({"level": "中", "title": "合同审批积压",
-                      "detail": f"有 {pending_contracts} 份合同处于 7 级审批流转中，建议关注审批时效，避免业务延误。"})
+    metrics = {
+        "revenue": revenue, "cost": cost, "profit": profit, "margin": round(margin, 1),
+        "orders": orders, "idle_funds": idle,
+        "pending_invoice": pending_invoice, "pending_contracts": pending_contracts,
+    }
+    return Response.ok(ai_diagnose_service(metrics))
 
-    suggestions = [
-        {"title": "结构性存款配置",
-         "detail": f"建议将约 {_yuan(round(idle * 0.5))} 配置为银行结构性存款，兼顾流动性与收益（预期年化 2.8%–3.2%）。"},
-        {"title": "国债逆回购",
-         "detail": f"月末/季末可将约 {_yuan(round(idle * 0.2))} 用于国债逆回购，捕捉短期利率高点，资金 T+1 可用。"},
-        {"title": "供应链金融投放",
-         "detail": f"依托核心供应商网络，将约 {_yuan(round(idle * 0.3))} 投入供应链票据/保理，提升资金周转与产业协同。"},
-    ]
 
-    summary = (
-        f"本年度营收 {_yuan(revenue)}、利润 {_yuan(profit)}（利润率 {margin:.1f}%），"
-        f"订单 {orders:,} 笔；结合应收与审批情况，估算当前可动用闲置资金约 {_yuan(idle)}。"
-    )
-    return Response.ok({
-        "summary": summary,
-        "metrics": {
-            "revenue": revenue, "cost": cost, "profit": profit, "margin": round(margin, 1),
-            "orders": orders, "idle_funds": idle,
-            "pending_invoice": pending_invoice, "pending_contracts": pending_contracts,
-        },
-        "risks": risks,
-        "suggestions": suggestions,
-    })
+# --------------------------------------------------------------------------- #
+# 财务经营指标（真实对账单回款数据）
+# --------------------------------------------------------------------------- #
+@router.get(
+    "/financial",
+    response_model=Response[FinancialDashboard],
+    summary="财务经营指标看板（真实回款）",
+    dependencies=[Depends(get_current_user)],
+)
+def financial_dashboard(db: Session = Depends(get_db)):
+    """返回分平台已实现业务规模/毛收入 + 收益率/资金占用/可用资金聚合，供经营页与大屏共用。"""
+    return Response.ok(financial_svc.build_dashboard(db))
+
+
+@router.post(
+    "/financial/upload",
+    response_model=Response[UploadResult],
+    summary="批量上传平台对账单(xlsx)并汇入财务指标",
+    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
+)
+async def upload_financial(
+    file: UploadFile = File(..., description="多 Sheet 对账单 .xlsx"),
+    db: Session = Depends(get_db),
+):
+    """解析抖音/美团/携程对账单，提取『应扣出版预付』等指标并 UPSERT（覆盖式、幂等）。"""
+    name = (file.filename or "").lower()
+    if not name.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的对账单文件")
+    content = await file.read()
+    try:
+        parsed = financial_svc.parse_workbook(content)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"对账单解析失败：{exc}")
+    if not parsed:
+        raise HTTPException(status_code=400, detail="未识别到抖音/美团/携程对账单 Sheet，请检查文件")
+    rows = financial_svc.upsert_metrics(db, parsed)
+    detail = [financial_svc._to_platform_metric(r) for r in rows]
+    return Response.ok(UploadResult(
+        imported=len(rows),
+        platforms=[financial_svc.PLATFORM_LABELS.get(r.platform, r.platform) for r in rows],
+        total_gross_income=sum((r.gross_income for r in rows), Decimal("0")),
+        detail=detail,
+    ))
+
+
+@router.put(
+    "/financial/cost",
+    response_model=Response[FinancialDashboard],
+    summary="设置对账单模块投入成本",
+    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
+)
+def set_invested_cost(payload: InvestedCostIn, db: Session = Depends(get_db)):
+    cfg = financial_svc.get_or_create_config(db)
+    cfg.total_invested_cost = payload.total_invested_cost
+    db.commit()
+    return Response.ok(financial_svc.build_dashboard(db))
+
+
+@router.put(
+    "/financial/available",
+    response_model=Response[FinancialDashboard],
+    summary="录入可用资金",
+    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
+)
+def set_available_funds(payload: AvailableFundsIn, db: Session = Depends(get_db)):
+    cfg = financial_svc.get_or_create_config(db)
+    cfg.available_funds = payload.available_funds
+    db.commit()
+    return Response.ok(financial_svc.build_dashboard(db))
+
+
+@router.post(
+    "/projects/upload",
+    response_model=Response[ProjectUploadResult],
+    summary="上传供管公司项目统计表(Sheet2)并汇入项目经营指标",
+    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
+)
+async def upload_projects(
+    file: UploadFile = File(..., description="项目投入及回款收益统计表 .xlsx(含 Sheet2)"),
+    db: Session = Depends(get_db),
+):
+    """加载 Sheet2 项目数据（万元→元），按 (项目, 付款日期) UPSERT，覆盖式、幂等。"""
+    name = (file.filename or "").lower()
+    if not name.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的统计表文件")
+    content = await file.read()
+    try:
+        parsed = project_etl.parse_sheet2(content)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Sheet2 解析失败：{exc}")
+    if not parsed:
+        raise HTTPException(status_code=400, detail="未从 Sheet2 解析到任何项目数据行")
+    rows = project_etl.upsert_projects(db, parsed)
+    detail = [financial_svc._to_project_metric(r) for r in rows]
+    return Response.ok(ProjectUploadResult(
+        imported=len(rows),
+        total_invested=sum((r.invested_amount for r in rows), Decimal("0")),
+        total_realized=sum((r.realized_scale for r in rows), Decimal("0")),
+        total_gross_profit=sum((r.gross_profit for r in rows), Decimal("0")),
+        projects=detail,
+    ))

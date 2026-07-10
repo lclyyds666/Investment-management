@@ -262,3 +262,64 @@ ufw allow 80/tcp    # 若启用了 ufw
 | 渠道账号密码 | 明文存储（演示用） | 敏感信息应加密或改用密钥托管 |
 | 演示数据 | 经营/订单/公告/AI/签名为 Mock | 按真实业务替换 |
 | 数据备份 | 无 | 配置 MySQL 定时备份 |
+
+---
+
+# 🖥️ 换电脑继续开发 & 上传 GitHub
+
+## 一、先了解:哪些东西**不在** Git 里(需单独处理)
+
+出于安全,以下文件**已被 `.gitignore` 排除,不会上传 GitHub**,换电脑时要单独准备:
+
+| 文件 | 说明 | 换机怎么办 |
+| --- | --- | --- |
+| `backend/.env` | 含数据库密码、`DEEPSEEK_API_KEY` 等**密钥** | 新机器上照 `backend/.env.example` 重建,填入自己的密钥 |
+| `*.xlsx` / `*.csv` | 对账单、项目统计表等**真实财务数据** | 用 U 盘 / 私有网盘单独拷贝到项目根目录 |
+| `.venv/`、`node_modules/` | 依赖,体积大 | 新机器上重新安装(见下) |
+| `*.log` | 运行日志 | 无需迁移 |
+
+> ⚠️ **强烈建议把 GitHub 仓库设为「私有(Private)」**——本项目含企业业务逻辑,即使已排除数据文件也不宜公开。
+
+## 二、把项目上传到 GitHub(在当前这台电脑操作)
+
+本仓库**已关联远程** `origin` → `https://github.com/lclyyds666/Investment-management.git`,
+所以日常上传只需三步(在**项目根目录**执行):
+
+```bash
+git add .
+git commit -m "说明本次改动"
+git push
+```
+
+- `.env` 与 `*.xlsx` 已被 `.gitignore` 自动排除,不会上传。
+- **登录认证**:若弹出登录/输入密码,GitHub 已不支持账号密码,请粘贴 **Personal Access Token**
+  (GitHub → Settings → Developer settings → Personal access tokens 生成),或装 [GitHub CLI](https://cli.github.com/) 后 `gh auth login` 一次。
+- 想换成自己的新仓库:`git remote set-url origin https://github.com/<用户名>/<仓库名>.git` 后再 `git push -u origin main`。
+- ⚠️ 建议在 GitHub 仓库 **Settings → 改为 Private(私有)**,避免企业业务代码公开。
+
+## 三、在**另一台电脑**上继续开发
+
+1. 按本文档「① 安装软件」装好 **Git、Python 3.10+、Node.js LTS、MySQL 8.0**。
+2. 克隆并进入项目:
+   ```bash
+   git clone https://github.com/<你的用户名>/<仓库名>.git
+   cd <仓库名>
+   ```
+3. **拷回被忽略的文件**:把 `backend/.env`(或照 `.env.example` 新建并填密钥)和需要的 `*.xlsx` 数据文件放回对应位置。
+4. **数据库**:`mysql -u root -p < init.sql`,再 `cd backend` 后 `python -m app.db.init_db`。
+   最后依次执行 `backend/migrations/` 下的迁移脚本(把商用改造的表结构补齐):
+   ```bash
+   mysql -u root -p sd_publish_scm < backend/migrations/20260710_commercial_data_link.sql
+   mysql -u root -p sd_publish_scm < backend/migrations/20260710_financial_metrics.sql
+   mysql -u root -p sd_publish_scm < backend/migrations/20260710_project_metrics.sql
+   ```
+5. **后端**:`cd backend` → `python -m venv .venv` → 激活 → `pip install -r requirements.txt` → `uvicorn app.main:app --reload`(**务必在 `backend/` 目录下启动**,否则读不到 `.env`)。
+6. **前端**:`cd frontend` → `npm install` → `npm run dev`。
+
+## 四、关于「继续我们的 Claude 对话」
+
+Claude Code 的**对话记录保存在本机**(`~/.claude/` 目录下,按项目路径归档),**不随 Git 仓库转移**——所以在新电脑上是一个全新的 Claude 会话,看不到这台电脑上的历史聊天。两个办法:
+
+- **推荐**:仓库里已有一份 **`CLAUDE.md`**(项目现状、已完成的商用改造、注意事项)。在新电脑的项目目录运行 `claude`,它会自动读取 `CLAUDE.md` 快速接手,无需你复述背景。
+- **在同一台电脑**恢复本次对话:在项目目录运行 `claude --resume`(弹出会话列表选择),或 `claude -c` 继续最近一次对话。
+- (进阶,不保证成功)对话原始记录在 `~/.claude/projects/` 下,理论上可整目录拷到新机器,但因目录名按路径哈希、版本差异等原因**可能无法直接识别**,一般不建议依赖此法。
