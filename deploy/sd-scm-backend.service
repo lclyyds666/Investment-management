@@ -1,0 +1,27 @@
+# =============================================================
+#  山东出版供应链管理平台 - 后端 Systemd 守护配置
+#  放置：/etc/systemd/system/sd-scm-backend.service
+#  依赖：已在 /opt/sd-scm/backend 内用服务器 Python 重建虚拟环境 .venv
+#        并 pip install -r requirements.txt、配置好 .env
+# =============================================================
+[Unit]
+Description=SD Publishing SCM Backend (FastAPI + Uvicorn)
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/sd-scm/backend
+Environment="PATH=/opt/sd-scm/backend/.venv/bin"
+# 多进程守护；仅监听本机，由 Nginx 对外代理
+ExecStart=/opt/sd-scm/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=3
+# 日志输出到 journald（journalctl -u sd-scm-backend 查看）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

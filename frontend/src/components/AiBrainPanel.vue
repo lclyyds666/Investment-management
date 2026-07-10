@@ -1,0 +1,120 @@
+<template>
+  <el-card shadow="never" class="ai-card">
+    <template #header>
+      <div class="ai-header">
+        <span class="ai-title"><span class="ai-emoji">🧠</span> AI 智能大脑分析</span>
+        <el-button type="primary" :icon="MagicStick" :loading="loading" @click="diagnose">
+          {{ result ? '重新诊断' : '一键诊断' }}
+        </el-button>
+      </div>
+    </template>
+
+    <div v-if="loading" class="ai-loading">
+      <el-icon class="rotating"><Loading /></el-icon>
+      <span>AI Agent 正在全面审计业务与财务数据…</span>
+    </div>
+
+    <el-empty v-else-if="!result" :image-size="70" description="点击「一键诊断」，AI 将审计经营/财务/审批数据并给出风险预警与资金管理建议" />
+
+    <div v-else class="ai-body">
+      <el-alert type="primary" :closable="false" class="ai-summary">
+        <template #title><span class="summary-text">{{ result.summary }}</span></template>
+      </el-alert>
+
+      <el-row :gutter="12" class="ai-metrics">
+        <el-col :span="6"><div class="m-box"><div class="m-label">利润率</div><div class="m-val">{{ result.metrics.margin }}%</div></div></el-col>
+        <el-col :span="6"><div class="m-box"><div class="m-label">可用闲置资金</div><div class="m-val blue">¥{{ fmt(result.metrics.idle_funds) }}</div></div></el-col>
+        <el-col :span="6"><div class="m-box"><div class="m-label">待开票金额</div><div class="m-val warn">¥{{ fmt(result.metrics.pending_invoice) }}</div></div></el-col>
+        <el-col :span="6"><div class="m-box"><div class="m-label">审批中合同</div><div class="m-val">{{ result.metrics.pending_contracts }}</div></div></el-col>
+      </el-row>
+
+      <div class="ai-cols">
+        <div class="ai-col">
+          <div class="col-title"><el-icon><WarningFilled /></el-icon> 业务风险预警</div>
+          <div v-for="(r, i) in result.risks" :key="i" class="risk-item" :class="'lv-' + r.level">
+            <div class="risk-head">
+              <el-tag :type="lvType(r.level)" size="small" effect="dark">{{ r.level }}风险</el-tag>
+              <span class="risk-title">{{ r.title }}</span>
+            </div>
+            <div class="risk-detail">{{ r.detail }}</div>
+          </div>
+        </div>
+        <div class="ai-col">
+          <div class="col-title"><el-icon><Coin /></el-icon> 闲置资金管理与投资建议</div>
+          <div v-for="(s, i) in result.suggestions" :key="i" class="sug-item">
+            <div class="sug-title">{{ i + 1 }}. {{ s.title }}</div>
+            <div class="sug-detail">{{ s.detail }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="ai-foot">※ 以上为 AI 智能体基于当前平台数据的模拟分析结果，仅供经营决策参考。</div>
+    </div>
+  </el-card>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { MagicStick, Loading, WarningFilled, Coin } from '@element-plus/icons-vue'
+import { aiDiagnose } from '@/api/operation'
+
+const loading = ref(false)
+const result = ref(null)
+
+const fmt = (v) => Number(v || 0).toLocaleString()
+const lvType = (lv) => ({ 高: 'danger', 中: 'warning', 低: 'success' }[lv] || 'info')
+
+async function diagnose() {
+  loading.value = true
+  result.value = null
+  try {
+    // 模拟 AI 推理耗时，增强"分析中"体验
+    const [res] = await Promise.all([aiDiagnose(), new Promise((r) => setTimeout(r, 1200))])
+    result.value = res
+    ElMessage.success('AI 诊断完成')
+  } finally {
+    loading.value = false
+  }
+}
+</script>
+
+<style scoped lang="scss">
+.ai-card {
+  margin-top: 16px;
+}
+.ai-header { display: flex; align-items: center; justify-content: space-between; }
+.ai-title { font-weight: 600; font-size: 15px; }
+.ai-emoji { font-size: 18px; }
+.ai-loading {
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  padding: 28px; color: #3f6ad8; font-size: 14px;
+}
+.rotating { animation: spin 1s linear infinite; font-size: 20px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ai-summary { margin-bottom: 14px; }
+.summary-text { font-size: 13px; line-height: 1.7; }
+.ai-metrics { margin-bottom: 8px; }
+.m-box { background: rgba(28,155,230,0.08); border: 1px solid rgba(96,150,210,0.16); border-radius: 8px; padding: 10px 12px; text-align: center; }
+.m-label { font-size: 12px; color: #7f9ec6; }
+.m-val { margin-top: 4px; font-size: 20px; font-weight: 700; color: #dcecff; }
+.m-val.blue { color: #409eff; }
+.m-val.warn { color: #e6a23c; }
+.ai-cols { display: flex; gap: 16px; margin-top: 14px; }
+.ai-col { flex: 1; min-width: 0; }
+.col-title { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 10px; color: #eafcff; }
+.col-title .el-icon { color: #3f6ad8; }
+.risk-item {
+  border: 1px solid rgba(96,150,210,0.16); border-left: 3px solid #47618a;
+  border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: rgba(10,28,60,0.55);
+  &.lv-高 { border-left-color: #f56c6c; }
+  &.lv-中 { border-left-color: #e6a23c; }
+  &.lv-低 { border-left-color: #67c23a; }
+}
+.risk-head { display: flex; align-items: center; gap: 8px; }
+.risk-title { font-weight: 600; color: #eafcff; }
+.risk-detail { margin-top: 6px; font-size: 13px; color: #a9c2e0; line-height: 1.6; }
+.sug-item { border: 1px solid rgba(96,150,210,0.16); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: rgba(10,28,60,0.55); }
+.sug-title { font-weight: 600; color: #7fd8ff; }
+.sug-detail { margin-top: 6px; font-size: 13px; color: #a9c2e0; line-height: 1.6; }
+.ai-foot { margin-top: 8px; font-size: 12px; color: #c0c4cc; }
+</style>

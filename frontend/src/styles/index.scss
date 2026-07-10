@@ -1,0 +1,149 @@
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', 'Helvetica Neue', Helvetica, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: #d7e6fb;
+  background: #071228;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   科技风 · 全站暗色主题（Tech Dark Mode）
+   主色科技蓝 + 青色强调；深蓝底 + 毛玻璃霓虹卡片。
+   覆盖 Element Plus 暗色 CSS 变量为科技深蓝配色。
+   ============================================================ */
+:root {
+  --el-color-primary: #1c9be6;
+  --el-color-primary-light-3: #52b3ec;
+  --el-color-primary-light-5: #8ecdf3;
+  --el-color-primary-light-7: #234a72;
+  --el-color-primary-light-8: #1a3557;
+  --el-color-primary-light-9: #12233c;
+  --el-color-primary-dark-2: #45b3f0;
+  --tech-cyan: #22d3ee;
+  --tech-blue: #1c9be6;
+}
+
+html.dark {
+  /* 背景层次 */
+  --el-bg-color: #0a1a35;
+  --el-bg-color-page: #071228;
+  --el-bg-color-overlay: #0e2244;
+  /* 文字 */
+  --el-text-color-primary: #dcecff;
+  --el-text-color-regular: #a9c2e0;
+  --el-text-color-secondary: #7f9ec6;
+  --el-text-color-placeholder: #5b7aa6;
+  --el-text-color-disabled: #4a6486;
+  /* 边框 */
+  --el-border-color: rgba(96, 150, 210, 0.24);
+  --el-border-color-light: rgba(96, 150, 210, 0.18);
+  --el-border-color-lighter: rgba(96, 150, 210, 0.13);
+  --el-border-color-extra-light: rgba(96, 150, 210, 0.09);
+  /* 填充 */
+  --el-fill-color: rgba(28, 155, 230, 0.12);
+  --el-fill-color-light: rgba(28, 155, 230, 0.09);
+  --el-fill-color-lighter: rgba(28, 155, 230, 0.06);
+  --el-fill-color-blank: #0b1f3d;
+  --el-mask-color: rgba(3, 11, 31, 0.8);
+  color-scheme: dark;
+}
+
+/* 内容区：深蓝科技底纹 */
+.el-main {
+  background:
+    radial-gradient(900px 500px at 100% 0, rgba(28, 155, 230, 0.14), transparent 60%),
+    radial-gradient(700px 400px at 0 100%, rgba(34, 211, 238, 0.1), transparent 60%),
+    #071228;
+}
+
+/* 卡片：毛玻璃霓虹 */
+.el-card {
+  position: relative;
+  border-radius: 10px !important;
+  background: rgba(14, 34, 68, 0.72) !important;
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(96, 150, 210, 0.2) !important;
+  box-shadow: 0 4px 18px rgba(2, 10, 28, 0.5) !important;
+  transition: box-shadow 0.3s ease, transform 0.3s ease, border-color 0.3s ease;
+  overflow: hidden;
+}
+.el-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--tech-blue), var(--tech-cyan));
+  opacity: 0.9;
+}
+.el-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 211, 238, 0.5) !important;
+  box-shadow: 0 10px 28px rgba(2, 10, 28, 0.6), 0 0 18px rgba(28, 155, 230, 0.22) !important;
+}
+.el-card__header {
+  font-weight: 600;
+  font-size: 15px;
+  border-bottom: 1px solid rgba(96, 150, 210, 0.16);
+  background: linear-gradient(90deg, rgba(28, 155, 230, 0.12), transparent);
+  color: #eafcff;
+}
+
+/* 表格：科技暗色表头 */
+.el-table {
+  --el-table-border-color: rgba(96, 150, 210, 0.16);
+  --el-table-header-bg-color: transparent;
+  --el-table-row-hover-bg-color: rgba(28, 155, 230, 0.12);
+  --el-table-tr-bg-color: transparent;
+  --el-table-bg-color: transparent;
+  background: transparent;
+  border-radius: 8px;
+  th.el-table__cell {
+    background: linear-gradient(180deg, #123057, #0e2244) !important;
+    color: #cfe6ff;
+    font-weight: 600;
+  }
+}
+
+/* 主按钮：渐变 + 发光 */
+.el-button--primary {
+  background: linear-gradient(135deg, #1c9be6, #22a7d8) !important;
+  border-color: #1c9be6 !important;
+  box-shadow: 0 4px 12px rgba(28, 155, 230, 0.3);
+}
+.el-button--primary:hover {
+  background: linear-gradient(135deg, #34a9ec, #1c9be6) !important;
+  box-shadow: 0 6px 18px rgba(34, 211, 238, 0.45);
+}
+
+/* 弹窗 / 抽屉 */
+.el-dialog { border-radius: 12px; overflow: hidden; }
+.el-dialog__header { background: linear-gradient(90deg, rgba(28, 155, 230, 0.14), transparent); }
+.el-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(96, 150, 210, 0.16);
+  font-weight: 600;
+  color: #eafcff;
+}
+
+.el-statistic__number { font-variant-numeric: tabular-nums; color: #dcecff; }
+
+/* 科技滚动条 */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #22d3ee, #1c9be6);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track { background: #0a1a35; }
