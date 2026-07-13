@@ -35,6 +35,15 @@
 3. **敏感数据脱敏**:`core/masking.py` `mask_phone`(138****5678),客户**列表**输出脱敏,详情页仍返回明文供编辑。
 4. **未新增数据库列**:User 模型原有字段已够,本周无需迁移;`redis` 已加入 `requirements.txt`(可选,缺失自动回退内存)。
 
+## 生产部署现状(2026-07-13 已上线)
+- 服务器:阿里云 ECS `39.107.52.146`(Ubuntu 22.04),部署目录 `/opt/sd-scm`(属主 www-data)。
+- 架构:Nginx:80(静态 `frontend/dist` + 反代 `/api` → 127.0.0.1:8000)→ Uvicorn(systemd `sd-scm-backend`,2 workers)→ MySQL;**Redis 已装**(仅监听 127.0.0.1,`REDIS_URL=redis://127.0.0.1:6379/0`)。
+- **多 worker 必须用 Redis**:验证码/防爆破计数跨 worker 共享,靠的就是 Redis;内存兜底只在单进程有效。
+- `.env` 已含第1周安全项(REDIS_URL/CAPTCHA_*/LOGIN_*),`DEBUG=false`、`SECRET_KEY` 已是自定义。改 .env 前会自动 `.bak` 备份。
+- **`/opt/sd-scm` 不是 git 仓库**:更新代码走「本地 `npm run build` → tar over ssh 传 `backend/app`+`requirements.txt`+`frontend/dist`」;传完 `chown -R www-data:www-data`、`.venv/bin/pip install -r requirements.txt`、`systemctl restart sd-scm-backend`、`nginx -t && systemctl reload nginx`。
+- SSH 已配本机免密公钥(`~/.ssh/id_ed25519`),后续可直接 `ssh root@39.107.52.146` 免密操作。
+- ⚠️ 上线后务必:①把所有默认账号密码 `123456` 改掉;②考虑轮换服务器 root 密码(曾在对话中出现)。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
 `20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`。
