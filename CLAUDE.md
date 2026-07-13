@@ -43,6 +43,8 @@
 - **`/opt/sd-scm` 不是 git 仓库**:更新代码走「本地 `npm run build` → tar over ssh 传 `backend/app`+`requirements.txt`+`frontend/dist`」;传完 `chown -R www-data:www-data`、`.venv/bin/pip install -r requirements.txt`、`systemctl restart sd-scm-backend`、`nginx -t && systemctl reload nginx`。
 - SSH 已配本机免密公钥(`~/.ssh/id_ed25519`),后续可直接 `ssh root@39.107.52.146` 免密操作。
 - ⚠️ 上线后务必:①把所有默认账号密码 `123456` 改掉;②考虑轮换服务器 root 密码(曾在对话中出现)。
+- **数据库已于 2026-07-13 补齐到最新 schema**:曾因生产库停留在 7-02 初版(缺 `biz_finance_config`/`biz_financial_metrics`/`biz_project_metrics` 表、`biz_channel_data.mapping` 列、`sys_user.signature` 仅 TEXT)导致 `/operation/financial` 等接口 500。已 `ALTER` 补列 + 加宽 signature + `python -m app.db.init_db`(create_all 建缺失表)修复。
+- ⚠️ **每次上传新代码后,若涉及新表/新列,必须同步升级生产库**(跑对应 migration 或 `init_db`),否则接口 500。更新流程里别忘了这一步。
 
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
