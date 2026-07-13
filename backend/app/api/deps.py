@@ -56,3 +56,13 @@ def require_roles(*roles: Role):
         return current_user
 
     return checker
+
+
+def require_superuser(current_user: User = Depends(get_current_user)) -> User:
+    """要求当前用户为超级管理员。用户管理等敏感操作使用。"""
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅超级管理员可执行该操作",
+        )
+    return current_user

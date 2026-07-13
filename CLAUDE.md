@@ -25,6 +25,16 @@
    - 映射:投入金额→现存业务规模;回款小计→已实现业务规模;实现毛利→已实现业务毛收入;收益率取表值(汇总按投入加权);资金占用=投入−回款;可用资金=手工录入(`biz_finance_config.available_funds`,`PUT /operation/financial/available`)。
    - 经营页 `views/operation/index.vue` 已重构为**项目维度**;大屏指标卡同源(读 `GET /operation/financial`)。
 
+## 第 1 周「基础闭环与安全底座 (P0)」已完成(本轮)
+1. **认证安全**:
+   - 图形验证码:`services/captcha.py` 生成 SVG(零依赖,对齐 Mock 签名思路),`GET /auth/captcha` 返回 `{captcha_id, image, ttl}`;登录需回传 `captcha_id + captcha_code`,一次性消费。
+   - 暴力破解防护:`services/login_guard.py`,连续失败 5 次锁定 30 分钟;锁定窗口内密码正确也拒绝(429)。
+   - **KV 存储 `core/store.py`**:验证码/失败计数存这。配了 `REDIS_URL` 且 redis 可连 → Redis;否则**自动回退进程内存**(单机开发不装 Redis 也能跑,对齐 DeepSeek 回退哲学)。
+   - 开关见 `config.py`/`.env`:`CAPTCHA_ENABLED`(联调/Swagger 调试可临时设 false)、`LOGIN_MAX_FAILURES`、`LOGIN_LOCK_MINUTES`、`PASSWORD_MIN_LENGTH`、`DEFAULT_PASSWORD`。
+2. **用户管理完整 CRUD**:`endpoints/user.py`。列表支持 `keyword/role/is_active` 筛选;创建/编辑/删除/启停用/重置密码均 `require_superuser`(见 `deps.py`);本人改密 `PUT /users/me/password`。护栏:不能删/停用自己、不能撤下最后一个超管。前端 `views/system/users.vue` 已重构为完整 CRUD(菜单更名「用户管理」,增删改按钮仅超管可见);个人中心 `views/profile/index.vue` 加了修改密码卡片。
+3. **敏感数据脱敏**:`core/masking.py` `mask_phone`(138****5678),客户**列表**输出脱敏,详情页仍返回明文供编辑。
+4. **未新增数据库列**:User 模型原有字段已够,本周无需迁移;`redis` 已加入 `requirements.txt`(可选,缺失自动回退内存)。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
 `20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`。

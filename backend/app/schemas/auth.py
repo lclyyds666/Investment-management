@@ -20,3 +20,11 @@ class Token(BaseModel):
 class TokenPayload(BaseModel):
     sub: str | None = None
     role: str | None = None
+
+
+class CaptchaOut(BaseModel):
+    """图形验证码：captcha_id 关联答案，image 为 SVG data-URI。"""
+
+    captcha_id: str
+    image: str
+    ttl: int

@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 
+    # Redis（用于图形验证码存储 + 登录防爆破计数）。
+    # 未配置或连接失败时，自动回退到进程内存实现，功能不受影响（详见 core/store.py）。
+    REDIS_URL: str = ""
+
+    # 登录安全
+    CAPTCHA_ENABLED: bool = True          # 是否强制图形验证码
+    CAPTCHA_TTL_SECONDS: int = 120        # 验证码有效期
+    LOGIN_MAX_FAILURES: int = 5           # 连续失败上限
+    LOGIN_LOCK_MINUTES: int = 30          # 达上限后锁定时长
+    DEFAULT_PASSWORD: str = "123456"      # 超管重置后的默认密码
+    PASSWORD_MIN_LENGTH: int = 6          # 密码最小长度
+
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = []
 

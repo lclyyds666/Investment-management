@@ -19,6 +19,25 @@
             </el-descriptions-item>
           </el-descriptions>
         </el-card>
+
+        <!-- 修改密码 -->
+        <el-card shadow="never" class="pwd-card">
+          <template #header><span>修改密码</span></template>
+          <el-form ref="pwdRef" :model="pwd" :rules="pwdRules" label-width="90px">
+            <el-form-item label="原密码" prop="old_password">
+              <el-input v-model="pwd.old_password" type="password" show-password placeholder="请输入原密码" />
+            </el-form-item>
+            <el-form-item label="新密码" prop="new_password">
+              <el-input v-model="pwd.new_password" type="password" show-password placeholder="至少 6 位" />
+            </el-form-item>
+            <el-form-item label="确认新密码" prop="confirm">
+              <el-input v-model="pwd.confirm" type="password" show-password placeholder="再次输入新密码" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="pwdSaving" @click="onChangePassword">保存新密码</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
       </el-col>
 
       <!-- 纸质签名上传 -->
@@ -75,17 +94,46 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { getMe, updateSignature } from '@/api/user'
+import { getMe, updateSignature, changeMyPassword } from '@/api/user'
 
 const userStore = useUserStore()
 const info = ref(null)
 const preview = ref('')
 const saving = ref(false)
 const hasSig = computed(() => !!preview.value)
+
+// 修改密码
+const pwdRef = ref()
+const pwdSaving = ref(false)
+const pwd = reactive({ old_password: '', new_password: '', confirm: '' })
+const pwdRules = {
+  old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
+  new_password: [{ required: true, min: 6, message: '新密码至少 6 位', trigger: 'blur' }],
+  confirm: [
+    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    {
+      validator: (_r, v, cb) => (v === pwd.new_password ? cb() : cb(new Error('两次输入的密码不一致'))),
+      trigger: 'blur'
+    }
+  ]
+}
+
+async function onChangePassword() {
+  await pwdRef.value?.validate()
+  pwdSaving.value = true
+  try {
+    await changeMyPassword(pwd.old_password, pwd.new_password)
+    ElMessage.success('密码修改成功，请牢记新密码')
+    pwd.old_password = pwd.new_password = pwd.confirm = ''
+    pwdRef.value?.clearValidate?.()
+  } finally {
+    pwdSaving.value = false
+  }
+}
 
 async function refresh() {
   info.value = await getMe()
@@ -130,6 +178,7 @@ onMounted(refresh)
 
 <style scoped lang="scss">
 .mb { margin-bottom: 14px; }
+.pwd-card { margin-top: 16px; }
 .sig-header { display: flex; align-items: center; gap: 8px; }
 .sig-preview { margin-bottom: 14px; }
 .sig-label { font-size: 13px; color: #909399; margin-bottom: 6px; }

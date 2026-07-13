@@ -18,8 +18,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   /** 登录：拿到 token 与角色并持久化 */
-  async function login(username, password) {
-    const res = await loginApi(username, password)
+  async function login(username, password, captchaId, captchaCode) {
+    const res = await loginApi(username, password, captchaId, captchaCode)
     token.value = res.access_token
     role.value = res.role
     userInfo.value = res.user

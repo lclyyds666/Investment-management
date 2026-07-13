@@ -1,6 +1,7 @@
 """用户相关 Pydantic schema。"""
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.core.config import settings
 from app.core.enums import Role, role_label
 
 
@@ -12,7 +13,35 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
+    is_superuser: bool = False
+
+
+class UserUpdate(BaseModel):
+    """超管编辑用户：不含用户名（登录账号不可改）与密码。"""
+
+    full_name: str | None = None
+    role: Role | None = None
+    department: str | None = None
+    is_active: bool | None = None
+    is_superuser: bool | None = None
+
+
+class ActiveUpdate(BaseModel):
+    is_active: bool
+
+
+class PasswordReset(BaseModel):
+    """超管重置某用户密码；不填则重置为系统默认密码。"""
+
+    new_password: str | None = Field(default=None, min_length=settings.PASSWORD_MIN_LENGTH)
+
+
+class PasswordChange(BaseModel):
+    """用户修改本人密码。"""
+
+    old_password: str
+    new_password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
 
 
 class UserOut(UserBase):

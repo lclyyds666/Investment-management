@@ -76,8 +76,8 @@ const routes = [
         path: 'org',
         name: 'Org',
         component: () => import('@/views/system/users.vue'),
-        // 组织架构：公司负责人
-        meta: { title: '组织架构', icon: 'OfficeBuilding', roles: DIRECTOR_ROLES }
+        // 用户管理 / 组织架构：负责人可查看，增删改由页面内按超管控制
+        meta: { title: '用户管理', icon: 'OfficeBuilding', roles: DIRECTOR_ROLES }
       },
       {
         path: 'profile',

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_roles
 from app.core.enums import Role
+from app.core.masking import mask_phone
 from app.db.session import get_db
 from app.models.customer import Customer
 from app.models.user import User
@@ -28,8 +29,14 @@ def _dump_files(payload_dict: dict) -> dict:
 
 @router.get("", response_model=Response[list[CustomerOut]], summary="客户列表")
 def list_customers(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """列表默认对联系电话脱敏（138****5678），明文仅在详情页按需返回。"""
     rows = db.scalars(select(Customer).order_by(Customer.id.desc())).all()
-    return Response.ok([CustomerOut.model_validate(r) for r in rows])
+    out = []
+    for r in rows:
+        item = CustomerOut.model_validate(r)
+        item.phone = mask_phone(item.phone)
+        out.append(item)
+    return Response.ok(out)
 
 
 @router.get("/{cid}", response_model=Response[CustomerOut], summary="客户详情")
