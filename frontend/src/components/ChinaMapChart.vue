@@ -23,16 +23,21 @@ const fallback = ref(false)
 let mapReady = false
 async function ensureMap() {
   if (mapReady || echarts.getMap('china')) { mapReady = true; return true }
-  try {
-    const resp = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json')
-    if (!resp.ok) throw new Error('geo fetch failed')
-    const geo = await resp.json()
-    echarts.registerMap('china', geo)
-    mapReady = true
-    return true
-  } catch (e) {
-    return false
+  // 优先本地自托管 GeoJSON（离线可用），失败再退阿里云公网
+  const sources = [
+    '/geo/china.json',
+    'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
+  ]
+  for (const url of sources) {
+    try {
+      const resp = await fetch(url)
+      if (!resp.ok) continue
+      echarts.registerMap('china', await resp.json())
+      mapReady = true
+      return true
+    } catch (e) { /* 尝试下一个来源 */ }
   }
+  return false
 }
 
 function values() {

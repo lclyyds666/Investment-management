@@ -26,15 +26,15 @@ const routes = [
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('@/views/dashboard/index.vue'),
-        meta: { title: '首页', icon: 'HomeFilled' }
+        meta: { title: '战略总览', icon: 'HomeFilled' }
       },
       {
         path: 'operation',
         name: 'Operation',
         component: () => import('@/views/operation/index.vue'),
-        // 经营数据：风控/财务/负责人可查看
+        // 经营数据中心：风控/财务/负责人可查看
         meta: {
-          title: '经营数据',
+          title: '经营数据中心',
           icon: 'TrendCharts',
           roles: [ROLES.RISK_AUDITOR, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
         }
@@ -43,41 +43,41 @@ const routes = [
         path: 'contract',
         name: 'Contract',
         component: () => import('@/views/contract/index.vue'),
-        // 合同管理：全部角色可进入，页面内按角色控制操作
-        meta: { title: '合同管理', icon: 'Document' }
+        // 合同管理：归入「经营合规管理」一级菜单；全部角色可进入，页面内按角色控制操作
+        meta: { title: '合同管理', icon: 'Document', group: '经营合规管理', groupIcon: 'DocumentChecked' }
       },
       {
         path: 'approval',
         name: 'Approval',
         component: () => import('@/views/approval/index.vue'),
-        // 审批中心：6 级审批人角色
-        meta: { title: '审批中心', icon: 'Stamp', roles: APPROVER_ROLES }
+        // 审批中心：归入「经营合规管理」；6 级审批人角色
+        meta: { title: '审批中心', icon: 'Stamp', roles: APPROVER_ROLES, group: '经营合规管理', groupIcon: 'DocumentChecked' }
       },
       {
         path: 'customer',
         name: 'Customer',
         component: () => import('@/views/customer/index.vue'),
-        meta: { title: '客户档案', icon: 'Postcard' }
+        meta: { title: '客户档案库', icon: 'Postcard' }
       },
       {
         path: 'channel',
         name: 'Channel',
         component: () => import('@/views/channel/index.vue'),
-        meta: { title: '渠道集成', icon: 'Connection' }
+        meta: { title: '渠道业务管理', icon: 'Connection' }
       },
       {
         path: 'invoice',
         name: 'Invoice',
         component: () => import('@/views/invoice/index.vue'),
-        // 发票管理：财务 + 负责人
-        meta: { title: '发票管理', icon: 'Tickets', roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES] }
+        // 智慧财务管理：财务 + 负责人
+        meta: { title: '智慧财务管理', icon: 'Tickets', roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES] }
       },
       {
         path: 'org',
         name: 'Org',
         component: () => import('@/views/system/users.vue'),
-        // 用户管理 / 组织架构：负责人可查看，增删改由页面内按超管控制
-        meta: { title: '用户管理', icon: 'OfficeBuilding', roles: DIRECTOR_ROLES }
+        // 用户管理：仅超级管理员可见 / 可访问（菜单隐藏 + 路由守卫双保险）
+        meta: { title: '用户管理', icon: 'OfficeBuilding', requiresSuperuser: true }
       },
       {
         path: 'profile',

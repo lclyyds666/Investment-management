@@ -44,6 +44,13 @@ class PasswordChange(BaseModel):
     new_password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
 
 
+class UsernameChange(BaseModel):
+    """用户修改本人登录账号(用户名)；需当前密码确认身份。"""
+
+    new_username: str = Field(..., min_length=3, max_length=64)
+    password: str
+
+
 class UserOut(UserBase):
     """当前登录用户 / 详情：含完整签名（本人数据）。"""
 

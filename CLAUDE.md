@@ -46,9 +46,35 @@
 - **数据库已于 2026-07-13 补齐到最新 schema**:曾因生产库停留在 7-02 初版(缺 `biz_finance_config`/`biz_financial_metrics`/`biz_project_metrics` 表、`biz_channel_data.mapping` 列、`sys_user.signature` 仅 TEXT)导致 `/operation/financial` 等接口 500。已 `ALTER` 补列 + 加宽 signature + `python -m app.db.init_db`(create_all 建缺失表)修复。
 - ⚠️ **每次上传新代码后,若涉及新表/新列,必须同步升级生产库**(跑对应 migration 或 `init_db`),否则接口 500。更新流程里别忘了这一步。
 
+## 大屏地图「数据驱动 + 上传即上屏」(本轮)
+目标:大屏天眼地图不再用硬编码点位,改为由数据库项目数据自动驱动;上传统计表后自动上屏。
+1. **底图离线根因修复**:`ScreenMap.vue`/`ChinaMapChart.vue` 原先运行时从阿里云公网 CDN 拉 GeoJSON,ECS/内网拉不到 → "地图资源离线"。已把底图下载到 `frontend/public/geo/china.json` **本地自托管**(打包进 `dist/geo/`,nginx 同源 `/geo/china.json` 直服);仍保留阿里云 URL 作二级兜底。
+2. **城市自动解析(零依赖 gazetteer)**:`services/geo_gazetteer.py` 内置「城市/省 → 经纬度」词典 + `resolve_city()` 按最长子串匹配(如"泉州欧乐堡"→泉州)。**不依赖在线地理编码 API、不引 pypinyin**,与 captcha/redis 的离线兜底哲学一致。含 4 直辖市+省会+主要地级市,并补了欧乐堡品牌县级基地(齐河/乐陵/青州/蓬莱)。解析不到不阻断入库(city 留空)。
+3. **入库**:`biz_project_metrics` 增列 `city/province/lng/lat`;`project_etl.upsert_projects` 上传时自动回填坐标。
+4. **点位接口**:`GET /operation/projects/geo?hub=山东省` 按城市聚合(同城多项目合并、金额相加、项目名收集),返回 `points[]` + `version`(项目数+投入合计的数据指纹)+ `matched/unmatched`。
+5. **前端联动**:`ScreenMap.vue` 自取该接口(不再吃 DataScreen 传的 mock),飞线线宽/透明度按投入金额缩放,省级填色按点位聚合;**每 30s 轮询,version 变化即重绘 → 上传后 30s 内自动上屏**。空数据时提示去经营页上传。
+- ⚠️ **本轮新增了列**:生产库上传新代码后必须跑 `backend/migrations/20260713_project_geo.sql`(幂等,可重复执行);跑完**重新上传一次统计表**回填历史项目坐标(或对已有行执行 resolve_city 回填)。
+
+## 导航重构与权限约定(2026-07-14)
+- **菜单标题**:首页→战略总览、经营数据→经营数据中心、渠道集成→渠道业务管理、发票管理→智慧财务管理、客户档案→客户档案库;合同管理 + 审批中心合并为一级「经营合规管理」下的两个子菜单;用户管理保留。
+- **合并菜单用「分组渲染」而非路由嵌套**:`router/index.js` 给 contract/approval 打 `meta.group='经营合规管理'`(+`groupIcon`);`layout/index.vue` 的 `menus` computed 按 `meta.group` 归组,渲染成 `el-sub-menu`。**URL 仍是 `/contract`、`/approval` 不变**,不破坏任何跳转/权限;改菜单只动 `meta.title`/`group`。
+- **仅超管可见/可访问**:route 上打 `meta.requiresSuperuser: true`(用户管理已用)。双保险:①`layout/index.vue` 菜单过滤 `!requiresSuperuser || isSuperuser` 隐藏;②`permission.js` 路由守卫拦截直访 URL。新增"仅超管页面"照此约定即可,勿再滥用 `roles`。
+- **自助改登录信息**:`PUT /users/me/username`(schema `UsernameChange`,需当前密码确认、账号唯一);JWT 的 `sub` 是用户 **id**,改用户名**不掉线**。前端在「个人设置」页,与「修改密码」并列。
+
+## 客户 AI 尽职调查(2026-07-14)
+客户档案页每行「AI调研」按钮 → 弹窗上传准入资料(PDF/Docx)→「生成调研报告」。
+- **链路**:上传即解析(`services/customer_research.py`:pypdf 逐页 / python-docx;正则抽取信用码/注册资本/经营范围等)→ 生成时融合内部文本 + 博查 Web 搜索外部资讯 → DeepSeek 综合出四段报告(基础概况/经营分析/外部舆情/AI风险预警)+ 合作建议(优先/谨慎/严禁)+ 来源标注。
+- **两级降级(接口永不 500)**:无 `DEEPSEEK_API_KEY`/失败 → 规则引擎兜底成文;无 `SEARCH_API_KEY`/失败 → 跳过联网,外部舆情段标注"未联网核实"。
+- **⚠️ DeepSeek 不能自己联网**:外部资讯必须由独立搜索 API 提供。当前用**博查 Bocha**(`api.bochaai.com`,国内 ECS 可直连),`.env` 配 `SEARCH_API_KEY=<博查key>` 即启用;留空则外部舆情降级。**生产与本地 `.env` 均已配好博查 key,联网已启用**(实测 ECS 可直连、返回 8 条资讯);轮换 key 只需替换该值重启,无需改码。诉讼/征信权威数据需专门数据源(天眼查/裁判文书),通用搜索只给公开网页舆情(会混入股吧言论/同名公司等噪声,模型会标注权威性),报告已如实标注。
+- 🔑 两个 key(DeepSeek、博查)曾在对话中暴露,建议适时到各自控制台轮换。
+- **新表**:`biz_customer_material`(逐页文本+关键信息)、`biz_customer_research`(四段+建议+来源)。原始文件存 `backend/uploads/customer_{id}/`(已 gitignore;生产 www-data 可写)。
+- **新依赖**:`pypdf`、`python-docx`(仅支持 .pdf/.docx;扫描件图片型 PDF 需 OCR,不支持)。
+- **接口**:`GET/POST /customers/{cid}/materials`、`DELETE .../{mid}`、`GET .../{mid}/download`、`POST/GET /customers/{cid}/research`(所有登录用户可用)。
+- ⚠️ 生产上线后须跑 `20260714_customer_research.sql`(或 `create_all`)建表 + `pip install -r requirements.txt` 装新依赖 + 建 `uploads/` 目录授权 www-data。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

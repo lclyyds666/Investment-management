@@ -1,5 +1,5 @@
 <template>
-  <DataScreen />
+  <DataScreen :show-approval="false" />
 </template>
 
 <script setup>

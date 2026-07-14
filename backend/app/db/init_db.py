@@ -22,6 +22,7 @@ from app.models.financial import FinanceConfig, FinancialMetrics  # noqa: F401
 from app.models.invoice import Invoice
 from app.models.operation import OperationData
 from app.models.project import ProjectMetrics  # noqa: F401
+from app.models.research import CustomerMaterial, CustomerResearch  # noqa: F401
 from app.models.user import User
 
 

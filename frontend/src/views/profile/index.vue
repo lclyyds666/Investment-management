@@ -38,6 +38,25 @@
             </el-form-item>
           </el-form>
         </el-card>
+
+        <!-- 修改登录账号 -->
+        <el-card shadow="never" class="pwd-card">
+          <template #header><span>修改登录账号</span></template>
+          <el-form ref="acctRef" :model="acct" :rules="acctRules" label-width="90px">
+            <el-form-item label="当前账号">
+              <el-input :model-value="info?.username" disabled />
+            </el-form-item>
+            <el-form-item label="新登录账号" prop="new_username">
+              <el-input v-model="acct.new_username" placeholder="3-64 位，字母/数字/下划线" />
+            </el-form-item>
+            <el-form-item label="当前密码" prop="password">
+              <el-input v-model="acct.password" type="password" show-password placeholder="输入当前密码以确认身份" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="acctSaving" @click="onChangeUsername">保存登录账号</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
       </el-col>
 
       <!-- 纸质签名上传 -->
@@ -98,7 +117,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { getMe, updateSignature, changeMyPassword } from '@/api/user'
+import { getMe, updateSignature, changeMyPassword, changeMyUsername } from '@/api/user'
 
 const userStore = useUserStore()
 const info = ref(null)
@@ -132,6 +151,34 @@ async function onChangePassword() {
     pwdRef.value?.clearValidate?.()
   } finally {
     pwdSaving.value = false
+  }
+}
+
+// 修改登录账号（用户名）
+const acctRef = ref()
+const acctSaving = ref(false)
+const acct = reactive({ new_username: '', password: '' })
+const acctRules = {
+  new_username: [
+    { required: true, message: '请输入新登录账号', trigger: 'blur' },
+    { min: 3, max: 64, message: '长度 3-64 位', trigger: 'blur' },
+    { pattern: /^[a-zA-Z0-9_]+$/, message: '仅允许字母、数字、下划线', trigger: 'blur' }
+  ],
+  password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }]
+}
+
+async function onChangeUsername() {
+  await acctRef.value?.validate()
+  acctSaving.value = true
+  try {
+    const res = await changeMyUsername(acct.new_username, acct.password)
+    ElMessage.success('登录账号已更新')
+    acct.new_username = acct.password = ''
+    acctRef.value?.clearValidate?.()
+    info.value = res
+    userStore.setUserInfo(res)
+  } finally {
+    acctSaving.value = false
   }
 }
 

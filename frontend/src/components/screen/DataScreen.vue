@@ -53,13 +53,13 @@
           <div class="panel-title center">
             全国业务天眼 · 实时物流飞线 <em>点击省份 · 两侧数据联动</em>
           </div>
-          <ScreenMap :data="provinceData" hub="山东省" :height="fullscreen ? '660px' : '600px'" @province-click="onProvince" />
+          <ScreenMap hub="山东省" :height="fullscreen ? '660px' : '600px'" @province-click="onProvince" />
         </div>
       </section>
 
-      <!-- 右侧：审批跑马灯 + AI 分析舱 -->
+      <!-- 右侧：审批跑马灯(可选) + AI 分析舱 -->
       <section class="col col-right">
-        <div class="panel">
+        <div v-if="showApproval" class="panel">
           <div class="panel-title">7 级审批流 · 实时动态</div>
           <div class="marquee" @mouseenter="pauseMarquee = true" @mouseleave="pauseMarquee = false">
             <div class="marquee-track" :class="{ paused: pauseMarquee }">
@@ -95,7 +95,11 @@ import ScreenMap from '@/components/screen/ScreenMap.vue'
 import { getDashboard, aiDiagnose, getFinancial } from '@/api/operation'
 import { listContracts } from '@/api/contract'
 
-const props = defineProps({ fullscreen: { type: Boolean, default: false } })
+const props = defineProps({
+  fullscreen: { type: Boolean, default: false },
+  // 是否显示「合同审批动态」跑马灯（战略总览页关闭，大屏投放保留）
+  showApproval: { type: Boolean, default: true }
+})
 const router = useRouter()
 const userStore = useUserStore()
 

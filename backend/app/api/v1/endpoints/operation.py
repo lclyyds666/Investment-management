@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.contract import Contract
 from app.models.invoice import Invoice
 from app.models.operation import OperationData
+from app.models.project import ProjectMetrics
 from app.schemas.common import Response
 from app.schemas.financial import (
     AvailableFundsIn,
@@ -267,3 +268,70 @@ async def upload_projects(
         total_gross_profit=sum((r.gross_profit for r in rows), Decimal("0")),
         projects=detail,
     ))
+
+
+@router.get(
+    "/projects/geo",
+    response_model=Response[dict],
+    summary="大屏地图点位（项目→城市，数据驱动）",
+    dependencies=[Depends(get_current_user)],
+)
+def projects_geo(
+    hub: str = Query("山东省", description="中枢省(飞线汇聚点)"),
+    db: Session = Depends(get_db),
+):
+    """按城市聚合 biz_project_metrics 的已入库项目，返回大屏地图所需的动态点位。
+
+    - 城市/经纬度由上传时从项目名自动解析并入库（见 services/geo_gazetteer.py）。
+    - `version` 为廉价数据指纹（项目数 + 投入合计），前端轮询到它变化即刷新地图，
+      实现「上传即上屏」。
+    """
+    rows = db.scalars(
+        select(ProjectMetrics).where(ProjectMetrics.lng.isnot(None))
+    ).all()
+
+    # 按城市聚合（同城多项目合并点位，金额相加、项目名收集）。
+    by_city: dict[str, dict] = {}
+    for r in rows:
+        key = r.city or r.province or r.project_name
+        agg = by_city.get(key)
+        if agg is None:
+            agg = {
+                "city": r.city or key,
+                "province": r.province or "",
+                "coord": [float(r.lng), float(r.lat)],
+                "invested": 0.0,
+                "realized": 0.0,
+                "gross_profit": 0.0,
+                "projects": [],
+            }
+            by_city[key] = agg
+        agg["invested"] += float(r.invested_amount or 0)
+        agg["realized"] += float(r.realized_scale or 0)
+        agg["gross_profit"] += float(r.gross_profit or 0)
+        agg["projects"].append(r.project_name)
+
+    points = []
+    for agg in by_city.values():
+        # value 作为点位/飞线强度基准 = 投入金额（现存业务规模）。
+        agg["value"] = round(agg["invested"], 2)
+        points.append(agg)
+    points.sort(key=lambda p: p["value"], reverse=True)
+
+    total = db.execute(
+        select(
+            func.count(ProjectMetrics.id),
+            func.coalesce(func.sum(ProjectMetrics.invested_amount), 0),
+        )
+    ).one()
+    matched = len(rows)
+    unmatched = int(total[0]) - matched  # 已入库但未解析出城市的项目数
+
+    return Response.ok({
+        "hub": hub,
+        "points": points,
+        "matched": matched,
+        "unmatched": unmatched,
+        # 数据指纹：项目总数 + 投入合计（整数分），任一变化即触发前端刷新。
+        "version": f"{int(total[0])}-{int(Decimal(str(total[1])) * 100)}",
+    })

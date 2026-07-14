@@ -51,10 +51,24 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = "deepseek-chat"
     AI_TIMEOUT_SECONDS: float = 40.0
 
+    # 客户 AI 尽调：Web 搜索（默认博查 Bocha，国内可直连）。
+    # 未配置 SEARCH_API_KEY 时自动跳过联网检索并在报告中标注（不影响其余段落）。
+    SEARCH_PROVIDER: str = "bocha"
+    SEARCH_API_KEY: str = ""
+    SEARCH_BASE_URL: str = "https://api.bochaai.com/v1/web-search"
+    SEARCH_COUNT: int = 8
+    # 上传的准入资料原始文件存放目录（相对后端工作目录；已 gitignore）。
+    UPLOAD_DIR: str = "uploads"
+
     @property
     def AI_ENABLED(self) -> bool:
         """是否具备调用真实大模型的条件。"""
         return bool(self.DEEPSEEK_API_KEY.strip())
+
+    @property
+    def SEARCH_ENABLED(self) -> bool:
+        """是否具备联网检索条件（配了搜索 API Key）。"""
+        return bool(self.SEARCH_API_KEY.strip())
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod

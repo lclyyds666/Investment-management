@@ -40,6 +40,11 @@ export function setAvailableFunds(availableFunds) {
   return request.put('/operation/financial/available', { available_funds: availableFunds })
 }
 
+/** 大屏地图点位（项目→城市，数据驱动） */
+export function getProjectsGeo(hub = '山东省') {
+  return request.get('/operation/projects/geo', { params: { hub } })
+}
+
 /** 上传供管公司项目统计表(含 Sheet2) */
 export function uploadProjects(file) {
   const form = new FormData()

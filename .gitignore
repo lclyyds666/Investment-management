@@ -222,3 +222,6 @@ __marimo__/
 *.xlsx
 *.xls
 *.csv
+
+# 客户准入资料上传目录(原始文件，勿入库)
+backend/uploads/

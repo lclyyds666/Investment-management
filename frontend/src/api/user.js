@@ -15,6 +15,11 @@ export function changeMyPassword(oldPassword, newPassword) {
   return request.put('/users/me/password', { old_password: oldPassword, new_password: newPassword })
 }
 
+/** 修改本人登录账号（用户名）；需当前密码确认 */
+export function changeMyUsername(newUsername, password) {
+  return request.put('/users/me/username', { new_username: newUsername, password })
+}
+
 /** 用户列表 / 组织架构（支持 keyword / role / is_active 筛选） */
 export function listUsers(params = {}) {
   return request.get('/users', { params })

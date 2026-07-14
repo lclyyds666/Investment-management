@@ -19,7 +19,7 @@
         <el-table-column prop="contact" label="联系人" width="110" />
         <el-table-column prop="phone" label="电话" width="150" />
         <el-table-column prop="address" label="地址" min-width="180" show-overflow-tooltip />
-        <el-table-column label="准入资料" width="120" align="center">
+        <el-table-column label="资料" width="120" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.admission_files?.length" type="success" size="small" effect="plain">
               {{ row.admission_files.length }} 个附件
@@ -27,9 +27,10 @@
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center">
+        <el-table-column label="操作" width="270" align="center">
           <template #default="{ row }">
             <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
+            <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
             <el-button size="small" type="primary" link :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
           </template>
@@ -85,25 +86,31 @@
         <el-descriptions-item label="电话">{{ current.phone || '—' }}</el-descriptions-item>
         <el-descriptions-item label="地址">{{ current.address || '—' }}</el-descriptions-item>
         <el-descriptions-item label="备注">{{ current.remark || '无' }}</el-descriptions-item>
-        <el-descriptions-item label="准入资料附件">
-          <div v-if="current.admission_files?.length">
-            <div v-for="(f, i) in current.admission_files" :key="i" class="file-line">
-              <el-icon><Document /></el-icon> {{ f.name }}
-              <el-button size="small" link type="primary" @click="ElMessage.info('演示附件，暂不支持预览下载')">查看</el-button>
+        <el-descriptions-item label="资料">
+          <div v-if="viewMaterials.length">
+            <div v-for="m in viewMaterials" :key="m.id" class="file-line">
+              <el-icon><Document /></el-icon>
+              <span class="fname">{{ m.filename }}</span>
+              <el-button size="small" link type="primary" @click="previewFile(m)">预览</el-button>
+              <el-button size="small" link @click="downloadFile(m)">下载</el-button>
             </div>
           </div>
-          <span v-else class="muted">无</span>
+          <span v-else class="muted">无（可在「AI」中上传资料）</span>
         </el-descriptions-item>
       </el-descriptions>
     </el-drawer>
+
+    <!-- AI 智能调研 -->
+    <CustomerResearchDialog v-model="researchVisible" :customer="researchCustomer" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Refresh, View, Edit, Delete, Document, UploadFilled } from '@element-plus/icons-vue'
-import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/api/customer'
+import { Search, Plus, Refresh, View, Edit, Delete, Document, UploadFilled, MagicStick } from '@element-plus/icons-vue'
+import { listCustomers, createCustomer, updateCustomer, deleteCustomer, listMaterials, fetchMaterialBlob } from '@/api/customer'
+import CustomerResearchDialog from '@/components/CustomerResearchDialog.vue'
 
 const loading = ref(false)
 const list = ref([])
@@ -172,7 +179,36 @@ async function onDelete(row) {
 
 const viewVisible = ref(false)
 const current = ref(null)
-function openView(row) { current.value = row; viewVisible.value = true }
+const viewMaterials = ref([])
+async function openView(row) {
+  current.value = row
+  viewVisible.value = true
+  viewMaterials.value = []
+  try { viewMaterials.value = await listMaterials(row.id) } catch { /* 忽略资料加载失败 */ }
+}
+async function previewFile(m) {
+  try {
+    const blob = await fetchMaterialBlob(current.value.id, m.id)
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { ElMessage.error('预览失败') }
+}
+async function downloadFile(m) {
+  try {
+    const blob = await fetchMaterialBlob(current.value.id, m.id)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = m.filename
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch { ElMessage.error('下载失败') }
+}
+
+// AI 智能调研
+const researchVisible = ref(false)
+const researchCustomer = ref({})
+function openResearch(row) { researchCustomer.value = row; researchVisible.value = true }
 
 onMounted(load)
 </script>

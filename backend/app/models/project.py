@@ -36,3 +36,8 @@ class ProjectMetrics(Base):
     )
     pay_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="付款日期")
     term_months: Mapped[str] = mapped_column(String(16), default="", comment="合同期限(月)")
+    # —— 地理点位（由项目名自动解析并入库，驱动大屏地图；见 services/geo_gazetteer.py）——
+    city: Mapped[str] = mapped_column(String(50), default="", comment="解析出的城市名")
+    province: Mapped[str] = mapped_column(String(50), default="", comment="解析出的省/直辖市")
+    lng: Mapped[Decimal | None] = mapped_column(Numeric(9, 5), nullable=True, comment="经度")
+    lat: Mapped[Decimal | None] = mapped_column(Numeric(9, 5), nullable=True, comment="纬度")

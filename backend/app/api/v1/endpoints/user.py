@@ -21,6 +21,7 @@ from app.schemas.user import (
     PasswordChange,
     PasswordReset,
     SignatureUpdate,
+    UsernameChange,
     UserBrief,
     UserCreate,
     UserOut,
@@ -68,6 +69,38 @@ def change_my_password(
     current_user.hashed_password = hash_password(payload.new_password)
     db.commit()
     return Response.ok({"id": current_user.id}, message="密码修改成功")
+
+
+@router.put(
+    "/me/username",
+    response_model=Response[UserOut],
+    summary="修改本人登录账号(用户名)",
+)
+def change_my_username(
+    payload: UsernameChange,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """本人自助修改登录账号：需当前密码确认；账号唯一。
+
+    令牌以用户 ID 为主体，改名后无需重新登录。
+    """
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="密码错误，无法修改登录账号")
+    new_name = payload.new_username.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="登录账号不能为空")
+    if new_name == current_user.username:
+        raise HTTPException(status_code=400, detail="新登录账号与当前一致")
+    exists = db.scalar(
+        select(User).where(User.username == new_name, User.id != current_user.id)
+    )
+    if exists:
+        raise HTTPException(status_code=400, detail="该登录账号已被占用")
+    current_user.username = new_name
+    db.commit()
+    db.refresh(current_user)
+    return Response.ok(UserOut.model_validate(current_user), message="登录账号已更新")
 
 
 # --------------------------------------------------------------------------- #

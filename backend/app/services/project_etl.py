@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.project import ProjectMetrics
+from app.services.geo_gazetteer import resolve_city
 
 WAN = Decimal("10000")  # 万元 → 元
 
@@ -133,6 +134,17 @@ def upsert_projects(db: Session, parsed: list[dict]) -> list[ProjectMetrics]:
         row.gross_profit = item["gross_profit"]
         row.profit_rate = item["profit_rate"]
         row.term_months = item["term_months"]
+        # 从项目名自动解析城市并入库（驱动大屏地图点位）；解析不到则留空、不阻断入库。
+        geo = resolve_city(item["project_name"])
+        if geo:
+            row.city, row.province, lng, lat = geo
+            row.lng = Decimal(str(lng))
+            row.lat = Decimal(str(lat))
+        else:
+            row.city = ""
+            row.province = ""
+            row.lng = None
+            row.lat = None
         saved.append(row)
     db.commit()
     for r in saved:

@@ -31,6 +31,12 @@ router.beforeEach(async (to) => {
     }
   }
 
+  // 仅超级管理员页面：非超管即便直访 URL 也拦回首页
+  if (to.meta?.requiresSuperuser && !userStore.isSuperuser) {
+    ElMessage.error('该页面仅超级管理员可访问')
+    return { path: '/dashboard' }
+  }
+
   // 角色拦截
   const roles = to.meta?.roles
   if (roles && roles.length && !userStore.hasRole(roles)) {
