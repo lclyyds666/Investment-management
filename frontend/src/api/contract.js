@@ -68,3 +68,12 @@ export async function fetchContractAttachmentBlob(id) {
   if (!resp.ok) throw new Error('附件获取失败')
   return await resp.blob()
 }
+
+/** 生成并下载「法律文件审批表」.docx（后端 python-docx 生成，3cm 行高 + 指定字体） */
+export async function fetchLegalDocBlob(id) {
+  const resp = await fetch(`/api/v1/contracts/${id}/legal-doc`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+  })
+  if (!resp.ok) throw new Error('审批表生成失败')
+  return await resp.blob()
+}

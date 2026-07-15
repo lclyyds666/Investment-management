@@ -4,12 +4,17 @@
       <template #header>
         <div class="card-header">
           <span>多渠道数据集成</span>
-          <el-button :icon="Refresh" @click="load">刷新</el-button>
+          <div class="header-right">
+            <el-radio-group v-model="bizFilter" size="small">
+              <el-radio-button v-for="t in BIZ_TYPES" :key="t" :value="t">{{ t }}</el-radio-button>
+            </el-radio-group>
+            <el-button :icon="Refresh" @click="load">刷新</el-button>
+          </div>
         </div>
       </template>
 
       <div class="grid">
-        <el-card v-for="c in channels" :key="c.id" shadow="hover" class="ch-card">
+        <el-card v-for="c in filteredChannels" :key="c.id" shadow="hover" class="ch-card">
           <div class="ch-top">
             <span class="ch-logo">{{ c.logo }}</span>
             <div class="ch-meta">
@@ -37,6 +42,7 @@
             <el-button size="small" :icon="Upload" @click="openData(c)">回传平台数据</el-button>
           </div>
         </el-card>
+        <el-empty v-if="!filteredChannels.length" description="该类型下暂无渠道" :image-size="60" />
       </div>
     </el-card>
 
@@ -125,6 +131,14 @@ import { listChannels, getChannelData, importChannelData } from '@/api/channel'
 
 const loading = ref(false)
 const channels = ref([])
+
+// 业务类型筛选：文旅业务 / 其他（历史 4 个渠道均为文旅业务）
+const bizFilter = ref('全部')
+const BIZ_TYPES = ['全部', '文旅业务', '其他']
+const filteredChannels = computed(() => {
+  if (bizFilter.value === '全部') return channels.value
+  return channels.value.filter((c) => (c.biz_type || '文旅业务') === bizFilter.value)
+})
 
 async function load() {
   loading.value = true
@@ -228,6 +242,7 @@ onMounted(load)
 
 <style scoped lang="scss">
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.header-right { display: flex; align-items: center; gap: 12px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .ch-card { :deep(.el-card__body) { padding: 16px; } }
 .ch-top { display: flex; align-items: center; gap: 12px; }

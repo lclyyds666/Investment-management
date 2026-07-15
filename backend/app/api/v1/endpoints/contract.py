@@ -1,20 +1,28 @@
-"""合同端点（合同全生命周期 + 7 级逐级合规审批流）。
+"""合同端点 —— 【合同(法律)类审批】路径（合同全生命周期 + 逐级审批流）。
 
-审批链（顺序即流转顺序）：
-    业务经办 → 业务复核 → 风控审核 → 财务经办 → 财务复核 → 供管公司负责人 → 投资公司负责人
+⚠️ 审批路径区分（两条流程互不干扰、各自独立）：
+- 本模块 `/contracts/*` = **合同(法律)类审批**：合同全生命周期管理，审批操作入口
+  内嵌在前端「合同管理」页；审批人在其环节直接「通过/驳回」。
+- `/approval`（前端「业务审批」，原审批中心）= **日常业务类审批**，为独立模块，
+  当前为存根页，后续单独开发；与本合同审批流无任何共享状态或逻辑。
+
+合同审批链（`APPROVAL_CHAIN`，顺序即流转顺序）：
+    业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司分管领导
 
 流程：
 - 业务经办创建草稿并「提交审批」：自动完成第 0 级（附加本人电子签名），
-  合同进入 pending，current_step=1，正式流入审批中心。
+  合同进入 pending，current_step=1（供管公司负责人），进入待审批。
 - 后续每一级：仅当前 current_step 对应角色（或超管）可「通过」，
   通过时自动附加本人电子签名快照，随后 current_step+1；走完末级即 approved。
 - 任一级可「驳回」（原因必填），合同置为 rejected，全程审批记录留存作审计。
 """
+import io
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,6 +43,10 @@ from app.models.user import User
 from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
 from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
+from app.services import legal_doc as legal_doc_svc
+
+_OPINION_ROLES = {r for r, _ in legal_doc_svc.OPINION_ROLES}
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 router = APIRouter()
 
@@ -394,3 +406,46 @@ def download_attachment(
     if not path.exists():
         raise HTTPException(status_code=404, detail="附件文件缺失")
     return FileResponse(str(path), filename=contract.attachment_name or contract.attachment_stored)
+
+
+# --------------------------------------------------------------------------- #
+# 法律文件审批表(.docx，严格 3cm 行高 + 方正小标宋简体/仿宋_GB2312)
+# --------------------------------------------------------------------------- #
+@router.get("/{contract_id}/legal-doc", summary="生成并下载法律文件审批表(.docx)")
+def download_legal_doc(
+    contract_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    contract = _get_contract_or_404(db, contract_id)
+    creator = _names_map(db, {contract.created_by}).get(contract.created_by, "")
+
+    approvals = db.scalars(
+        select(Approval).where(Approval.contract_id == contract_id).order_by(Approval.id.asc())
+    ).all()
+    ap_names = _names_map(db, {a.approver_id for a in approvals})
+    # 每个意见栏取该角色最近一次“通过”的意见 + 签批人 + 日期
+    opinions: dict[str, dict] = {}
+    for a in approvals:
+        if a.approver_role in _OPINION_ROLES and a.action == ApprovalAction.APPROVE:
+            opinions[a.approver_role] = {
+                "comment": a.comment or "同意",
+                "approver_name": ap_names.get(a.approver_id, ""),
+                "date": str(a.created_at)[:10] if a.created_at else "",
+            }
+
+    data = legal_doc_svc.build_legal_doc(
+        {
+            "title": contract.title,
+            "contract_no": contract.contract_no,
+            "sign_date": str(contract.sign_date) if contract.sign_date else "",
+            "creator_name": creator,
+        },
+        opinions,
+    )
+    fname = quote(f"法律文件审批表_{contract.contract_no}.docx")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=_DOCX_MIME,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"},
+    )

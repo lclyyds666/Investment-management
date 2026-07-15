@@ -7,11 +7,8 @@ from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 from app.core.enums import (
     CONTRACT_STATUS_LABELS,
-    CONTRACT_TYPE_LABELS,
     ContractStatus,
-    ContractType,
     role_at_step,
-    role_label,
 )
 
 
@@ -23,9 +20,10 @@ class ContractBase(BaseModel):
     sign_date: Optional[date] = None
     remark: str = ""
     # 审批单业务字段
-    contract_type: ContractType = ContractType.PAYMENT
+    contract_type: str = ""          # 合同类型：改为手动输入的自由文本
     department: str = ""
     customer_name: str = ""
+    customer_credit_code: str = ""   # 客户统一社会信用代码（选客户时联动填充）
     business_type: str = ""
     # 合同全生命周期新增字段
     is_internal: bool = False
@@ -33,11 +31,11 @@ class ContractBase(BaseModel):
     currency: str = "人民币"
     payment_terms: str = ""
 
-    # 兼容历史数据：迁移新增的可空列（如 payment_terms）在旧行为 NULL，
+    # 兼容历史数据：迁移新增的可空列在旧行为 NULL，
     # 序列化为 ContractOut 时按空串处理，避免 string_type 校验 500。
     @field_validator(
-        "party_a", "party_b", "remark", "department", "customer_name",
-        "business_type", "subject", "currency", "payment_terms",
+        "party_a", "party_b", "remark", "contract_type", "department", "customer_name",
+        "customer_credit_code", "business_type", "subject", "currency", "payment_terms",
         mode="before",
     )
     @classmethod
@@ -56,9 +54,10 @@ class ContractUpdate(BaseModel):
     amount: Optional[Decimal] = None
     sign_date: Optional[date] = None
     remark: Optional[str] = None
-    contract_type: Optional[ContractType] = None
+    contract_type: Optional[str] = None
     department: Optional[str] = None
     customer_name: Optional[str] = None
+    customer_credit_code: Optional[str] = None
     business_type: Optional[str] = None
     is_internal: Optional[bool] = None
     subject: Optional[str] = None
@@ -85,7 +84,8 @@ class ContractOut(ContractBase):
     @computed_field
     @property
     def contract_type_label(self) -> str:
-        return CONTRACT_TYPE_LABELS.get(self.contract_type.value, self.contract_type.value)
+        # 合同类型已改为自由文本，直接回显
+        return self.contract_type or ""
 
     @computed_field
     @property

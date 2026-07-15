@@ -46,6 +46,7 @@
           <el-input v-model="form.customer_code" :disabled="isEdit" placeholder="如 KH-010" />
         </el-form-item>
         <el-form-item label="客户名称" prop="name"><el-input v-model="form.name" /></el-form-item>
+        <el-form-item label="社会信用代码"><el-input v-model="form.social_credit_code" placeholder="统一社会信用代码(18 位)" /></el-form-item>
         <el-row :gutter="12">
           <el-col :span="12"><el-form-item label="联系人"><el-input v-model="form.contact" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="电话"><el-input v-model="form.phone" /></el-form-item></el-col>
@@ -82,6 +83,7 @@
       <el-descriptions v-if="current" :column="1" border>
         <el-descriptions-item label="客户ID">{{ current.customer_code }}</el-descriptions-item>
         <el-descriptions-item label="客户名称">{{ current.name }}</el-descriptions-item>
+        <el-descriptions-item label="社会信用代码">{{ current.social_credit_code || '—' }}</el-descriptions-item>
         <el-descriptions-item label="联系人">{{ current.contact || '—' }}</el-descriptions-item>
         <el-descriptions-item label="电话">{{ current.phone || '—' }}</el-descriptions-item>
         <el-descriptions-item label="地址">{{ current.address || '—' }}</el-descriptions-item>
@@ -133,7 +135,7 @@ const saving = ref(false)
 const isEdit = ref(false)
 const editingId = ref(null)
 const formRef = ref()
-const emptyForm = () => ({ customer_code: '', name: '', contact: '', phone: '', address: '', admission_files: [], remark: '' })
+const emptyForm = () => ({ customer_code: '', name: '', social_credit_code: '', contact: '', phone: '', address: '', admission_files: [], remark: '' })
 const form = reactive(emptyForm())
 const rules = {
   customer_code: [{ required: true, message: '请输入客户ID', trigger: 'blur' }],
@@ -146,7 +148,8 @@ function openCreate() {
 function openEdit(row) {
   isEdit.value = true; editingId.value = row.id
   Object.assign(form, {
-    customer_code: row.customer_code, name: row.name, contact: row.contact, phone: row.phone,
+    customer_code: row.customer_code, name: row.name, social_credit_code: row.social_credit_code || '',
+    contact: row.contact, phone: row.phone,
     address: row.address, admission_files: [...(row.admission_files || [])], remark: row.remark
   })
   formRef.value?.clearValidate?.(); dialogVisible.value = true

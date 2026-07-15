@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import Boolean, Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import ContractStatus, ContractType
+from app.core.enums import ContractStatus
 from app.db.base import Base
 
 
@@ -26,14 +26,12 @@ class Contract(Base):
     remark: Mapped[str] = mapped_column(Text, default="", comment="备注")
 
     # ---- 审批单打印所需的业务字段 ----
-    contract_type: Mapped[ContractType] = mapped_column(
-        SAEnum(ContractType, native_enum=False, length=16, values_callable=lambda e: [m.value for m in e]),
-        default=ContractType.PAYMENT,
-        nullable=False,
-        comment="单据类型：payment=付款审批单 / business=业务审批单",
+    contract_type: Mapped[str] = mapped_column(
+        String(64), default="", comment="合同类型(自由文本，手动填写)"
     )
     department: Mapped[str] = mapped_column(String(64), default="", comment="申请部门")
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称")
+    customer_credit_code: Mapped[str] = mapped_column(String(32), default="", comment="客户统一社会信用代码")
     business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型(旧字段，保留兼容)")
 
     # ---- 合同全生命周期新增字段 ----

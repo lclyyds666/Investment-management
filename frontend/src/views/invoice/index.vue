@@ -37,8 +37,8 @@
             <el-button v-if="row.status === 'pending'" size="small" type="success" link @click="issue(row)">
               确认开票
             </el-button>
-            <el-button size="small" type="primary" link :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
+            <el-button size="small" type="primary" plain :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="danger" plain :icon="Delete" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
         <template #empty>暂无发票数据</template>

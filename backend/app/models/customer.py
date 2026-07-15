@@ -13,6 +13,7 @@ class Customer(Base):
         String(64), unique=True, index=True, nullable=False, comment="客户ID/编码"
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False, comment="客户名称")
+    social_credit_code: Mapped[str] = mapped_column(String(32), default="", comment="统一社会信用代码")
     address: Mapped[str] = mapped_column(String(255), default="", comment="地址")
     contact: Mapped[str] = mapped_column(String(64), default="", comment="联系人")
     phone: Mapped[str] = mapped_column(String(32), default="", comment="电话")

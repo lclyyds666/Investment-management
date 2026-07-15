@@ -11,6 +11,7 @@ class FileRef(BaseModel):
 
 class CustomerBase(BaseModel):
     name: str
+    social_credit_code: str = ""
     address: str = ""
     contact: str = ""
     phone: str = ""
@@ -24,6 +25,7 @@ class CustomerCreate(CustomerBase):
 
 class CustomerUpdate(BaseModel):
     name: Optional[str] = None
+    social_credit_code: Optional[str] = None
     address: Optional[str] = None
     contact: Optional[str] = None
     phone: Optional[str] = None

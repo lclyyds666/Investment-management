@@ -8,6 +8,7 @@ from app.core.enums import CHANNEL_CATEGORY_LABELS
 
 class ChannelBase(BaseModel):
     name: str
+    biz_type: str = "文旅业务"
     category: str = "other"
     url: str = ""
     account: str = ""
@@ -23,6 +24,7 @@ class ChannelCreate(ChannelBase):
 
 class ChannelUpdate(BaseModel):
     name: Optional[str] = None
+    biz_type: Optional[str] = None
     category: Optional[str] = None
     url: Optional[str] = None
     account: Optional[str] = None

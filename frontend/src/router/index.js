@@ -40,26 +40,6 @@ const routes = [
         }
       },
       {
-        path: 'contract',
-        name: 'Contract',
-        component: () => import('@/views/contract/index.vue'),
-        // 合同管理：归入「经营合规管理」一级菜单；全部角色可进入，页面内按角色控制操作
-        meta: { title: '合同管理', icon: 'Document', group: '经营合规管理', groupIcon: 'DocumentChecked' }
-      },
-      {
-        path: 'approval',
-        name: 'Approval',
-        component: () => import('@/views/approval/index.vue'),
-        // 审批中心：归入「经营合规管理」；6 级审批人角色
-        meta: { title: '审批中心', icon: 'Stamp', roles: APPROVER_ROLES, group: '经营合规管理', groupIcon: 'DocumentChecked' }
-      },
-      {
-        path: 'customer',
-        name: 'Customer',
-        component: () => import('@/views/customer/index.vue'),
-        meta: { title: '客户档案库', icon: 'Postcard' }
-      },
-      {
         path: 'channel',
         name: 'Channel',
         component: () => import('@/views/channel/index.vue'),
@@ -90,6 +70,27 @@ const routes = [
           group: '智慧财务管理',
           groupIcon: 'Wallet'
         }
+      },
+      {
+        path: 'contract',
+        name: 'Contract',
+        component: () => import('@/views/contract/index.vue'),
+        // 合同管理：归入「经营合规管理」一级菜单；全部角色可进入，页面内按角色控制操作
+        meta: { title: '合同管理', icon: 'Document', group: '经营合规管理', groupIcon: 'DocumentChecked' }
+      },
+      {
+        path: 'approval',
+        name: 'Approval',
+        component: () => import('@/views/approval/index.vue'),
+        // 业务审批(原审批中心)：日常业务类审批，当前为存根页（功能建设中）；
+        // 合同(法律)类审批已内嵌到「合同管理」页，两条审批路径互不干扰。
+        meta: { title: '业务审批', icon: 'Stamp', roles: APPROVER_ROLES, group: '经营合规管理', groupIcon: 'DocumentChecked' }
+      },
+      {
+        path: 'customer',
+        name: 'Customer',
+        component: () => import('@/views/customer/index.vue'),
+        meta: { title: '客户档案库', icon: 'Postcard' }
       },
       {
         // 兼容旧地址 /invoice → 新地址 /finance/invoice

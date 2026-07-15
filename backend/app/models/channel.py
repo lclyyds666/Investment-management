@@ -14,6 +14,7 @@ class Channel(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
     name: Mapped[str] = mapped_column(String(100), nullable=False, comment="平台名称")
+    biz_type: Mapped[str] = mapped_column(String(16), default="文旅业务", comment="业务类型:文旅业务/其他")
     category: Mapped[str] = mapped_column(String(16), default="other", comment="类别 ticket/hotel/ota/other")
     url: Mapped[str] = mapped_column(String(255), default="", comment="平台地址")
     account: Mapped[str] = mapped_column(String(128), default="", comment="登录账号(Mock)")
