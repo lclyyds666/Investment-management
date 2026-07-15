@@ -34,4 +34,8 @@ CALL `__add_col_if_absent`('attachment_stored', "`attachment_stored` VARCHAR(255
 
 DROP PROCEDURE IF EXISTS `__add_col_if_absent`;
 
-SELECT '合同全生命周期迁移完成（is_internal/subject/currency/payment_terms/attachment_*）。' AS message;
+-- 历史行回填：payment_terms 以 TEXT 方式新增(可空)，旧行为 NULL；
+-- 统一回填为空串，避免序列化为字符串字段时报 string_type。
+UPDATE `biz_contract` SET `payment_terms` = '' WHERE `payment_terms` IS NULL;
+
+SELECT '合同全生命周期迁移完成（is_internal/subject/currency/payment_terms/attachment_*，已回填 NULL）。' AS message;

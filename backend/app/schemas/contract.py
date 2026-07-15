@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 from app.core.enums import (
     CONTRACT_STATUS_LABELS,
@@ -32,6 +32,17 @@ class ContractBase(BaseModel):
     subject: str = ""
     currency: str = "人民币"
     payment_terms: str = ""
+
+    # 兼容历史数据：迁移新增的可空列（如 payment_terms）在旧行为 NULL，
+    # 序列化为 ContractOut 时按空串处理，避免 string_type 校验 500。
+    @field_validator(
+        "party_a", "party_b", "remark", "department", "customer_name",
+        "business_type", "subject", "currency", "payment_terms",
+        mode="before",
+    )
+    @classmethod
+    def _none_to_empty_str(cls, v):
+        return "" if v is None else v
 
 
 class ContractCreate(ContractBase):
