@@ -66,11 +66,35 @@ const routes = [
         meta: { title: '渠道业务管理', icon: 'Connection' }
       },
       {
-        path: 'invoice',
+        path: 'finance/fund',
+        name: 'FinanceFund',
+        component: () => import('@/views/finance/fund.vue'),
+        // 资金管理：归入「智慧财务管理」菜单组；当前为存根页
+        meta: {
+          title: '资金管理',
+          icon: 'Coin',
+          roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES],
+          group: '智慧财务管理',
+          groupIcon: 'Wallet'
+        }
+      },
+      {
+        path: 'finance/invoice',
         name: 'Invoice',
         component: () => import('@/views/invoice/index.vue'),
-        // 智慧财务管理：财务 + 负责人
-        meta: { title: '智慧财务管理', icon: 'Tickets', roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES] }
+        // 发票管理：归入「智慧财务管理」菜单组；财务 + 负责人
+        meta: {
+          title: '发票管理',
+          icon: 'Tickets',
+          roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES],
+          group: '智慧财务管理',
+          groupIcon: 'Wallet'
+        }
+      },
+      {
+        // 兼容旧地址 /invoice → 新地址 /finance/invoice
+        path: 'invoice',
+        redirect: '/finance/invoice'
       },
       {
         path: 'org',

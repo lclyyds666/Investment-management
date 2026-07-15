@@ -14,12 +14,7 @@
       <el-table :data="pending" border stripe>
         <el-table-column prop="contract_no" label="合同编号" width="150" />
         <el-table-column prop="title" label="合同名称" min-width="180" show-overflow-tooltip />
-        <el-table-column label="类型" width="130" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.contract_type_label }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="customer_name" label="客户" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="customer_name" label="客户名称" min-width="130" show-overflow-tooltip />
         <el-table-column label="金额(元)" width="130" align="right">
           <template #default="{ row }">{{ Number(row.amount).toLocaleString() }}</template>
         </el-table-column>

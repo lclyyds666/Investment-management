@@ -19,17 +19,19 @@
       <!-- 基础字段 -->
       <el-descriptions :column="2" border class="mb">
         <el-descriptions-item label="合同编号">{{ contract.contract_no }}</el-descriptions-item>
-        <el-descriptions-item label="单据类型">{{ contract.contract_type_label }}</el-descriptions-item>
+        <el-descriptions-item label="合同类型">{{ contract.contract_type_label }}</el-descriptions-item>
         <el-descriptions-item label="合同名称" :span="2">{{ contract.title }}</el-descriptions-item>
         <el-descriptions-item label="申请部门">{{ contract.department || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="业务类型">{{ contract.business_type || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="是否内部合同">{{ contract.is_internal ? '是' : '否' }}</el-descriptions-item>
+        <el-descriptions-item label="合同标的" :span="2">{{ contract.subject || '—' }}</el-descriptions-item>
         <el-descriptions-item label="客户名称">{{ contract.customer_name || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="乙方">{{ contract.party_b || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="金额">
-          ¥ {{ Number(contract.amount).toLocaleString() }}
+        <el-descriptions-item label="签订日期">{{ contract.sign_date || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="合同金额">
+          {{ Number(contract.amount).toLocaleString() }} {{ contract.currency || '' }}
           <span class="rmb">（{{ rmb }}）</span>
         </el-descriptions-item>
-        <el-descriptions-item label="签订日期">{{ contract.sign_date || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="币种">{{ contract.currency || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="付款条件" :span="2">{{ contract.payment_terms || '—' }}</el-descriptions-item>
         <el-descriptions-item label="创建人(业务经办)">{{ contract.creator_name || '—' }}</el-descriptions-item>
         <el-descriptions-item label="当前环节">
           <el-tag v-if="contract.current_role_label" type="warning" size="small">
@@ -37,11 +39,19 @@
           </el-tag>
           <span v-else>—</span>
         </el-descriptions-item>
+        <el-descriptions-item label="合同附件" :span="2">
+          <template v-if="contract.attachment_name">
+            <el-icon><Document /></el-icon>
+            <span class="att-name">{{ contract.attachment_name }}</span>
+            <el-button size="small" link type="primary" @click="downloadAttachment">下载</el-button>
+          </template>
+          <span v-else>—</span>
+        </el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">{{ contract.remark || '无' }}</el-descriptions-item>
       </el-descriptions>
 
-      <!-- 7 级流转进度 -->
-      <h4 class="section-title"><el-icon><Guide /></el-icon> 审批流转进度（7 级）</h4>
+      <!-- 流转进度 -->
+      <h4 class="section-title"><el-icon><Guide /></el-icon> 审批流转进度（{{ APPROVAL_CHAIN.length }} 级）</h4>
       <el-steps :active="stepsActive" align-center :process-status="processStatus" finish-status="success" class="chain-steps">
         <el-step v-for="(r, i) in APPROVAL_CHAIN" :key="r" :title="roleLabel(r)" />
       </el-steps>
@@ -72,53 +82,44 @@
       </el-timeline>
     </div>
 
-    <!-- 打印区：付款/业务审批单（@media print 时仅显示此区域） -->
+    <!-- 打印区：法律文件审批表（@media print 时仅显示此区域） -->
     <teleport to="body">
       <div class="approval-print-root" v-if="contract">
         <div class="print-sheet">
-          <div class="print-title">山东出版供应链管理有限公司</div>
-          <div class="print-subtitle">{{ contract.contract_type_label }}</div>
-          <table class="print-table">
+          <div class="print-title">山东出版供应链法律文件审批表</div>
+          <table class="print-table legal-table">
             <tbody>
               <tr>
-                <th>申请部门</th><td>{{ contract.department || '—' }}</td>
-                <th>业务类型</th><td>{{ contract.business_type || '—' }}</td>
+                <th class="lbl">发文单位</th><td>{{ PUBLISHER }}</td>
+                <th class="lbl">发文时间</th><td>{{ contract.sign_date || '—' }}</td>
+                <th class="lbl">发文人员</th><td>{{ contract.creator_name || '—' }}</td>
               </tr>
               <tr>
-                <th>客户名称</th><td>{{ contract.customer_name || contract.party_b || '—' }}</td>
-                <th>合同编号</th><td>{{ contract.contract_no }}</td>
+                <th class="lbl">文件名称</th><td colspan="5">{{ contract.title }}</td>
               </tr>
               <tr>
-                <th>合同名称</th><td colspan="3">{{ contract.title }}</td>
+                <th class="lbl">合同编号</th><td colspan="5">{{ contract.contract_no }}</td>
               </tr>
-              <tr>
-                <th>金额(小写)</th><td>¥ {{ Number(contract.amount).toLocaleString() }}</td>
-                <th>金额(大写)</th><td>{{ rmb }}</td>
-              </tr>
-              <tr>
-                <th>备注</th><td colspan="3" class="print-remark">{{ contract.remark || '无' }}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="print-sign-title">审批流转与签章</div>
-          <table class="print-table print-sign-table">
-            <thead>
-              <tr><th>审批环节</th><th>审批人</th><th>意见</th><th>签章</th><th>日期</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="a in approvals" :key="'p' + a.id">
-                <td>{{ a.role_label }}</td>
-                <td>{{ a.approver_name }}</td>
-                <td>{{ a.action === 'reject' ? '驳回：' + a.comment : (a.comment || '同意') }}</td>
-                <td class="print-sig-cell">
-                  <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="print-sig" alt="" />
+              <tr v-for="op in opinionRows" :key="op.role">
+                <th class="lbl opinion-lbl">{{ op.label }}</th>
+                <td colspan="5" class="opinion-cell">
+                  <div class="opinion-body">
+                    <span class="opinion-text">{{ opinionText(op.role) }}</span>
+                    <img
+                      v-if="opinionByRole[op.role]?.signature_snapshot"
+                      :src="opinionByRole[op.role].signature_snapshot"
+                      class="print-sig"
+                      alt="签章"
+                    />
+                  </div>
+                  <div class="opinion-date" v-if="opinionByRole[op.role]">
+                    {{ opinionByRole[op.role].approver_name }}　{{ fmtDate(opinionByRole[op.role].created_at) }}
+                  </div>
                 </td>
-                <td>{{ fmtDate(a.created_at) }}</td>
               </tr>
             </tbody>
           </table>
-          <div class="print-footer">打印时间：{{ nowText }}　本单据由业务平台自动生成，签章为电子签名。</div>
+          <div class="print-footer">打印时间：{{ nowText }}　本表由业务平台依据审批流转记录自动生成，签章为电子签名。</div>
         </div>
       </div>
     </teleport>
@@ -127,10 +128,21 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { Printer, Clock, Guide } from '@element-plus/icons-vue'
-import { getContract, listApprovals } from '@/api/contract'
-import { APPROVAL_CHAIN, STATUS_META, roleLabel } from '@/constants/business'
+import { ElMessage } from 'element-plus'
+import { Printer, Clock, Guide, Document } from '@element-plus/icons-vue'
+import { getContract, listApprovals, fetchContractAttachmentBlob } from '@/api/contract'
+import { APPROVAL_CHAIN, STATUS_META, ROLES, roleLabel } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
+
+// 发文单位固定为「出版供应链」（打印模板要求）
+const PUBLISHER = '出版供应链'
+// 法律文件审批表的 4 个意见栏（对应审批链上业务经办之后的 4 个节点）
+const opinionRows = [
+  { role: ROLES.SCM_DIRECTOR, label: '供管公司负责人意见' },
+  { role: ROLES.LEGAL_COUNSEL, label: '法律顾问意见' },
+  { role: ROLES.RISK_AUDITOR, label: '投资公司法务风控部意见' },
+  { role: ROLES.INVEST_DIRECTOR, label: '投资公司分管领导意见' }
+]
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -144,6 +156,33 @@ const approvals = ref([])
 const nowText = ref('')
 
 const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) : ''))
+
+// 各审批节点角色 → 该节点最近一次审批记录（用于打印意见栏回填意见+签章）
+const opinionByRole = computed(() => {
+  const map = {}
+  for (const a of approvals.value) map[a.approver_role] = a
+  return map
+})
+function opinionText(role) {
+  const a = opinionByRole.value[role]
+  if (!a) return ''  // 尚未流转到该节点：留空
+  if (a.action === 'reject') return `【驳回】${a.comment || ''}`
+  return a.comment || '同意'
+}
+
+async function downloadAttachment() {
+  if (!contract.value?.attachment_name) return
+  try {
+    const blob = await fetchContractAttachmentBlob(contract.value.id)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = contract.value.attachment_name
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch {
+    ElMessage.error('附件下载失败')
+  }
+}
 
 const stepsActive = computed(() => {
   const c = contract.value
@@ -202,6 +241,7 @@ watch(
 .flex-1 { flex: 1; }
 .mb { margin-bottom: 8px; }
 .rmb { color: #909399; font-size: 12px; }
+.att-name { margin: 0 8px 0 4px; }
 .section-title {
   display: flex;
   align-items: center;
@@ -251,13 +291,31 @@ watch(
   color: #000;
   font-family: 'SimSun', 'Songti SC', serif;
 }
-.print-title { text-align: center; font-size: 22px; font-weight: 700; letter-spacing: 2px; }
+.print-title { text-align: center; font-size: 22px; font-weight: 700; letter-spacing: 2px; margin-bottom: 18px; }
 .print-subtitle { text-align: center; font-size: 18px; margin: 6px 0 18px; }
 .print-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
+/* 法律文件审批表：标签列固定宽、意见栏加高留白便于签章 */
+.legal-table .lbl {
+  width: 110px;
+  text-align: center;
+  white-space: nowrap;
+  font-weight: 700;
+}
+.legal-table .opinion-lbl { height: 90px; }
+.legal-table .opinion-cell { vertical-align: top; }
+.legal-table .opinion-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-height: 70px;
+  gap: 12px;
+}
+.legal-table .opinion-text { flex: 1; line-height: 1.7; white-space: pre-wrap; }
+.legal-table .opinion-date { text-align: right; color: #333; font-size: 12px; margin-top: 4px; }
 .print-table th,
 .print-table td {
   border: 1px solid #000;

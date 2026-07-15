@@ -3,43 +3,46 @@ from enum import Enum
 
 
 class Role(str, Enum):
-    """系统角色（7 级严格权限）。
+    """系统角色。
 
-    角色顺序即合规审批流的逐级流转顺序，见 :data:`APPROVAL_CHAIN`。
+    合同审批流的逐级流转顺序见 :data:`APPROVAL_CHAIN`（业务经办→供管公司负责人→
+    法律顾问→投资公司法务风控→投资公司分管领导）。其余角色（业务复核/财务经办/
+    财务复核）保留用于模块级页面权限，不在合同审批链上。
     """
 
     BUSINESS_HANDLER = "business_handler"      # 业务经办：合同源头录入与提交
     BUSINESS_REVIEWER = "business_reviewer"    # 业务复核
-    RISK_AUDITOR = "risk_auditor"              # 风控审核
+    RISK_AUDITOR = "risk_auditor"              # 投资公司法务风控（原“风控审核”，值不变）
     FINANCE_HANDLER = "finance_handler"        # 财务经办
-    FINANCE_REVIEWER = "finance_reviewer"      # 财务复核
+    FINANCE_REVIEWER = "finance_reviewer"      # 投资公司财务复核（原“财务复核”，值不变）
     SCM_DIRECTOR = "scm_director"              # 供管公司负责人
-    INVEST_DIRECTOR = "invest_director"        # 投资公司负责人
+    INVEST_DIRECTOR = "invest_director"        # 投资公司分管领导（原“投资公司负责人”，值不变）
+    LEGAL_COUNSEL = "legal_counsel"            # 法律顾问：仅看合同管理 + 审批中心给意见
 
     @property
     def label(self) -> str:
         return ROLE_LABELS[self]
 
 
-# 角色中文名
+# 角色中文名（重命名仅改此处显示名，角色值保持不变，避免历史数据迁移）
 ROLE_LABELS: dict[Role, str] = {
     Role.BUSINESS_HANDLER: "业务经办",
     Role.BUSINESS_REVIEWER: "业务复核",
-    Role.RISK_AUDITOR: "风控审核",
+    Role.RISK_AUDITOR: "投资公司法务风控",
     Role.FINANCE_HANDLER: "财务经办",
-    Role.FINANCE_REVIEWER: "财务复核",
+    Role.FINANCE_REVIEWER: "投资公司财务复核",
     Role.SCM_DIRECTOR: "供管公司负责人",
-    Role.INVEST_DIRECTOR: "投资公司负责人",
+    Role.INVEST_DIRECTOR: "投资公司分管领导",
+    Role.LEGAL_COUNSEL: "法律顾问",
 }
 
-# 7 级审批链：列表顺序 == 逐级流转顺序（index 即 step）
+# 合同审批链：列表顺序 == 逐级流转顺序（index 即 step）
+#   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司分管领导
 APPROVAL_CHAIN: list[Role] = [
     Role.BUSINESS_HANDLER,
-    Role.BUSINESS_REVIEWER,
-    Role.RISK_AUDITOR,
-    Role.FINANCE_HANDLER,
-    Role.FINANCE_REVIEWER,
     Role.SCM_DIRECTOR,
+    Role.LEGAL_COUNSEL,
+    Role.RISK_AUDITOR,
     Role.INVEST_DIRECTOR,
 ]
 

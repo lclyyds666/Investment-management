@@ -14,6 +14,7 @@
           <el-button v-if="isBusinessHandler" type="primary" :icon="Plus" @click="openCreate">
             新建合同
           </el-button>
+          <el-button :icon="Tickets" @click="openLedger">生成合同台账</el-button>
           <el-button :icon="Refresh" @click="load">刷新</el-button>
         </div>
       </div>
@@ -21,12 +22,7 @@
       <el-table :data="filteredList" border stripe>
         <el-table-column prop="contract_no" label="合同编号" width="150" />
         <el-table-column prop="title" label="合同名称" min-width="180" show-overflow-tooltip />
-        <el-table-column label="类型" width="130" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.contract_type_label }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="customer_name" label="客户" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="customer_name" label="客户名称" min-width="130" show-overflow-tooltip />
         <el-table-column label="金额(元)" width="130" align="right">
           <template #default="{ row }">{{ Number(row.amount).toLocaleString() }}</template>
         </el-table-column>
@@ -51,51 +47,87 @@
     </el-card>
 
     <!-- 新建 / 编辑合同 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑合同' : '新建合同'" width="600px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="96px">
-        <el-form-item label="单据类型" prop="contract_type">
-          <el-radio-group v-model="form.contract_type">
-            <el-radio-button :value="CONTRACT_TYPES.PAYMENT">业务付款审批单</el-radio-button>
-            <el-radio-button :value="CONTRACT_TYPES.BUSINESS">业务审批单</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="合同编号" prop="contract_no">
-          <el-input v-model="form.contract_no" :disabled="isEdit" placeholder="如 HT-2026-010" />
-        </el-form-item>
-        <el-form-item label="合同名称" prop="title">
-          <el-input v-model="form.title" />
-        </el-form-item>
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑合同' : '新建合同'" width="640px" top="6vh">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="申请部门"><el-input v-model="form.department" /></el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="业务类型"><el-input v-model="form.business_type" /></el-form-item>
+            <el-form-item label="合同编号" prop="contract_no">
+              <el-input v-model="form.contract_no" :disabled="isEdit" placeholder="如 HT-2026-010" />
+            </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="客户名称"><el-input v-model="form.customer_name" /></el-form-item>
-        <el-form-item label="乙方"><el-input v-model="form.party_b" /></el-form-item>
-        <el-form-item label="金额(元)" prop="amount">
-          <el-input-number v-model="form.amount" :min="0" :step="10000" style="width: 100%" />
+        <el-form-item label="合同名称" prop="title">
+          <el-input v-model="form.title" />
         </el-form-item>
-        <el-form-item label="签订日期">
-          <el-date-picker v-model="form.sign_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="合同类型" prop="contract_type">
+              <el-radio-group v-model="form.contract_type">
+                <el-radio-button :value="CONTRACT_TYPES.PAYMENT">业务付款审批单</el-radio-button>
+                <el-radio-button :value="CONTRACT_TYPES.BUSINESS">业务审批单</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="是否内部合同">
+              <el-switch v-model="form.is_internal" active-text="是" inactive-text="否" inline-prompt />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="合同标的">
+          <el-input v-model="form.subject" placeholder="合同标的物 / 服务内容" />
         </el-form-item>
-        <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" /></el-form-item>
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="客户名称"><el-input v-model="form.customer_name" /></el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="签订日期">
+              <el-date-picker v-model="form.sign_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="合同金额" prop="amount">
+              <el-input-number v-model="form.amount" :min="0" :step="10000" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="币种">
+              <el-select v-model="form.currency" style="width: 100%">
+                <el-option v-for="c in CURRENCIES" :key="c" :label="c" :value="c" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="付款条件">
+          <el-input v-model="form.payment_terms" type="textarea" :rows="2" placeholder="如：验收后 30 日内付款 / 分期付款安排等" />
+        </el-form-item>
+        <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="合同附件">
           <el-upload
             class="upload-mock"
             drag
             action="#"
             :auto-upload="false"
+            :show-file-list="false"
             :limit="1"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
             :on-change="onFileChange"
-            :on-exceed="() => ElMessage.warning('仅可上传一个附件（演示）')"
+            :on-exceed="() => ElMessage.warning('仅可上传一个附件')"
           >
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
             <div class="el-upload__text">点击或拖拽文件到此处<em>上传合同附件</em></div>
             <template #tip>
-              <div class="upload-tip">支持 PDF / Word / 图片，单个 ≤ 20MB（演示区域，不会真实上传）</div>
+              <div class="upload-tip">
+                支持 PDF / Word / Excel / 图片，单个 ≤ 20MB
+                <span v-if="pickedFile" class="picked">已选择：{{ pickedFile.name }}</span>
+                <span v-else-if="form.attachment_name" class="picked">当前附件：{{ form.attachment_name }}</span>
+              </div>
             </template>
           </el-upload>
         </el-form-item>
@@ -106,6 +138,34 @@
       </template>
     </el-dialog>
 
+    <!-- 合同台账 -->
+    <el-dialog v-model="ledgerVisible" title="合同台账" width="92%" top="5vh">
+      <div class="ledger-toolbar">
+        <span class="ledger-count">共 {{ list.length }} 条合同</span>
+        <el-button type="primary" size="small" :icon="Download" @click="exportLedger">导出 CSV</el-button>
+      </div>
+      <el-table :data="list" border stripe size="small" max-height="60vh">
+        <el-table-column type="index" label="#" width="50" align="center" />
+        <el-table-column prop="contract_no" label="合同编号" width="130" />
+        <el-table-column prop="title" label="合同名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="合同类型" width="120" align="center">
+          <template #default="{ row }">{{ row.contract_type_label }}</template>
+        </el-table-column>
+        <el-table-column label="是否内部合同" width="110" align="center">
+          <template #default="{ row }">{{ row.is_internal ? '是' : '否' }}</template>
+        </el-table-column>
+        <el-table-column prop="subject" label="合同标的" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="sign_date" label="签订日期" width="110" align="center" />
+        <el-table-column prop="customer_name" label="客户名称" min-width="130" show-overflow-tooltip />
+        <el-table-column label="合同金额" width="130" align="right">
+          <template #default="{ row }">{{ Number(row.amount).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column prop="currency" label="币种" width="80" align="center" />
+        <el-table-column prop="payment_terms" label="付款条件" min-width="140" show-overflow-tooltip />
+        <template #empty>暂无合同数据</template>
+      </el-table>
+    </el-dialog>
+
     <!-- 合同详情（流转时间轴 + 打印审批单） -->
     <ContractDetailDrawer v-model="detailVisible" :contract-id="detailId" />
   </div>
@@ -114,13 +174,16 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled } from '@element-plus/icons-vue'
+import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { ROLES, CONTRACT_TYPES, STATUS_META } from '@/constants/business'
+import { ROLES, CONTRACT_TYPES, CONTRACT_TYPE_LABELS, STATUS_META } from '@/constants/business'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
 import {
-  listContracts, createContract, updateContract, deleteContract, submitContract
+  listContracts, createContract, updateContract, deleteContract, submitContract,
+  uploadContractAttachment
 } from '@/api/contract'
+
+const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 
 const userStore = useUserStore()
 const isBusinessHandler = computed(
@@ -155,18 +218,23 @@ const saving = ref(false)
 const isEdit = ref(false)
 const editingId = ref(null)
 const formRef = ref()
+const pickedFile = ref(null)  // 本次待上传的合同附件（保存后随合同上传）
 const emptyForm = () => ({
   contract_no: '',
   title: '',
   contract_type: CONTRACT_TYPES.PAYMENT,
   department: '',
-  business_type: '',
+  is_internal: false,
+  subject: '',
   customer_name: '',
   party_a: '山东出版供应链管理公司',
   party_b: '',
   amount: 0,
+  currency: '人民币',
+  payment_terms: '',
   sign_date: null,
-  remark: ''
+  remark: '',
+  attachment_name: ''
 })
 const form = reactive(emptyForm())
 const rules = {
@@ -177,6 +245,7 @@ const rules = {
 function openCreate() {
   isEdit.value = false
   editingId.value = null
+  pickedFile.value = null
   Object.assign(form, emptyForm())
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
@@ -184,18 +253,23 @@ function openCreate() {
 function openEdit(row) {
   isEdit.value = true
   editingId.value = row.id
+  pickedFile.value = null
   Object.assign(form, {
     contract_no: row.contract_no,
     title: row.title,
     contract_type: row.contract_type,
     department: row.department,
-    business_type: row.business_type,
+    is_internal: !!row.is_internal,
+    subject: row.subject || '',
     customer_name: row.customer_name,
     party_a: row.party_a,
     party_b: row.party_b,
     amount: Number(row.amount),
+    currency: row.currency || '人民币',
+    payment_terms: row.payment_terms || '',
     sign_date: row.sign_date || null,
-    remark: row.remark
+    remark: row.remark,
+    attachment_name: row.attachment_name || ''
   })
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
@@ -204,14 +278,24 @@ async function onSave() {
   await formRef.value?.validate()
   saving.value = true
   try {
+    let contractId = editingId.value
     if (isEdit.value) {
-      const { contract_no, ...rest } = form
+      const { contract_no, attachment_name, ...rest } = form
       await updateContract(editingId.value, { ...rest })
-      ElMessage.success('修改成功')
     } else {
-      await createContract({ ...form })
-      ElMessage.success('创建成功')
+      const { attachment_name, ...rest } = form
+      const created = await createContract({ ...rest })
+      contractId = created?.id
     }
+    // 附件：保存合同后再真实上传（覆盖式）
+    if (pickedFile.value && contractId) {
+      try {
+        await uploadContractAttachment(contractId, pickedFile.value)
+      } catch (e) {
+        ElMessage.warning('合同已保存，但附件上传失败，请在编辑中重试')
+      }
+    }
+    ElMessage.success(isEdit.value ? '修改成功' : '创建成功')
     dialogVisible.value = false
     load()
   } finally {
@@ -219,13 +303,53 @@ async function onSave() {
   }
 }
 function onFileChange(file) {
-  ElMessage.success(`已选择附件：${file.name}（演示，未真实上传）`)
+  const raw = file?.raw
+  if (!raw) return
+  if (raw.size > 20 * 1024 * 1024) {
+    ElMessage.error('附件超过 20MB 上限')
+    return
+  }
+  pickedFile.value = raw
 }
 
 async function onSubmit(row) {
   await submitContract(row.id)
-  ElMessage.success('已提交审批，合同进入 7 级审批流')
+  ElMessage.success('已提交审批，合同进入审批流')
   load()
+}
+
+// 合同台账
+const ledgerVisible = ref(false)
+function openLedger() {
+  ledgerVisible.value = true
+}
+function exportLedger() {
+  const headers = ['合同编号', '合同名称', '合同类型', '是否内部合同', '合同标的', '签订日期', '客户名称', '合同金额', '币种', '付款条件']
+  const rows = list.value.map((c) => [
+    c.contract_no,
+    c.title,
+    CONTRACT_TYPE_LABELS[c.contract_type] || c.contract_type_label || '',
+    c.is_internal ? '是' : '否',
+    c.subject || '',
+    c.sign_date || '',
+    c.customer_name || '',
+    Number(c.amount || 0),
+    c.currency || '',
+    (c.payment_terms || '').replace(/\r?\n/g, ' ')
+  ])
+  const esc = (v) => {
+    const s = String(v ?? '')
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const csv = [headers, ...rows].map((r) => r.map(esc).join(',')).join('\r\n')
+  // 加 BOM 确保 Excel 正确识别 UTF-8 中文
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `合同台账_${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+  ElMessage.success(`已导出 ${rows.length} 条合同台账`)
 }
 async function onDelete(row) {
   try {
@@ -272,4 +396,12 @@ onMounted(load)
   :deep(.el-upload-dragger) { padding: 16px; }
 }
 .upload-tip { color: #a8abb2; font-size: 12px; margin-top: 4px; }
+.upload-tip .picked { color: #67c23a; margin-left: 8px; }
+.ledger-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.ledger-count { color: #909399; font-size: 13px; }
 </style>

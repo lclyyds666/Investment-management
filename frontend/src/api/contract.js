@@ -44,3 +44,27 @@ export function rejectContract(id, comment) {
 export function listApprovals(id) {
   return request.get(`/contracts/${id}/approvals`)
 }
+
+/** 上传合同附件（真实落盘，覆盖式单附件） */
+export function uploadContractAttachment(id, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return request.post(`/contracts/${id}/attachment`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  })
+}
+
+/** 合同附件下载接口路径（供带 token 拉取） */
+export function contractAttachmentUrl(id) {
+  return `/api/v1/contracts/${id}/attachment`
+}
+
+/** 以带 token 的请求拉取合同附件为 Blob（预览/下载） */
+export async function fetchContractAttachmentBlob(id) {
+  const resp = await fetch(contractAttachmentUrl(id), {
+    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+  })
+  if (!resp.ok) throw new Error('附件获取失败')
+  return await resp.blob()
+}

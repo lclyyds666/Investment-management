@@ -47,6 +47,7 @@ SEED_USERS = [
     {"username": "finr",   "full_name": "孙财复",     "role": Role.FINANCE_REVIEWER,  "department": "财务部",     "is_superuser": False},
     {"username": "scm",    "full_name": "周供管",     "role": Role.SCM_DIRECTOR,      "department": "供管公司",   "is_superuser": False},
     {"username": "inv",    "full_name": "吴投资",     "role": Role.INVEST_DIRECTOR,   "department": "投资公司",   "is_superuser": False},
+    {"username": "legal",  "full_name": "陈法顾",     "role": Role.LEGAL_COUNSEL,     "department": "法务部",     "is_superuser": False},
 ]
 
 SEED_LINES = ["图书发行", "数字出版", "物流仓储"]
@@ -194,8 +195,8 @@ def init() -> None:
         seed_finance_config(db)
         print("数据库初始化完成：已建表并写入种子数据。")
         print("默认账号(密码均为 123456)：")
-        print("  admin(超管) / op(业务经办) / review(业务复核) / risk(风控审核)")
-        print("  fin(财务经办) / finr(财务复核) / scm(供管负责人) / inv(投资负责人)")
+        print("  admin(超管) / op(业务经办) / scm(供管公司负责人) / legal(法律顾问)")
+        print("  risk(投资公司法务风控) / inv(投资公司分管领导) / review / fin / finr")
     finally:
         db.close()
 

@@ -23,13 +23,16 @@ export function listMaterials(cid) {
   return request.get(`/customers/${cid}/materials`)
 }
 
-/** 上传并解析准入资料（pdf/docx） */
-export function uploadMaterial(cid, file) {
+/** 批量上传并解析资料（pdf/docx/xlsx，可多选）
+ *  files: File[]；后端字段名统一为 files。timeout 按文件数放大(单文件解析可能较慢)。
+ *  返回 { succeeded, failed, warnings, total }。
+ */
+export function uploadMaterials(cid, files) {
   const form = new FormData()
-  form.append('file', file)
+  for (const f of files) form.append('files', f)
   return request.post(`/customers/${cid}/materials`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000
+    timeout: Math.max(60000, files.length * 40000)
   })
 }
 
@@ -52,12 +55,12 @@ export async function fetchMaterialBlob(cid, mid) {
   return await resp.blob()
 }
 
-/** 生成 AI 尽职调查报告（耗时 20-60s） */
+/** 生成 AI 分析报告（耗时 20-60s） */
 export function generateResearch(cid) {
   return request.post(`/customers/${cid}/research`, {}, { timeout: 120000 })
 }
 
-/** 获取最近一次尽调报告 */
+/** 获取最近一次分析报告 */
 export function getResearch(cid) {
   return request.get(`/customers/${cid}/research`)
 }

@@ -27,6 +27,11 @@ class ContractBase(BaseModel):
     department: str = ""
     customer_name: str = ""
     business_type: str = ""
+    # 合同全生命周期新增字段
+    is_internal: bool = False
+    subject: str = ""
+    currency: str = "人民币"
+    payment_terms: str = ""
 
 
 class ContractCreate(ContractBase):
@@ -44,6 +49,10 @@ class ContractUpdate(BaseModel):
     department: Optional[str] = None
     customer_name: Optional[str] = None
     business_type: Optional[str] = None
+    is_internal: Optional[bool] = None
+    subject: Optional[str] = None
+    currency: Optional[str] = None
+    payment_terms: Optional[str] = None
 
 
 class ContractOut(ContractBase):
@@ -55,6 +64,7 @@ class ContractOut(ContractBase):
     current_step: int = 0
     created_by: int
     creator_name: str = ""  # 由端点补充（业务经办姓名）
+    attachment_name: str = ""  # 合同附件原始文件名（空表示未上传）
 
     @computed_field
     @property

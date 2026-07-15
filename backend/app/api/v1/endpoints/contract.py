@@ -10,11 +10,16 @@
   通过时自动附加本人电子签名快照，随后 current_step+1；走完末级即 approved。
 - 任一级可「驳回」（原因必填），合同置为 rejected，全程审批记录留存作审计。
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_roles
+from app.core.config import settings
 from app.core.enums import (
     APPROVAL_CHAIN,
     ApprovalAction,
@@ -32,6 +37,10 @@ from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 
 router = APIRouter()
+
+# 合同附件允许的扩展名（与前端 accept 对齐）
+_ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
+_ATTACH_MAX_BYTES = 20 * 1024 * 1024  # 单个附件 ≤ 20MB
 
 
 # --------------------------------------------------------------------------- #
@@ -320,3 +329,68 @@ def reject_contract(
     db.commit()
     db.refresh(contract)
     return Response.ok(_to_out(contract, current_user.full_name))
+
+
+# --------------------------------------------------------------------------- #
+# 合同附件：真实上传 / 下载
+# --------------------------------------------------------------------------- #
+def _attachment_dir(contract_id: int) -> Path:
+    return Path(settings.UPLOAD_DIR) / f"contract_{contract_id}"
+
+
+@router.post(
+    "/{contract_id}/attachment",
+    response_model=Response[ContractOut],
+    summary="上传合同附件(业务经办，覆盖式单附件)",
+    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+)
+async def upload_attachment(
+    contract_id: int,
+    file: UploadFile = File(..., description="合同附件 PDF/Word/Excel/图片，≤20MB"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    contract = _get_contract_or_404(db, contract_id)
+    if not current_user.is_superuser and contract.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="只能为本人创建的合同上传附件")
+    fname = file.filename or "附件"
+    ext = Path(fname).suffix.lower()
+    if ext not in _ATTACH_EXT:
+        raise HTTPException(status_code=400, detail="不支持的附件格式（仅 PDF/Word/Excel/图片）")
+    content = await file.read()
+    if len(content) > _ATTACH_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="附件超过 20MB 上限")
+
+    d = _attachment_dir(contract_id)
+    d.mkdir(parents=True, exist_ok=True)
+    # 覆盖式：删除旧附件文件
+    if contract.attachment_stored:
+        old = d / contract.attachment_stored
+        try:
+            if old.exists():
+                old.unlink()
+        except OSError:
+            pass
+    stored = f"{uuid.uuid4().hex}{ext}"
+    (d / stored).write_bytes(content)
+    contract.attachment_name = fname
+    contract.attachment_stored = stored
+    db.commit()
+    db.refresh(contract)
+    names = _names_map(db, {contract.created_by})
+    return Response.ok(_to_out(contract, names.get(contract.created_by, "")), message="附件上传成功")
+
+
+@router.get("/{contract_id}/attachment", summary="下载合同附件原件")
+def download_attachment(
+    contract_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    contract = _get_contract_or_404(db, contract_id)
+    if not contract.attachment_stored:
+        raise HTTPException(status_code=404, detail="该合同暂无附件")
+    path = _attachment_dir(contract_id) / contract.attachment_stored
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="附件文件缺失")
+    return FileResponse(str(path), filename=contract.attachment_name or contract.attachment_stored)

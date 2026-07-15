@@ -35,13 +35,19 @@ _MAX_TEXT_FOR_LLM = 6000  # 喂给大模型的内部资料截断长度（控制 
 # 一、文件解析（PDF / Docx → 逐页文本）
 # --------------------------------------------------------------------------- #
 def extract_pages(filename: str, content: bytes) -> tuple[str, list[dict]]:
-    """返回 (file_type, pages)；pages=[{'page':1,'text':...}]。仅支持 pdf/docx。"""
+    """返回 (file_type, pages)；pages=[{'page':1,'text':...}]。支持 pdf/docx/xlsx。
+
+    - pdf/docx：逐页/整篇提取纯文本；
+    - xlsx：每个工作表(Sheet)转成 Markdown 表格,作为一"页",便于大模型准确理解经营数据。
+    """
     name = (filename or "").lower()
     if name.endswith(".pdf"):
         return "pdf", _extract_pdf(content)
     if name.endswith(".docx"):
         return "docx", _extract_docx(content)
-    raise ValueError("仅支持 .pdf / .docx 格式（旧 .doc、扫描件图片型 PDF 暂不支持）")
+    if name.endswith(".xlsx"):
+        return "xlsx", parse_excel_to_text(content)
+    raise ValueError("仅支持 .pdf / .docx / .xlsx 格式（旧 .doc/.xls、扫描件图片型 PDF 暂不支持）")
 
 
 def _extract_pdf(content: bytes) -> list[dict]:
@@ -71,6 +77,103 @@ def _extract_docx(content: bytes) -> list[dict]:
                 paras.append(" | ".join(cells))
     # docx 无严格分页，整篇作为第 1 页
     return [{"page": 1, "text": "\n".join(paras).strip()}]
+
+
+# --------------------------------------------------------------------------- #
+# 一（补充）、Excel 解析（.xlsx → 每个 Sheet 转 Markdown 表格）
+# --------------------------------------------------------------------------- #
+# 目的：把「年度项目投入及回款收益统计表」这类经营报表转成大模型可读的结构化文本，
+# 让 AI 在尽调分析时能准确引用表格中的经营数值，而不是拿到一堆乱码/二进制。
+# 复用已装的 openpyxl（不引入 pandas/tabulate 等重依赖）。
+_XLSX_MAX_ROWS = 60  # 每个 Sheet 最多取多少数据行（控制喂给大模型的 token）
+_XLSX_MAX_COLS = 20  # 每个 Sheet 最多取多少列
+
+
+def parse_excel_to_text(content: bytes) -> list[dict]:
+    """用 openpyxl 把 .xlsx 各工作表转成 Markdown 表格文本，每个 Sheet 作为一"页"。
+
+    - data_only=True：公式单元格取「缓存计算值」，避免把 '=SUM(...)' 之类喂给模型；
+    - read_only=True：大文件更省内存；
+    - 首个非空行作为表头，其余作为数据行；数值/日期做规范化；
+    - 行列超上限时截断并在文本内注明，防止 token 爆炸。
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    pages: list[dict] = []
+    try:
+        for idx, ws in enumerate(wb.worksheets, start=1):
+            md = _sheet_to_markdown(ws)
+            if md:
+                pages.append({"page": idx, "text": md})
+    finally:
+        wb.close()
+    # 全空工作簿也返回一页占位，保持与 pdf/docx 一致的结构
+    return pages or [{"page": 1, "text": ""}]
+
+
+def _fmt_cell(v: Any) -> str:
+    """单元格值 → 适合 Markdown 表格的字符串。"""
+    if v is None:
+        return ""
+    if hasattr(v, "isoformat"):  # datetime / date
+        try:
+            iso = v.isoformat()
+            if "T" in iso:  # datetime：零点只留日期，否则留到秒
+                d, t = iso.split("T", 1)
+                return d if t.startswith("00:00:00") else f"{d} {t[:8]}"
+            return iso  # date
+        except Exception:  # noqa: BLE001
+            return str(v)
+    if isinstance(v, float):
+        if v.is_integer():
+            return str(int(v))  # 1234.0 → 1234
+        # 避免大数被格式化成科学计数法(1e+06)，保留至多 4 位小数并去尾零
+        return f"{v:.4f}".rstrip("0").rstrip(".")
+    # 转义竖线、压平换行，避免破坏 Markdown 表格结构
+    return str(v).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _sheet_to_markdown(ws) -> str:
+    """单个工作表 → Markdown 表格（首个非空行作表头）。全空返回 ""。"""
+    def _row_empty(row) -> bool:
+        return all(c is None or str(c).strip() == "" for c in row)
+
+    rows: list[list] = []
+    for r in ws.iter_rows(values_only=True):
+        if _row_empty(r):
+            # 跳过前导/中间的完全空行；但保留数据主体
+            if not rows:
+                continue
+        rows.append(list(r))
+        if len(rows) >= _XLSX_MAX_ROWS + 1:  # 表头 1 行 + 数据上限
+            break
+    # 尾部空行清理
+    while rows and _row_empty(rows[-1]):
+        rows.pop()
+    if not rows:
+        return ""
+
+    width = min(max(len(r) for r in rows), _XLSX_MAX_COLS)
+
+    def _cells(row) -> list[str]:
+        return [_fmt_cell(row[i]) if i < len(row) else "" for i in range(width)]
+
+    header = rows[0]
+    head_cells = [(_fmt_cell(header[i]) if i < len(header) else "") or f"列{i + 1}" for i in range(width)]
+    body = rows[1:]
+
+    lines = [
+        f"### 工作表：{ws.title}",
+        "| " + " | ".join(head_cells) + " |",
+        "| " + " | ".join(["---"] * width) + " |",
+    ]
+    for row in body:
+        lines.append("| " + " | ".join(_cells(row)) + " |")
+    # ws.max_row 在 read_only 下可能为 None；用是否达到上限来提示截断
+    if len(body) >= _XLSX_MAX_ROWS:
+        lines.append(f"\n(数据行较多，仅展示前 {_XLSX_MAX_ROWS} 行，完整数据以原文件为准)")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #

@@ -12,10 +12,11 @@
       <div class="block-title">
         <span>资料</span>
         <el-upload
-          :auto-upload="false" :show-file-list="false" accept=".pdf,.docx" :on-change="onUpload"
+          multiple
+          :auto-upload="false" :show-file-list="false" accept=".pdf,.docx,.xlsx" :on-change="onPick"
         >
           <el-button size="small" type="primary" :icon="UploadFilled" :loading="uploading">
-            上传资料（PDF / Docx）
+            {{ uploading ? '上传解析中…' : '批量上传（PDF / Word / Excel）' }}
           </el-button>
         </el-upload>
       </div>
@@ -40,24 +41,24 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-else :image-size="48" description="请先上传该客户的资料（PDF/Docx）" />
+      <el-empty v-else :image-size="48" description="请先上传该客户的资料（PDF / Word / Excel）" />
     </div>
 
     <!-- 2) 生成报告 + 分析状态栏 -->
     <div class="block">
       <div class="block-title">
-        <span>尽职调查报告</span>
+        <span>分析报告</span>
         <el-button
           type="success" :icon="MagicStick" :loading="generating"
           :disabled="!materials.length" @click="onGenerate"
         >
-          {{ report ? '重新生成报告' : '生成调研报告' }}
+          {{ report ? '重新生成报告' : '生成分析报告' }}
         </el-button>
       </div>
 
       <!-- 分析状态栏 -->
       <el-steps v-if="generating" :active="step" finish-status="success" simple class="steps">
-        <el-step title="读取准入资料" />
+        <el-step title="读取资料" />
         <el-step title="联网检索资讯" />
         <el-step title="AI 智能综合" />
       </el-steps>
@@ -104,7 +105,8 @@
         </div>
       </template>
 
-      <el-empty v-else-if="!generating" :image-size="48" description="上传资料后点击「生成调研报告」" />
+      <!-- 生成前留空:不展示任何预设提示词 -->
+      <div v-else-if="!generating" class="report-empty"></div>
     </div>
   </el-dialog>
 </template>
@@ -114,7 +116,7 @@ import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, MagicStick, CopyDocument } from '@element-plus/icons-vue'
 import {
-  listMaterials, uploadMaterial, deleteMaterial, fetchMaterialBlob,
+  listMaterials, uploadMaterials, deleteMaterial, fetchMaterialBlob,
   generateResearch, getResearch
 } from '@/api/customer'
 
@@ -150,18 +152,43 @@ async function loadReport() {
   report.value = await getResearch(props.customer.id)
 }
 
-async function onUpload(f) {
-  const raw = f.raw
-  const name = (raw?.name || '').toLowerCase()
-  if (!name.endsWith('.pdf') && !name.endsWith('.docx')) {
-    ElMessage.error('仅支持 PDF / Docx 文件')
-    return
+// 批量上传：el-upload 多选时 on-change 会对每个文件各触发一次，
+// 这里用短延时把同一批文件收集齐后再一次性提交给后端（单请求批量）。
+const ALLOW_EXT = ['.pdf', '.docx', '.xlsx']
+let pending = []
+let pickTimer = null
+
+function onPick(f) {
+  if (f?.raw) pending.push(f.raw)
+  clearTimeout(pickTimer)
+  pickTimer = setTimeout(flushUpload, 80)
+}
+
+async function flushUpload() {
+  const batch = pending
+  pending = []
+  if (!batch.length) return
+
+  const valid = []
+  const bad = []
+  for (const raw of batch) {
+    const name = (raw?.name || '').toLowerCase()
+    if (ALLOW_EXT.some((e) => name.endsWith(e))) valid.push(raw)
+    else bad.push(raw?.name || '未命名')
   }
+  if (bad.length) ElMessage.warning(`已忽略不支持的文件（仅支持 PDF/Word/Excel）：${bad.join('、')}`)
+  if (!valid.length) return
+
   uploading.value = true
   try {
-    const res = await uploadMaterial(props.customer.id, raw)
-    ElMessage.success('上传并解析成功')
-    if (res?.warning) ElMessage.warning(res.warning)
+    const res = await uploadMaterials(props.customer.id, valid)
+    const okCount = res?.succeeded?.length || 0
+    const failed = res?.failed || []
+    const warnings = res?.warnings || []
+    if (okCount) ElMessage.success(`上传并解析成功 ${okCount} 个${failed.length ? `，失败 ${failed.length} 个` : ''}`)
+    else ElMessage.error('全部文件上传失败，请检查文件格式')
+    failed.forEach((x) => ElMessage.warning(`${x.filename}：${x.reason}`))
+    warnings.forEach((w) => ElMessage.warning(w))
     await loadMaterials()
   } finally {
     uploading.value = false
@@ -206,7 +233,7 @@ async function onGenerate() {
   try {
     report.value = await generateResearch(props.customer.id)
     step.value = 3
-    ElMessage.success('尽调报告已生成')
+    ElMessage.success('分析报告已生成')
   } finally {
     clearInterval(stepTimer)
     generating.value = false
@@ -243,6 +270,7 @@ function formatTime(t) {
 .src-meta { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 6px; }
 .doc-src { font-size: 13px; color: var(--el-text-color-regular); padding: 2px 0; }
 .report-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.report-empty { min-height: 8px; }
 .ki { font-size: 12px; color: var(--el-text-color-regular); }
 .muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }

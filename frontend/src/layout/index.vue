@@ -67,7 +67,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, User, SwitchButton } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { roleLabel as toRoleLabel } from '@/constants/business'
+import { roleLabel as toRoleLabel, ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,10 +88,13 @@ const roleLabel = computed(() => userStore.roleLabel || toRoleLabel(userStore.ro
 // 从路由表生成菜单：按角色 / 超管过滤，再按 meta.group 归组为折叠子菜单
 const menus = computed(() => {
   const root = router.options.routes.find((r) => r.path === '/')
+  const isLegalCounsel = !userStore.isSuperuser && userStore.role === ROLES.LEGAL_COUNSEL
   const visible = (root?.children || [])
     .filter((c) => c.meta?.title)
     .filter((c) => userStore.hasRole(c.meta.roles))
     .filter((c) => !c.meta.requiresSuperuser || userStore.isSuperuser)
+    // 法律顾问只保留「合同管理 / 审批中心」两个入口
+    .filter((c) => !isLegalCounsel || LEGAL_COUNSEL_PATHS.includes('/' + c.path))
 
   const result = []
   const groups = {}

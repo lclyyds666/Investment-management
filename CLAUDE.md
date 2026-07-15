@@ -72,9 +72,18 @@
 - **接口**:`GET/POST /customers/{cid}/materials`、`DELETE .../{mid}`、`GET .../{mid}/download`、`POST/GET /customers/{cid}/research`(所有登录用户可用)。
 - ⚠️ 生产上线后须跑 `20260714_customer_research.sql`(或 `create_all`)建表 + `pip install -r requirements.txt` 装新依赖 + 建 `uploads/` 目录授权 www-data。
 
+## 本轮迭代(2026-07-15):去演示化 + 客户资料增强 + 合同全生命周期
+> 详见 `需求规格说明书.md` 附录 D。均已构建并部署生产。
+1. **客户 AI 尽调**:新增 `.xlsx` 解析(`services/customer_research.py::parse_excel_to_text`,openpyxl 转 Markdown 表,零新增依赖);**批量上传**(上传接口 `files: list[UploadFile]`,逐个校验、单失败不阻断,返回 `{succeeded,failed,warnings}`)。术语「尽职调查报告」→「分析报告」。
+2. **去演示化**:登录页删除「演示账号」提示块(安全);各处「(演示)」文案清理。
+3. **导航**:「智慧财务管理」改为可折叠菜单组 = 资金管理(存根页)+ 发票管理;路由 `/finance/fund`、`/finance/invoice`,旧 `/invoice` 重定向。
+4. **角色与权限**:新增 `legal_counsel`(法律顾问,仅可访问「合同管理/审批中心」,前端菜单+守卫双保险);重命名(只改显示名、值不变):`risk_auditor`→投资公司法务风控、`finance_reviewer`→投资公司财务复核、`invest_director`→投资公司分管领导。
+5. **合同全生命周期**:审批链改为 **5 节点**(`APPROVAL_CHAIN`:业务经办→供管公司负责人→法律顾问→投资公司法务风控→投资公司分管领导);审批意见沿用 `biz_approval.comment`(未加表/列);`biz_contract` **新增列** is_internal/subject/currency/payment_terms/attachment_name/attachment_stored;**合同附件真实上传下载** `POST/GET /contracts/{id}/attachment`(落盘 `uploads/contract_{id}/`);打印改为「法律文件审批表」(模板 `合同打印模板.docx`,4 意见栏按角色回填);合同台账「生成合同台账」→ 导出 CSV。
+- ⚠️ **在途合同**:审批链由 7 级换 5 节点,旧「审批中」合同 `current_step` 可能错位,建议重新提交。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

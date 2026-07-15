@@ -133,46 +133,78 @@ def list_materials(cid: int, db: Session = Depends(get_db), _: User = Depends(ge
     return Response.ok([_material_out(m) for m in rows])
 
 
-@router.post("/{cid}/materials", response_model=Response[dict], summary="上传并解析准入资料(pdf/docx)")
-async def upload_material(
+@router.post("/{cid}/materials", response_model=Response[dict], summary="批量上传并解析准入资料(pdf/docx/xlsx)")
+async def upload_materials(
     cid: int,
-    file: UploadFile = File(..., description="准入资料 .pdf / .docx"),
+    files: list[UploadFile] = File(..., description="准入资料，可多选 .pdf / .docx / .xlsx"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """上传即解析：提取逐页文本 + 正则抽取关键信息；原始文件另存磁盘。"""
+    """批量上传即解析：逐个提取文本 + 正则抽取关键信息；原始文件另存磁盘。
+
+    单个文件失败(格式不支持/解析异常)不影响其余文件——收集进 failed 返回，接口不 500。
+    返回 {succeeded, failed, warnings, total}。
+    """
     if not db.get(Customer, cid):
         raise HTTPException(status_code=404, detail="客户不存在")
-    content = await file.read()
-    try:
-        file_type, pages = research_svc.extract_pages(file.filename or "", content)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"文件解析失败：{exc}")
+    if not files:
+        raise HTTPException(status_code=400, detail="未收到任何文件")
 
-    full_text = "\n".join(p["text"] for p in pages)
-    key_info = research_svc.extract_key_info(full_text)
-    stored_name = research_svc.save_file(cid, file.filename or "file", content)
+    models: list[CustomerMaterial] = []
+    failed: list[dict] = []
+    warnings: list[str] = []
 
-    m = CustomerMaterial(
-        customer_id=cid,
-        filename=file.filename or "未命名",
-        stored_name=stored_name,
-        file_type=file_type,
-        page_count=len(pages),
-        char_count=len(full_text),
-        pages=pages,
-        key_info=key_info,
-        uploaded_by=current_user.username,
-    )
-    db.add(m)
-    db.commit()
-    db.refresh(m)
-    out = _material_out(m)
-    if not full_text.strip():
-        out["warning"] = "未提取到文本，可能为扫描件(图片型)PDF，将无法用于内部资料分析。"
-    return Response.ok(out, message="上传并解析成功")
+    for file in files:
+        fname = file.filename or "未命名"
+        content = await file.read()
+        try:
+            file_type, pages = research_svc.extract_pages(fname, content)
+        except ValueError as exc:
+            failed.append({"filename": fname, "reason": str(exc)})
+            continue
+        except Exception as exc:  # noqa: BLE001 单文件解析异常不阻断其余
+            failed.append({"filename": fname, "reason": f"解析失败：{exc}"})
+            continue
+
+        full_text = "\n".join(p["text"] for p in pages)
+        key_info = research_svc.extract_key_info(full_text)
+        stored_name = research_svc.save_file(cid, fname, content)
+        models.append(
+            CustomerMaterial(
+                customer_id=cid,
+                filename=fname,
+                stored_name=stored_name,
+                file_type=file_type,
+                page_count=len(pages),
+                char_count=len(full_text),
+                pages=pages,
+                key_info=key_info,
+                uploaded_by=current_user.username,
+            )
+        )
+        if not full_text.strip():
+            warnings.append(f"{fname}：未提取到文本，可能为扫描件(图片型)PDF，将无法用于内部资料分析。")
+
+    if models:
+        db.add_all(models)
+        db.commit()
+        for m in models:
+            db.refresh(m)
+
+    succeeded = [_material_out(m) for m in models]
+    data = {
+        "succeeded": succeeded,
+        "failed": failed,
+        "warnings": warnings,
+        "total": len(files),
+    }
+    if not succeeded:
+        # 全部失败：仍返回 200 让前端按 failed 明细提示（符合"接口不 500"约定）
+        return Response.ok(data, message="全部文件上传失败，请检查文件格式")
+    msg = f"上传并解析成功 {len(succeeded)} 个"
+    if failed:
+        msg += f"，失败 {len(failed)} 个"
+    return Response.ok(data, message=msg)
 
 
 @router.get("/{cid}/materials/{mid}/download", summary="下载准入资料原件")

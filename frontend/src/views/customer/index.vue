@@ -31,7 +31,7 @@
           <template #default="{ row }">
             <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
             <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
-            <el-button size="small" type="primary" link :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -51,7 +51,7 @@
           <el-col :span="12"><el-form-item label="电话"><el-input v-model="form.phone" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
-        <el-form-item label="准入资料">
+        <el-form-item label="资料">
           <div class="files">
             <el-tag
               v-for="(f, i) in form.admission_files"
@@ -64,9 +64,9 @@
             </el-tag>
           </div>
           <el-upload
-            action="#" :auto-upload="false" :show-file-list="false" :on-change="onFileChange"
+            action="#" multiple :auto-upload="false" :show-file-list="false" :on-change="onFileChange"
           >
-            <el-button size="small" :icon="UploadFilled">上传准入资料（演示）</el-button>
+            <el-button size="small" :icon="UploadFilled">上传资料</el-button>
           </el-upload>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" /></el-form-item>
@@ -153,7 +153,7 @@ function openEdit(row) {
 }
 function onFileChange(file) {
   form.admission_files.push({ name: file.name, url: '' })
-  ElMessage.success(`已添加附件：${file.name}（演示）`)
+  ElMessage.success(`已添加附件：${file.name}`)
 }
 async function onSave() {
   await formRef.value?.validate()
@@ -221,4 +221,16 @@ onMounted(load)
 .files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .file-tag { display: inline-flex; align-items: center; gap: 4px; }
 .file-line { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+
+/* 「编辑」按钮:无任何背景色,文字改为白色 + 轻微加粗 */
+:deep(.op-edit.el-button.is-link) {
+  color: #fff;
+  font-weight: 600;
+  background-color: transparent;
+}
+:deep(.op-edit.el-button.is-link:hover),
+:deep(.op-edit.el-button.is-link:focus) {
+  color: #fff;
+  background-color: transparent;
+}
 </style>

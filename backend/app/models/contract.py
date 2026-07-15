@@ -2,7 +2,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ContractStatus, ContractType
@@ -34,7 +34,16 @@ class Contract(Base):
     )
     department: Mapped[str] = mapped_column(String(64), default="", comment="申请部门")
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称")
-    business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型")
+    business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型(旧字段，保留兼容)")
+
+    # ---- 合同全生命周期新增字段 ----
+    is_internal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否内部合同")
+    subject: Mapped[str] = mapped_column(String(500), default="", comment="合同标的")
+    currency: Mapped[str] = mapped_column(String(16), default="人民币", comment="币种")
+    payment_terms: Mapped[str] = mapped_column(Text, default="", comment="付款条件")
+    # 合同附件（真实落盘）：原始文件名 + 磁盘存储名（uuid+扩展名）
+    attachment_name: Mapped[str] = mapped_column(String(255), default="", comment="合同附件原始文件名")
+    attachment_stored: Mapped[str] = mapped_column(String(255), default="", comment="合同附件磁盘存储名")
 
     # ---- 审批流状态 ----
     status: Mapped[ContractStatus] = mapped_column(

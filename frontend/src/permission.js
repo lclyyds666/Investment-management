@@ -1,6 +1,7 @@
 import { ElMessage } from 'element-plus'
 import router from './router'
 import { useUserStore } from '@/store/user'
+import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
 
 const TITLE = import.meta.env.VITE_APP_TITLE || '业务平台'
 
@@ -35,6 +36,14 @@ router.beforeEach(async (to) => {
   if (to.meta?.requiresSuperuser && !userStore.isSuperuser) {
     ElMessage.error('该页面仅超级管理员可访问')
     return { path: '/dashboard' }
+  }
+
+  // 法律顾问：仅可访问「合同管理 / 审批中心 / 个人设置」，其余直访 URL 一律拦回合同管理
+  if (!userStore.isSuperuser && userStore.role === ROLES.LEGAL_COUNSEL) {
+    if (!LEGAL_COUNSEL_PATHS.includes(to.path)) {
+      return { path: '/contract' }
+    }
+    return true
   }
 
   // 角色拦截

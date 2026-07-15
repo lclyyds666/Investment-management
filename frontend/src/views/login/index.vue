@@ -48,10 +48,6 @@
           </el-button>
         </el-form-item>
       </el-form>
-      <div class="tips">
-        演示账号（密码均 123456）：op 业务经办 / review 业务复核 / risk 风控 /
-        fin 财务经办 / finr 财务复核 / scm 供管负责人 / inv 投资负责人 / admin 超管
-      </div>
     </el-card>
   </div>
 </template>
