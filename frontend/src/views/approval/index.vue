@@ -11,10 +11,23 @@
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <div class="toolbar-right">
-          <template v-if="isBusinessHandler">
-            <el-button type="primary" :icon="Money" @click="openCreate('payment')">新建付款审批单</el-button>
-            <el-button type="primary" plain :icon="Document" @click="openCreate('business')">新建业务审批单</el-button>
-          </template>
+          <!-- 新建审批：悬停展开下拉，选择审批单类型 -->
+          <el-dropdown
+            v-if="isBusinessHandler"
+            class="new-approval-dropdown"
+            trigger="hover"
+            @command="openCreate"
+          >
+            <el-button type="primary" :icon="Plus">
+              新建审批<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="payment" :icon="Money">业务付款审批单</el-dropdown-item>
+                <el-dropdown-item command="business" :icon="Document">业务审批单</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button :icon="Refresh" @click="load">刷新</el-button>
         </div>
       </div>
@@ -263,7 +276,7 @@
 import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Edit, Delete, Refresh, View, UploadFilled,
+  Search, Plus, ArrowDown, Edit, Delete, Refresh, View, UploadFilled,
   MagicStick, CopyDocument, Money, Document, Printer
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
@@ -551,7 +564,11 @@ loadCustomers()
 .approval-form :deep(.el-form-item__label) { white-space: nowrap; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
 .search-input { max-width: 340px; }
-.toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; }
+.toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* 新建审批下拉按钮：Hover 平滑过渡，箭头微动，贴合系统 Element Plus 风格 */
+.new-approval-dropdown :deep(.el-button) { transition: all 0.25s ease; }
+.new-approval-dropdown .el-icon--right { transition: transform 0.25s ease; }
+.new-approval-dropdown:hover .el-icon--right { transform: translateY(2px); }
 .cur-role { margin-top: 4px; font-size: 12px; color: #e6a23c; }
 .op-cell { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .op-cell :deep(.el-button) { margin: 0; }
