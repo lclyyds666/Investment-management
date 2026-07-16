@@ -47,6 +47,13 @@
                 <el-button size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
                 <el-button size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
               </template>
+              <!-- 精细化管控：已通过合同仅超级管理员可删除（非超管此按钮不渲染） -->
+              <el-button
+                v-if="canDeleteApproved(row)"
+                size="small" type="danger" :icon="Delete" @click="onDelete(row)"
+              >
+                删除
+              </el-button>
             </div>
           </template>
         </el-table-column>
@@ -308,6 +315,11 @@ const isBusinessHandler = computed(
 function canApprove(row) {
   if (row.status !== 'pending') return false
   return userStore.isSuperuser || row.current_role === userStore.role
+}
+
+// 精细化管控：已通过(已审核)合同仅超级管理员可删除；其余用户不显示删除按钮
+function canDeleteApproved(row) {
+  return row.status === 'approved' && userStore.isSuperuser
 }
 
 const loading = ref(false)

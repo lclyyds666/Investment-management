@@ -222,7 +222,7 @@ def update_contract(
 @router.delete(
     "/{contract_id}",
     response_model=Response[dict],
-    summary="删除合同(业务经办，仅草稿/驳回态)",
+    summary="删除合同(草稿/驳回态由业务经办删除；已通过合同仅超级管理员可删)",
     dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
 )
 def delete_contract(
@@ -231,6 +231,16 @@ def delete_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+
+    # 精细化管控：已通过(已审核)合同仅超级管理员可删除，其余角色一律拒绝
+    if contract.status == ContractStatus.APPROVED:
+        if not current_user.is_superuser:
+            raise HTTPException(status_code=403, detail="权限不足：仅超级管理员可删除已审核合同")
+        db.delete(contract)
+        db.commit()
+        return Response.ok({"id": contract_id})
+
+    # 其余状态：仅本人创建(超管不限)、且仅草稿/被驳回可删；审批中(pending)不可删
     if not current_user.is_superuser and contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能删除本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
