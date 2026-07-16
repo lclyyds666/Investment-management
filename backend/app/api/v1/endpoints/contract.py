@@ -43,6 +43,8 @@ from app.models.user import User
 from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
 from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
+from app.services import contract_review as review_svc
+from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
 
 _OPINION_ROLES = {r for r, _ in legal_doc_svc.OPINION_ROLES}
@@ -449,3 +451,54 @@ def download_legal_doc(
         media_type=_DOCX_MIME,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"},
     )
+
+
+# --------------------------------------------------------------------------- #
+# AI 合同审查（DeepSeek + 法规知识库；接口永不 500）
+# --------------------------------------------------------------------------- #
+def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
+    """构造待审查合同文本：优先用已上传附件提取全文；无附件则用结构化字段兜底。
+
+    返回 (text, has_attachment_text)。
+    """
+    if contract.attachment_stored:
+        path = _attachment_dir(contract.id) / contract.attachment_stored
+        if path.exists():
+            try:
+                _ft, pages = research_svc.extract_pages(contract.attachment_name or "", path.read_bytes())
+                text = "\n".join(p.get("text", "") for p in pages).strip()
+                if text:
+                    return text, True
+            except Exception:  # noqa: BLE001 .doc/扫描件等无法提取 → 走字段兜底
+                pass
+    # 兜底：用合同结构化字段拼出可审查文本
+    fields = [
+        f"合同名称：{contract.title}",
+        f"合同编号：{contract.contract_no}",
+        f"合同类型：{contract.contract_type or '未填写'}",
+        f"是否内部合同：{'是' if contract.is_internal else '否'}",
+        f"合同标的：{contract.subject or '未填写'}",
+        f"客户名称：{contract.customer_name or '未填写'}",
+        f"合同金额：{contract.amount} {contract.currency or ''}",
+        f"付款条件：{contract.payment_terms or '未填写'}",
+        f"备注：{contract.remark or '无'}",
+    ]
+    return "\n".join(fields), False
+
+
+@router.post("/{contract_id}/ai-review", response_model=Response[dict], summary="AI 合同审查(DeepSeek+法规知识库)")
+def ai_review_contract(
+    contract_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    contract = _get_contract_or_404(db, contract_id)
+    contract_text, has_attachment = _contract_text_for_review(contract)
+    kb_text, kb_titles = review_svc.aggregate_kb_text(db)
+    result = review_svc.review(contract_text, kb_text)
+    return Response.ok({
+        "markdown": result["markdown"],
+        "engine": result["engine"],
+        "has_attachment": has_attachment,
+        "kb_used": kb_titles,
+    })

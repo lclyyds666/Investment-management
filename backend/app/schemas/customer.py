@@ -38,3 +38,5 @@ class CustomerOut(CustomerBase):
 
     id: int
     customer_code: str
+    # 真实准入资料数量（biz_customer_material 表；编辑/查看/AI 同源，见列表接口回填）
+    material_count: int = 0

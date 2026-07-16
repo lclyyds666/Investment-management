@@ -20,6 +20,7 @@ from app.models.contract import Contract  # noqa: F401
 from app.models.customer import Customer
 from app.models.financial import FinanceConfig, FinancialMetrics  # noqa: F401
 from app.models.invoice import Invoice
+from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
 from app.models.operation import OperationData
 from app.models.project import ProjectMetrics  # noqa: F401
 from app.models.research import CustomerMaterial, CustomerResearch  # noqa: F401
@@ -39,7 +40,7 @@ def mock_signature(name: str) -> str:
 
 # 8 个默认账号（admin 超管 + 7 级角色各一），密码统一 123456。
 SEED_USERS = [
-    {"username": "admin",  "full_name": "系统管理员", "role": Role.INVEST_DIRECTOR,   "department": "信息中心",   "is_superuser": True},
+    {"username": "admin",  "full_name": "信息维护",   "role": Role.INVEST_DIRECTOR,   "department": "信息中心",   "is_superuser": True},
     {"username": "op",     "full_name": "张经办",     "role": Role.BUSINESS_HANDLER,  "department": "业务部",     "is_superuser": False},
     {"username": "review", "full_name": "李复核",     "role": Role.BUSINESS_REVIEWER, "department": "业务部",     "is_superuser": False},
     {"username": "risk",   "full_name": "王风控",     "role": Role.RISK_AUDITOR,      "department": "风控合规部", "is_superuser": False},

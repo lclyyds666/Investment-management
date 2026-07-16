@@ -1,7 +1,7 @@
 """客户档案管理端点（主数据 CRUD + AI 尽职调查）。"""
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_roles
@@ -32,12 +32,23 @@ def _dump_files(payload_dict: dict) -> dict:
 
 @router.get("", response_model=Response[list[CustomerOut]], summary="客户列表")
 def list_customers(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    """列表默认对联系电话脱敏（138****5678），明文仅在详情页按需返回。"""
+    """列表默认对联系电话脱敏（138****5678），明文仅在详情页按需返回。
+
+    material_count 取自 biz_customer_material（编辑上传即入此表，查看/AI 同源），
+    单次分组统计避免 N+1。
+    """
     rows = db.scalars(select(Customer).order_by(Customer.id.desc())).all()
+    counts = dict(
+        db.execute(
+            select(CustomerMaterial.customer_id, func.count(CustomerMaterial.id))
+            .group_by(CustomerMaterial.customer_id)
+        ).all()
+    )
     out = []
     for r in rows:
         item = CustomerOut.model_validate(r)
         item.phone = mask_phone(item.phone)
+        item.material_count = counts.get(r.id, 0)
         out.append(item)
     return Response.ok(out)
 

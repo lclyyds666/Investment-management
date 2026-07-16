@@ -3,11 +3,8 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>多渠道数据集成</span>
+          <span>多渠道数据集成 · {{ bizType }}</span>
           <div class="header-right">
-            <el-radio-group v-model="bizFilter" size="small">
-              <el-radio-button v-for="t in BIZ_TYPES" :key="t" :value="t">{{ t }}</el-radio-button>
-            </el-radio-group>
             <el-button :icon="Refresh" @click="load">刷新</el-button>
           </div>
         </div>
@@ -125,6 +122,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh, CopyDocument, Link, Upload, Check, Delete, Plus, MagicStick } from '@element-plus/icons-vue'
 import { listChannels, getChannelData, importChannelData } from '@/api/channel'
@@ -132,12 +130,16 @@ import { listChannels, getChannelData, importChannelData } from '@/api/channel'
 const loading = ref(false)
 const channels = ref([])
 
-// 业务类型筛选：文旅业务 / 其他（历史 4 个渠道均为文旅业务）
-const bizFilter = ref('全部')
-const BIZ_TYPES = ['全部', '文旅业务', '其他']
+// 业务类型由侧边栏子菜单（路由 meta.bizType）决定：文旅业务 / 其他业务
+// 同一组件被两个子路由复用，用 computed 读 route.meta 即可随子菜单切换自动重筛。
+const route = useRoute()
+const bizType = computed(() => route.meta.bizType || '文旅业务')
 const filteredChannels = computed(() => {
-  if (bizFilter.value === '全部') return channels.value
-  return channels.value.filter((c) => (c.biz_type || '文旅业务') === bizFilter.value)
+  if (bizType.value === '文旅业务') {
+    return channels.value.filter((c) => (c.biz_type || '文旅业务') === '文旅业务')
+  }
+  // 「其他业务」：所有非文旅业务的渠道（兼容 biz_type 为 其他/其他业务 等历史值）
+  return channels.value.filter((c) => (c.biz_type || '文旅业务') !== '文旅业务')
 })
 
 async function load() {

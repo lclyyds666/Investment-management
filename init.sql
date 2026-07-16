@@ -125,7 +125,7 @@ CREATE TABLE `biz_operation_data` (
 -- 8 个默认账号（admin 超管 + 7 级角色各一），密码均为 123456 (bcrypt 哈希)。
 -- 电子签名默认为空，可在“个人设置”上传或运行 init_db 生成 Mock 签名。
 INSERT INTO `sys_user` (`id`, `username`, `full_name`, `hashed_password`, `role`, `department`, `is_active`, `is_superuser`) VALUES
-  (1, 'admin',  '系统管理员', '$2b$12$eb./yT6rZ1TxTSj6JYdyfe8OCvHTB3NY4Op2kwDYHqqKLls/N43nS', 'invest_director',   '信息中心',   1, 1),
+  (1, 'admin',  '信息维护',   '$2b$12$eb./yT6rZ1TxTSj6JYdyfe8OCvHTB3NY4Op2kwDYHqqKLls/N43nS', 'invest_director',   '信息中心',   1, 1),
   (2, 'op',     '张经办',     '$2b$12$eb./yT6rZ1TxTSj6JYdyfe8OCvHTB3NY4Op2kwDYHqqKLls/N43nS', 'business_handler',  '业务部',     1, 0),
   (3, 'review', '李复核',     '$2b$12$eb./yT6rZ1TxTSj6JYdyfe8OCvHTB3NY4Op2kwDYHqqKLls/N43nS', 'business_reviewer', '业务部',     1, 0),
   (4, 'risk',   '王风控',     '$2b$12$eb./yT6rZ1TxTSj6JYdyfe8OCvHTB3NY4Op2kwDYHqqKLls/N43nS', 'risk_auditor',      '风控合规部', 1, 0),

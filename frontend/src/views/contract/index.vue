@@ -15,6 +15,7 @@
             新建合同
           </el-button>
           <el-button :icon="Tickets" @click="openLedger">生成合同台账</el-button>
+          <el-button v-if="isSuperuser" :icon="Collection" @click="openKb">法规知识库</el-button>
           <el-button :icon="Refresh" @click="load">刷新</el-button>
         </div>
       </div>
@@ -36,6 +37,7 @@
           <template #default="{ row }">
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
+              <el-button size="small" color="#626aef" :icon="MagicStick" @click="openAiReview(row)">AI 审查</el-button>
               <template v-if="isBusinessHandler && ['draft', 'rejected'].includes(row.status)">
                 <el-button size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
                 <el-button size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
@@ -54,7 +56,7 @@
 
     <!-- 新建 / 编辑合同 -->
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑合同' : '新建合同'" width="640px" top="6vh">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="contract-form">
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="申请部门"><el-input v-model="form.department" /></el-form-item>
@@ -172,6 +174,9 @@
         </el-table-column>
         <el-table-column prop="subject" label="合同标的" min-width="140" show-overflow-tooltip />
         <el-table-column prop="sign_date" label="签订日期" width="110" align="center" />
+        <el-table-column prop="customer_credit_code" label="客户社会信用代码" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.customer_credit_code || '—' }}</template>
+        </el-table-column>
         <el-table-column prop="customer_name" label="客户名称" min-width="130" show-overflow-tooltip />
         <el-table-column label="合同金额" width="130" align="right">
           <template #default="{ row }">{{ Number(row.amount).toLocaleString() }}</template>
@@ -214,6 +219,63 @@
       </template>
     </el-dialog>
 
+    <!-- AI 合同审查结果 -->
+    <el-dialog v-model="aiVisible" title="AI 合同审查" width="720px" top="6vh">
+      <div v-loading="aiLoading" element-loading-text="AI 审查中，请稍候（约 20-60 秒）…" class="ai-wrap">
+        <template v-if="aiResult">
+          <div class="ai-meta">
+            <el-tag :type="aiResult.engine === 'deepseek' ? 'success' : 'info'" size="small" effect="plain">
+              {{ aiResult.engine === 'deepseek' ? 'DeepSeek 综合' : '规则引擎(未接大模型)' }}
+            </el-tag>
+            <el-tag size="small" :type="aiResult.has_attachment ? 'success' : 'warning'" effect="plain">
+              {{ aiResult.has_attachment ? '基于合同附件全文' : '基于合同字段(未上传附件)' }}
+            </el-tag>
+            <el-tag v-if="aiResult.kb_used && aiResult.kb_used.length" size="small" type="primary" effect="plain">
+              参照法规库 {{ aiResult.kb_used.length }} 篇
+            </el-tag>
+          </div>
+          <div class="md-body" v-html="aiHtml"></div>
+        </template>
+        <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无审查结果" />
+      </div>
+      <template #footer>
+        <el-button @click="aiVisible = false">关闭</el-button>
+        <el-button v-if="aiResult" :icon="CopyDocument" @click="copyAi">复制全文</el-button>
+        <el-button type="primary" :loading="aiLoading" @click="runAiReview">重新审查</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 法规知识库(超管维护) -->
+    <el-dialog v-model="kbVisible" title="法规知识库" width="720px" top="6vh">
+      <el-alert
+        type="info" :closable="false" show-icon class="mb"
+        title="上传公司合同法 / 集团企业制度 / 法律规范等文件（PDF/Word/Excel），AI 审查合同时会自动引用作为分析依据。"
+      />
+      <div class="kb-toolbar">
+        <el-select v-model="kbCategory" size="small" style="width: 160px">
+          <el-option v-for="k in KB_CATEGORIES" :key="k" :label="k" :value="k" />
+        </el-select>
+        <el-upload
+          :auto-upload="false" :show-file-list="false" accept=".pdf,.docx,.xlsx" :on-change="onKbUpload"
+        >
+          <el-button size="small" type="primary" :icon="UploadFilled" :loading="kbUploading">上传法规文件</el-button>
+        </el-upload>
+        <span class="muted small">支持 PDF / Word / Excel；仅超级管理员可上传/删除</span>
+      </div>
+      <el-table :data="kbList" border size="small" max-height="50vh">
+        <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="category" label="分类" width="120" align="center" />
+        <el-table-column prop="file_type" label="类型" width="70" align="center" />
+        <el-table-column prop="char_count" label="字数" width="80" align="right" />
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button size="small" link type="danger" @click="onKbDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty>知识库暂无文件</template>
+      </el-table>
+    </el-dialog>
+
     <!-- 合同详情（流转时间轴 + 打印审批单） -->
     <ContractDetailDrawer v-model="detailVisible" :contract-id="detailId" />
   </div>
@@ -222,19 +284,22 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download } from '@element-plus/icons-vue'
+import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download, MagicStick, Collection, CopyDocument } from '@element-plus/icons-vue'
+import { marked } from 'marked'
 import { useUserStore } from '@/store/user'
 import { ROLES, STATUS_META } from '@/constants/business'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
 import {
   listContracts, createContract, updateContract, deleteContract, submitContract,
-  uploadContractAttachment, approveContract, rejectContract
+  uploadContractAttachment, approveContract, rejectContract, aiReviewContract
 } from '@/api/contract'
 import { listCustomers } from '@/api/customer'
+import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge'
 
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 
 const userStore = useUserStore()
+const isSuperuser = computed(() => userStore.isSuperuser)
 const isBusinessHandler = computed(
   () => userStore.role === ROLES.BUSINESS_HANDLER || userStore.isSuperuser
 )
@@ -428,7 +493,7 @@ function openLedger() {
   ledgerVisible.value = true
 }
 function exportLedger() {
-  const headers = ['合同编号', '合同名称', '合同类型', '是否内部合同', '合同标的', '签订日期', '客户名称', '合同金额', '币种', '付款条件']
+  const headers = ['合同编号', '合同名称', '合同类型', '是否内部合同', '合同标的', '签订日期', '客户社会信用代码', '客户名称', '合同金额', '币种', '付款条件']
   const rows = list.value.map((c) => [
     c.contract_no,
     c.title,
@@ -436,6 +501,7 @@ function exportLedger() {
     c.is_internal ? '是' : '否',
     c.subject || '',
     c.sign_date || '',
+    c.customer_credit_code || '',
     c.customer_name || '',
     Number(c.amount || 0),
     c.currency || '',
@@ -478,11 +544,81 @@ function openDetail(row) {
   detailVisible.value = true
 }
 
+// AI 合同审查
+const aiVisible = ref(false)
+const aiLoading = ref(false)
+const aiResult = ref(null)
+const aiCurrent = ref(null)
+const aiHtml = computed(() => (aiResult.value ? marked.parse(aiResult.value.markdown || '') : ''))
+function openAiReview(row) {
+  aiCurrent.value = row
+  aiResult.value = null
+  aiVisible.value = true
+  runAiReview()
+}
+async function runAiReview() {
+  if (!aiCurrent.value) return
+  aiLoading.value = true
+  try {
+    aiResult.value = await aiReviewContract(aiCurrent.value.id)
+  } catch (e) {
+    ElMessage.error('AI 审查失败，请稍后重试')
+  } finally {
+    aiLoading.value = false
+  }
+}
+function copyAi() {
+  navigator.clipboard?.writeText(aiResult.value?.markdown || '').then(
+    () => ElMessage.success('审查全文已复制'),
+    () => ElMessage.error('复制失败')
+  )
+}
+
+// 法规知识库
+const KB_CATEGORIES = ['公司合同法', '集团企业制度', '法律规范', '其他']
+const kbVisible = ref(false)
+const kbList = ref([])
+const kbUploading = ref(false)
+const kbCategory = ref('法律规范')
+async function openKb() {
+  kbVisible.value = true
+  await loadKb()
+}
+async function loadKb() {
+  try { kbList.value = await listKnowledge() } catch { /* 忽略 */ }
+}
+async function onKbUpload(file) {
+  const raw = file?.raw
+  const name = (raw?.name || '').toLowerCase()
+  if (!['.pdf', '.docx', '.xlsx'].some((e) => name.endsWith(e))) {
+    ElMessage.error('仅支持 PDF / Word(.docx) / Excel(.xlsx)')
+    return
+  }
+  kbUploading.value = true
+  try {
+    await uploadKnowledge(raw, raw.name.replace(/\.[^.]+$/, ''), kbCategory.value)
+    ElMessage.success('已加入法规知识库')
+    await loadKb()
+  } finally {
+    kbUploading.value = false
+  }
+}
+async function onKbDelete(row) {
+  try {
+    await ElMessageBox.confirm(`确定从知识库删除「${row.title}」吗？`, '删除确认', { type: 'warning' })
+  } catch { return }
+  await deleteKnowledge(row.id)
+  ElMessage.success('已删除')
+  await loadKb()
+}
+
 onMounted(() => { load(); loadCustomers() })
 </script>
 
 <style scoped lang="scss">
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+/* 表单标签统一不换行，避免「客户社会信用代码」等长标签跨行错位 */
+.contract-form :deep(.el-form-item__label) { white-space: nowrap; }
 .toolbar {
   display: flex;
   align-items: center;
@@ -512,4 +648,19 @@ onMounted(() => { load(); loadCustomers() })
   margin-bottom: 10px;
 }
 .ledger-count { color: #909399; font-size: 13px; }
+.muted { color: #909399; }
+.small { font-size: 12px; }
+/* AI 审查 */
+.ai-wrap { min-height: 120px; }
+.ai-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.md-body { line-height: 1.75; color: var(--el-text-color-primary); max-height: 62vh; overflow: auto; }
+.md-body :deep(h2) { font-size: 16px; margin: 16px 0 8px; color: var(--el-color-primary); }
+.md-body :deep(h3) { font-size: 14px; margin: 12px 0 6px; }
+.md-body :deep(ul), .md-body :deep(ol) { padding-left: 22px; }
+.md-body :deep(p) { margin: 6px 0; }
+.md-body :deep(strong) { color: var(--el-color-danger); }
+.md-body :deep(table) { border-collapse: collapse; width: 100%; }
+.md-body :deep(th), .md-body :deep(td) { border: 1px solid var(--el-border-color); padding: 6px 8px; }
+/* 知识库 */
+.kb-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 </style>

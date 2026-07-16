@@ -77,3 +77,8 @@ export async function fetchLegalDocBlob(id) {
   if (!resp.ok) throw new Error('审批表生成失败')
   return await resp.blob()
 }
+
+/** AI 合同审查（DeepSeek + 法规知识库），返回 { markdown, engine, has_attachment, kb_used } */
+export function aiReviewContract(id) {
+  return request.post(`/contracts/${id}/ai-review`, {}, { timeout: 120000 })
+}

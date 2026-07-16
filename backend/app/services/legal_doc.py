@@ -92,15 +92,13 @@ def build_legal_doc(contract: dict, opinions: dict) -> bytes:
     _fill_cell(c[4], "发文人员", bold=True, center=True)
     _fill_cell(c[5], contract.get("creator_name") or "", center=True)
 
-    # 文件名称
+    # 文件名称（合同编号）—— 合并为一行，格式「文件名称（合同编号）」
     r = add_row()
     _fill_cell(r.cells[0], "文件名称", bold=True, center=True)
-    _fill_cell(r.cells[1].merge(r.cells[5]), contract.get("title") or "")
-
-    # 合同编号
-    r = add_row()
-    _fill_cell(r.cells[0], "合同编号", bold=True, center=True)
-    _fill_cell(r.cells[1].merge(r.cells[5]), contract.get("contract_no") or "")
+    _title = contract.get("title") or ""
+    _no = contract.get("contract_no") or ""
+    _name_value = f"{_title}（{_no}）" if _no else _title
+    _fill_cell(r.cells[1].merge(r.cells[5]), _name_value)
 
     # 4 个意见栏
     for role, label in OPINION_ROLES:

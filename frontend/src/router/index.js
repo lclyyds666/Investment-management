@@ -40,10 +40,23 @@ const routes = [
         }
       },
       {
-        path: 'channel',
-        name: 'Channel',
+        path: 'channel/tourism',
+        name: 'ChannelTourism',
         component: () => import('@/views/channel/index.vue'),
-        meta: { title: '渠道业务管理', icon: 'Connection' }
+        // 渠道业务管理 · 文旅业务：以 meta.group 归为折叠菜单组子项；bizType 决定页面筛选
+        meta: { title: '文旅业务', icon: 'Sunny', group: '渠道业务管理', groupIcon: 'Connection', bizType: '文旅业务' }
+      },
+      {
+        path: 'channel/other',
+        name: 'ChannelOther',
+        component: () => import('@/views/channel/index.vue'),
+        // 渠道业务管理 · 其他业务
+        meta: { title: '其他业务', icon: 'Grid', group: '渠道业务管理', groupIcon: 'Connection', bizType: '其他业务' }
+      },
+      {
+        // 兼容旧地址 /channel → 新地址 /channel/tourism
+        path: 'channel',
+        redirect: '/channel/tourism'
       },
       {
         path: 'finance/fund',

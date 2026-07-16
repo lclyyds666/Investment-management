@@ -122,7 +122,17 @@
       "Bash(scp -o ConnectTimeout=15 /c/Users/dell/.claude/jobs/4a6c1329/tmp/dist.tgz /c/Users/dell/.claude/jobs/4a6c1329/tmp/app.tgz root@39.107.52.146:/tmp/)",
       "Bash(PYTHONUTF8=1 ./.venv/Scripts/python.exe *)",
       "Bash(PYTHONUTF8=1 /d/Investment-management/backend/.venv/Scripts/python.exe *)",
-      "Bash(grep -nE \"^#{1,3} \" 需求规格说明书.md)"
+      "Bash(grep -nE \"^#{1,3} \" 需求规格说明书.md)",
+      "Bash(scp -o ConnectTimeout=15 README.md CLAUDE.md \"需求规格说明书.md\" \"合同打印模板.docx\" root@39.107.52.146:/opt/sd-scm/)",
+      "Bash(cat)",
+      "Bash(scp -o ConnectTimeout=15 /c/Users/dell/.claude/jobs/4a6c1329/tmp/backfill_pt.py root@39.107.52.146:/tmp/backfill_pt.py)",
+      "Bash(echo \"uploaded\")",
+      "Bash(PYTHONUTF8=1 backend/.venv/Scripts/python.exe -c ' *)",
+      "Bash(echo SCP OK)",
+      "Bash(npm install *)",
+      "Bash(scp -o ConnectTimeout=15 /c/Users/dell/.claude/jobs/4a6c1329/tmp/app.tgz /c/Users/dell/.claude/jobs/4a6c1329/tmp/dist.tgz root@39.107.52.146:/tmp/)",
+      "Bash(curl -s --noproxy '*' -m 3 http://127.0.0.1:8000/api/v1/health)",
+      "Bash(curl -s --noproxy * -m 10 http://127.0.0.1:8000/api/v1/auth/me -H 'Authorization: Bearer __TRACKED_VAR__')"
     ]
   }
 }

@@ -21,8 +21,8 @@
         <el-table-column prop="address" label="地址" min-width="180" show-overflow-tooltip />
         <el-table-column label="资料" width="120" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.admission_files?.length" type="success" size="small" effect="plain">
-              {{ row.admission_files.length }} 个附件
+            <el-tag v-if="row.material_count" type="success" size="small" effect="plain">
+              {{ row.material_count }} 个附件
             </el-tag>
             <span v-else class="muted">—</span>
           </template>
@@ -54,21 +54,35 @@
         <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
         <el-form-item label="资料">
           <div class="files">
+            <!-- 已入库资料（biz_customer_material，查看/AI 同源）；编辑态可即时删除 -->
             <el-tag
-              v-for="(f, i) in form.admission_files"
-              :key="i"
+              v-for="m in dialogMaterials"
+              :key="'m' + m.id"
+              type="success"
               closable
-              @close="form.admission_files.splice(i, 1)"
+              @close="removeExistingMaterial(m)"
               class="file-tag"
             >
-              <el-icon><Document /></el-icon> {{ f.name }}
+              <el-icon><Document /></el-icon> {{ m.filename }}
+            </el-tag>
+            <!-- 本次待上传：保存时统一提交并解析入库 -->
+            <el-tag
+              v-for="(f, i) in pendingFiles"
+              :key="'p' + i"
+              closable
+              @close="pendingFiles.splice(i, 1)"
+              class="file-tag"
+            >
+              <el-icon><Document /></el-icon> {{ f.name }}（待上传）
             </el-tag>
           </div>
           <el-upload
-            action="#" multiple :auto-upload="false" :show-file-list="false" :on-change="onFileChange"
+            action="#" multiple :auto-upload="false" :show-file-list="false"
+            accept=".pdf,.docx,.xlsx" :on-change="onFileChange"
           >
-            <el-button size="small" :icon="UploadFilled">上传资料</el-button>
+            <el-button size="small" :icon="UploadFilled">上传资料（PDF / Word / Excel）</el-button>
           </el-upload>
+          <div class="upload-hint">保存后自动解析入库，「查看」与「AI 分析」将同步读取</div>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" /></el-form-item>
       </el-form>
@@ -97,7 +111,7 @@
               <el-button size="small" link @click="downloadFile(m)">下载</el-button>
             </div>
           </div>
-          <span v-else class="muted">无（可在「AI」中上传资料）</span>
+          <span v-else class="muted">无（可在「编辑」或「AI」中上传资料）</span>
         </el-descriptions-item>
       </el-descriptions>
     </el-drawer>
@@ -111,7 +125,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh, View, Edit, Delete, Document, UploadFilled, MagicStick } from '@element-plus/icons-vue'
-import { listCustomers, createCustomer, updateCustomer, deleteCustomer, listMaterials, fetchMaterialBlob } from '@/api/customer'
+import { listCustomers, createCustomer, updateCustomer, deleteCustomer, listMaterials, uploadMaterials, deleteMaterial, fetchMaterialBlob } from '@/api/customer'
 import CustomerResearchDialog from '@/components/CustomerResearchDialog.vue'
 
 const loading = ref(false)
@@ -135,41 +149,77 @@ const saving = ref(false)
 const isEdit = ref(false)
 const editingId = ref(null)
 const formRef = ref()
-const emptyForm = () => ({ customer_code: '', name: '', social_credit_code: '', contact: '', phone: '', address: '', admission_files: [], remark: '' })
+const emptyForm = () => ({ customer_code: '', name: '', social_credit_code: '', contact: '', phone: '', address: '', remark: '' })
 const form = reactive(emptyForm())
+// 资料统一走真实 materials 表：dialogMaterials 为已入库项，pendingFiles 为本次待上传文件
+const dialogMaterials = ref([])
+const pendingFiles = ref([])
+const ALLOW_EXT = ['.pdf', '.docx', '.xlsx']
 const rules = {
   customer_code: [{ required: true, message: '请输入客户ID', trigger: 'blur' }],
   name: [{ required: true, message: '请输入客户名称', trigger: 'blur' }]
 }
 function openCreate() {
   isEdit.value = false; editingId.value = null
+  dialogMaterials.value = []; pendingFiles.value = []
   Object.assign(form, emptyForm()); formRef.value?.clearValidate?.(); dialogVisible.value = true
 }
-function openEdit(row) {
+async function openEdit(row) {
   isEdit.value = true; editingId.value = row.id
+  pendingFiles.value = []; dialogMaterials.value = []
   Object.assign(form, {
     customer_code: row.customer_code, name: row.name, social_credit_code: row.social_credit_code || '',
     contact: row.contact, phone: row.phone,
-    address: row.address, admission_files: [...(row.admission_files || [])], remark: row.remark
+    address: row.address, remark: row.remark
   })
   formRef.value?.clearValidate?.(); dialogVisible.value = true
+  // 载入该客户已入库资料（与查看/AI 同一数据源）
+  try { dialogMaterials.value = await listMaterials(row.id) } catch { /* 资料加载失败不阻断编辑 */ }
 }
 function onFileChange(file) {
-  form.admission_files.push({ name: file.name, url: '' })
-  ElMessage.success(`已添加附件：${file.name}`)
+  const raw = file?.raw
+  if (!raw) return
+  const name = (raw.name || '').toLowerCase()
+  if (!ALLOW_EXT.some((e) => name.endsWith(e))) {
+    ElMessage.warning(`仅支持 PDF / Word(.docx) / Excel(.xlsx)：已忽略 ${raw.name}`)
+    return
+  }
+  pendingFiles.value.push(raw)
+}
+// 编辑态即时删除已入库资料
+async function removeExistingMaterial(m) {
+  try {
+    await deleteMaterial(editingId.value, m.id)
+    dialogMaterials.value = dialogMaterials.value.filter((x) => x.id !== m.id)
+    ElMessage.success('已删除该资料')
+  } catch { ElMessage.error('删除失败') }
 }
 async function onSave() {
   await formRef.value?.validate()
   saving.value = true
   try {
+    let cid = editingId.value
     if (isEdit.value) {
       const { customer_code, ...rest } = form
       await updateCustomer(editingId.value, { ...rest })
-      ElMessage.success('修改成功')
     } else {
-      await createCustomer({ ...form })
-      ElMessage.success('创建成功')
+      const created = await createCustomer({ ...form })
+      cid = created?.id
     }
+    // 资料：客户存好后统一走真实上传接口，落入 biz_customer_material（查看/AI 同源）
+    if (pendingFiles.value.length && cid) {
+      try {
+        const res = await uploadMaterials(cid, pendingFiles.value)
+        const okCount = res?.succeeded?.length || 0
+        const failed = res?.failed || []
+        if (failed.length) {
+          ElMessage.warning(`资料上传成功 ${okCount} 个，失败 ${failed.length} 个`)
+        }
+      } catch {
+        ElMessage.warning('客户已保存，但资料上传失败，请在编辑中重试')
+      }
+    }
+    ElMessage.success(isEdit.value ? '修改成功' : '创建成功')
     dialogVisible.value = false; load()
   } finally { saving.value = false }
 }
@@ -221,8 +271,9 @@ onMounted(load)
 .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
 .search-input { max-width: 320px; }
 .muted { color: #c0c4cc; }
-.files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; width: 100%; }
 .file-tag { display: inline-flex; align-items: center; gap: 4px; }
+.upload-hint { margin-top: 6px; color: #909399; font-size: 12px; line-height: 1.4; }
 .file-line { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
 
 /* 「编辑」按钮:无任何背景色,文字改为白色 + 轻微加粗 */
