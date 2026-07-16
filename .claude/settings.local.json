@@ -132,7 +132,10 @@
       "Bash(npm install *)",
       "Bash(scp -o ConnectTimeout=15 /c/Users/dell/.claude/jobs/4a6c1329/tmp/app.tgz /c/Users/dell/.claude/jobs/4a6c1329/tmp/dist.tgz root@39.107.52.146:/tmp/)",
       "Bash(curl -s --noproxy '*' -m 3 http://127.0.0.1:8000/api/v1/health)",
-      "Bash(curl -s --noproxy * -m 10 http://127.0.0.1:8000/api/v1/auth/me -H 'Authorization: Bearer __TRACKED_VAR__')"
+      "Bash(curl -s --noproxy * -m 10 http://127.0.0.1:8000/api/v1/auth/me -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(echo \"=== exit $? ===\")",
+      "Bash(scp -o ConnectTimeout=20 /c/Users/dell/.claude/jobs/c24f3543/tmp/app.tgz /c/Users/dell/.claude/jobs/c24f3543/tmp/dist.tgz root@39.107.52.146:/tmp/)",
+      "Bash(curl -s --noproxy '*' -m 10 http://39.107.52.146/api/v1/health)"
     ]
   }
 }

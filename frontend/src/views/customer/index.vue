@@ -41,7 +41,7 @@
 
     <!-- 新建/编辑 -->
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑客户' : '新建客户'" width="560px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" class="customer-form">
         <el-form-item label="客户ID" prop="customer_code">
           <el-input v-model="form.customer_code" :disabled="isEdit" placeholder="如 KH-010" />
         </el-form-item>
@@ -268,6 +268,8 @@ onMounted(load)
 
 <style scoped lang="scss">
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+/* 表单标签不换行，避免「社会信用代码」等长标签跨行 */
+.customer-form :deep(.el-form-item__label) { white-space: nowrap; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
 .search-input { max-width: 320px; }
 .muted { color: #c0c4cc; }
