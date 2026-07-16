@@ -49,7 +49,12 @@ def update_my_signature(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """将签名图片（data-URI 或附件路径）保存为该员工的核心签章资产。"""
+    """将签名图片（data-URI 或附件路径）保存为该员工的核心签章资产。
+
+    权限：「信息维护」角色不参与审批签章，禁止上传/维护电子签名（API 端拦截）。
+    """
+    if current_user.role == Role.INFO_MAINTAINER:
+        raise HTTPException(status_code=403, detail="「信息维护」角色无电子签名权限")
     current_user.signature = payload.signature
     db.commit()
     db.refresh(current_user)

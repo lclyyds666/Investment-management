@@ -61,7 +61,18 @@
 
       <!-- 纸质签名上传 -->
       <el-col :span="14">
-        <el-card shadow="never">
+        <!-- 「信息维护」角色不参与审批签章：隐藏签名功能（后端亦拦截上传接口） -->
+        <el-card v-if="signatureDisabled" shadow="never">
+          <template #header><span>纸质签名 / 电子签章</span></template>
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            title="「信息维护」角色无电子签名权限"
+            description="该角色仅承担信息维护职责、不参与审批签章，故不提供电子签名的上传与维护功能。"
+          />
+        </el-card>
+        <el-card v-else shadow="never">
           <template #header>
             <div class="sig-header">
               <span>纸质签名 / 电子签章</span>
@@ -117,6 +128,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
+import { ROLES } from '@/constants/business'
 import { getMe, updateSignature, changeMyPassword, changeMyUsername } from '@/api/user'
 
 const userStore = useUserStore()
@@ -124,6 +136,8 @@ const info = ref(null)
 const preview = ref('')
 const saving = ref(false)
 const hasSig = computed(() => !!preview.value)
+// 「信息维护」角色无电子签名权限：隐藏签名卡片（与后端接口拦截保持一致）
+const signatureDisabled = computed(() => userStore.role === ROLES.INFO_MAINTAINER)
 
 // 修改密码
 const pwdRef = ref()

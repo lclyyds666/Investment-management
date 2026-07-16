@@ -52,6 +52,30 @@ APPROVAL_CHAIN: list[Role] = [
 FINANCE_ROLES: list[Role] = [Role.FINANCE_HANDLER, Role.FINANCE_REVIEWER]
 DIRECTOR_ROLES: list[Role] = [Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR]
 
+# --------------------------------------------------------------------------- #
+# 审批中心：两套独立工作流的审批链（与上方合同审批链 APPROVAL_CHAIN 互不干扰）
+# 顺序即逐级流转顺序（index 即 step），与 xlsx 打印模板的签批栏顺序一一对应。
+# --------------------------------------------------------------------------- #
+# Type A 业务付款审批单（7 节点）
+PAYMENT_APPROVAL_CHAIN: list[Role] = [
+    Role.BUSINESS_HANDLER,   # 业务经办
+    Role.BUSINESS_REVIEWER,  # 业务复核
+    Role.FINANCE_HANDLER,    # 供管公司财务审核（财务经办）
+    Role.SCM_DIRECTOR,       # 供管公司负责人
+    Role.RISK_AUDITOR,       # 投资公司法务风控部
+    Role.FINANCE_REVIEWER,   # 投资公司财务负责人（财务复核）
+    Role.INVEST_DIRECTOR,    # 投资公司分管领导
+]
+
+# Type B 业务审批单（5 节点）
+BUSINESS_APPROVAL_CHAIN: list[Role] = [
+    Role.BUSINESS_HANDLER,   # 业务经办
+    Role.BUSINESS_REVIEWER,  # 业务复核
+    Role.SCM_DIRECTOR,       # 供管公司负责人
+    Role.RISK_AUDITOR,       # 投资公司法务风控部
+    Role.INVEST_DIRECTOR,    # 投资公司分管领导
+]
+
 
 def role_label(value) -> str:
     """将角色值（字符串或 Role）转为中文名，未知则原样返回。"""
@@ -108,6 +132,31 @@ CONTRACT_TYPE_LABELS: dict[str, str] = {
     "payment": "业务付款审批单",
     "business": "业务审批单",
 }
+
+# 审批单类型 → 对应审批链（两套独立工作流的分派表）
+FORM_CHAINS: dict[str, list[Role]] = {
+    ContractType.PAYMENT.value: PAYMENT_APPROVAL_CHAIN,
+    ContractType.BUSINESS.value: BUSINESS_APPROVAL_CHAIN,
+}
+
+
+def form_chain(form_type) -> list[Role]:
+    """按审批单类型返回其审批链；未知类型回退业务审批链。"""
+    key = form_type.value if isinstance(form_type, ContractType) else str(form_type or "")
+    return FORM_CHAINS.get(key, BUSINESS_APPROVAL_CHAIN)
+
+
+def form_role_at_step(form_type, step: int):
+    """返回某审批单类型在某步序对应的角色；越界返回 None。"""
+    chain = form_chain(form_type)
+    if 0 <= step < len(chain):
+        return chain[step]
+    return None
+
+
+def form_is_final_step(form_type, step: int) -> bool:
+    """是否为该审批单类型审批链的最后一级。"""
+    return step == len(form_chain(form_type)) - 1
 
 
 class InvoiceStatus(str, Enum):

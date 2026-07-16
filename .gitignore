@@ -222,6 +222,8 @@ __marimo__/
 *.xlsx
 *.xls
 *.csv
+# 例外：审批单打印模板属于代码资产，需入库
+!backend/app/templates/approval/*.xlsx
 
 # 客户准入资料上传目录(原始文件，勿入库)
 backend/uploads/

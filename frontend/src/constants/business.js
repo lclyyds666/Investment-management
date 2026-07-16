@@ -55,6 +55,32 @@ export const CONTRACT_TYPE_LABELS = {
   business: '业务审批单'
 }
 
+// 审批中心：两套独立审批单的审批链（index === step，与后端 enums 对齐）
+export const PAYMENT_APPROVAL_CHAIN = [
+  ROLES.BUSINESS_HANDLER,   // 业务经办
+  ROLES.BUSINESS_REVIEWER,  // 业务复核
+  ROLES.FINANCE_HANDLER,    // 供管公司财务审核（财务经办）
+  ROLES.SCM_DIRECTOR,       // 供管公司负责人
+  ROLES.RISK_AUDITOR,       // 投资公司法务风控部
+  ROLES.FINANCE_REVIEWER,   // 投资公司财务负责人（财务复核）
+  ROLES.INVEST_DIRECTOR     // 投资公司分管领导
+]
+export const BUSINESS_APPROVAL_CHAIN = [
+  ROLES.BUSINESS_HANDLER,   // 业务经办
+  ROLES.BUSINESS_REVIEWER,  // 业务复核
+  ROLES.SCM_DIRECTOR,       // 供管公司负责人
+  ROLES.RISK_AUDITOR,       // 投资公司法务风控部
+  ROLES.INVEST_DIRECTOR     // 投资公司分管领导
+]
+export const FORM_CHAINS = {
+  payment: PAYMENT_APPROVAL_CHAIN,
+  business: BUSINESS_APPROVAL_CHAIN
+}
+// 审批中心参与角色（两链去重并集）——业务经办创建、其余角色逐级审批
+export const APPROVAL_CENTER_ROLES = [
+  ...new Set([...PAYMENT_APPROVAL_CHAIN, ...BUSINESS_APPROVAL_CHAIN])
+]
+
 // 合同状态
 export const STATUS_META = {
   draft: { text: '草稿', type: 'info' },

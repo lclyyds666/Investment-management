@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { ROLES, APPROVER_ROLES, DIRECTOR_ROLES, FINANCE_ROLES } from '@/constants/business'
+import { ROLES, APPROVER_ROLES, DIRECTOR_ROLES, FINANCE_ROLES, APPROVAL_CENTER_ROLES } from '@/constants/business'
 
 // 兼容旧引用：从常量集中转出
 export { ROLES } from '@/constants/business'
@@ -92,9 +92,9 @@ const routes = [
         path: 'approval',
         name: 'Approval',
         component: () => import('@/views/approval/index.vue'),
-        // 业务审批(原审批中心)：日常业务类审批，当前为存根页（功能建设中）；
-        // 合同(法律)类审批已内嵌到「合同管理」页，两条审批路径互不干扰。
-        meta: { title: '业务审批', icon: 'Stamp', roles: APPROVER_ROLES, group: '经营合规管理', groupIcon: 'DocumentChecked' }
+        // 审批中心：两套独立审批单工作流（业务付款审批单 / 业务审批单）。
+        // 业务经办创建并提交，其余链上角色逐级审批；与合同(法律)审批互不干扰。
+        meta: { title: '审批中心', icon: 'Stamp', roles: APPROVAL_CENTER_ROLES, group: '经营合规管理', groupIcon: 'DocumentChecked' }
       },
       {
         path: 'customer',
