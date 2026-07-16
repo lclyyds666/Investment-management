@@ -8,8 +8,8 @@
         :collapse-transition="false"
         router
         background-color="transparent"
-        text-color="#a9c2e0"
-        active-text-color="#22d3ee"
+        text-color="#b9c4d6"
+        active-text-color="#ffffff"
       >
         <template v-for="item in menus" :key="item.group || item.path">
           <!-- 分组一级菜单（如「经营合规管理」）→ 折叠子菜单 -->
@@ -129,11 +129,10 @@ function onCommand(cmd) {
 .app-wrapper {
   height: 100%;
 }
-/* 深色霓虹侧边栏 */
+/* 沉稳深色侧边栏(藏青,非霓虹) */
 .sidebar {
-  background: linear-gradient(180deg, #0a1b3a 0%, #071228 100%);
+  background: linear-gradient(180deg, var(--sidebar-bg) 0%, var(--sidebar-bg-2) 100%);
   position: relative;
-  border-right: 1px solid rgba(34, 211, 238, 0.14);
   /* 收起/展开平滑过渡 */
   transition: width 0.28s ease;
   overflow: hidden;
@@ -144,16 +143,12 @@ function onCommand(cmd) {
     line-height: 60px;
     text-align: center;
     font-size: 16px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 1px;
     white-space: nowrap;
     overflow: hidden;
-    background: linear-gradient(90deg, #39c5ff, #22d3ee);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    text-shadow: 0 0 18px rgba(34, 211, 238, 0.4);
-    border-bottom: 1px solid rgba(34, 211, 238, 0.14);
+    color: #fff;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
   /* 菜单区占满、可滚动；收起条固定底部 */
   :deep(.el-menu) {
@@ -161,6 +156,7 @@ function onCommand(cmd) {
     border-right: none;
     padding: 8px;
     overflow-x: hidden;
+    background: transparent;
   }
   /* 收起态：菜单不再受 220px 约束，图标居中 */
   &.collapsed :deep(.el-menu) {
@@ -177,40 +173,43 @@ function onCommand(cmd) {
     justify-content: center;
     gap: 6px;
     cursor: pointer;
-    color: #a9c2e0;
-    border-top: 1px solid rgba(34, 211, 238, 0.14);
+    color: var(--sidebar-text);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
     transition: background 0.2s, color 0.2s;
     &:hover {
-      background: rgba(34, 211, 238, 0.08);
-      color: #d7f6ff;
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
     }
   }
   :deep(.el-menu-item) {
     height: 46px;
     border-radius: 8px;
     margin-bottom: 4px;
+    color: var(--sidebar-text);
   }
   :deep(.el-menu-item:hover) {
-    background: rgba(34, 211, 238, 0.08) !important;
-    color: #d7f6ff !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #fff !important;
   }
   :deep(.el-menu-item.is-active) {
-    background: linear-gradient(90deg, rgba(34, 211, 238, 0.22), rgba(28, 155, 230, 0.05)) !important;
-    box-shadow: inset 3px 0 0 #22d3ee, 0 0 16px rgba(34, 211, 238, 0.18);
+    background: var(--sidebar-active-bg) !important;
+    color: #fff !important;
+    font-weight: 600;
   }
   /* 折叠子菜单：一级标题沿用霓虹风格 */
   :deep(.el-sub-menu__title) {
     height: 46px;
     border-radius: 8px;
     margin-bottom: 4px;
+    color: var(--sidebar-text);
   }
   :deep(.el-sub-menu__title:hover) {
-    background: rgba(34, 211, 238, 0.08) !important;
-    color: #d7f6ff !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #fff !important;
   }
   /* 含选中子项时，父级标题点亮 */
   :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
-    color: #22d3ee !important;
+    color: #fff !important;
   }
   /* 展开的子项容器保持透明背景 + 子项缩进 */
   :deep(.el-menu--inline) {
@@ -221,22 +220,19 @@ function onCommand(cmd) {
     min-width: auto;
   }
 }
-/* 玻璃质感顶栏 */
+/* 简洁白色顶栏 */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(90deg, #0a1b3a, #0e2450);
-  border-bottom: 1px solid rgba(34, 211, 238, 0.2);
-  box-shadow: 0 2px 16px rgba(4, 20, 48, 0.4);
+  background: #fff;
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: 0 1px 4px rgba(17, 24, 39, 0.04);
   .title {
     font-size: 18px;
     font-weight: 700;
     letter-spacing: 1px;
-    background: linear-gradient(90deg, #eafcff, #7fd8ff);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--app-text-1);
   }
   .user {
     display: flex;
@@ -244,7 +240,7 @@ function onCommand(cmd) {
     gap: 6px;
     cursor: pointer;
     outline: none;
-    color: #cfe6ff;
+    color: var(--app-text-2);
   }
 }
 </style>

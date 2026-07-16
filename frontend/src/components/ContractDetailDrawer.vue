@@ -201,7 +201,7 @@ watch(
   gap: 6px;
   margin: 22px 0 14px;
   font-size: 15px;
-  color: #eafcff;
+  color: #1f2937;
   .el-icon { color: #3f6ad8; }
 }
 .chain-steps {
@@ -216,8 +216,8 @@ watch(
   align-items: center;
   gap: 8px;
 }
-.flow-role { font-weight: 600; color: #eafcff; }
-.flow-approver { color: #a9c2e0; font-size: 13px; }
+.flow-role { font-weight: 600; color: #1f2937; }
+.flow-approver { color: #4b5563; font-size: 13px; }
 .flow-comment { margin-top: 4px; color: #909399; font-size: 13px; }
 .flow-sig {
   margin-top: 6px;

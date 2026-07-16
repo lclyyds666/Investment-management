@@ -136,4 +136,10 @@ const router = createRouter({
   routes
 })
 
+// 主题切换:仅数据大屏用深色科技风,其余后台页面保持浅色专业风。
+// 在这里统一挂载/卸载 html.dark,避免大屏与后台样式互相污染。
+router.afterEach((to) => {
+  document.documentElement.classList.toggle('dark', to.path === '/screen')
+})
+
 export default router

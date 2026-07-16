@@ -11,8 +11,8 @@ import router from './router'
 import './permission' // 路由守卫（登录 + 角色拦截）
 import './styles/index.scss'
 
-// 启用全站暗色科技主题
-document.documentElement.classList.add('dark')
+// 主题:后台管理默认浅色专业风;深色科技风仅数据大屏(/screen)启用,
+// 由 router 守卫按路由动态挂载/卸载 html.dark(见 router/index.js)。
 
 const app = createApp(App)
 

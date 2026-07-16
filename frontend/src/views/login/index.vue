@@ -114,70 +114,65 @@ onMounted(refreshCaptcha)
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(1000px 600px at 20% 10%, rgba(28, 155, 230, 0.25), transparent 60%),
-    radial-gradient(900px 500px at 85% 90%, rgba(34, 211, 238, 0.2), transparent 60%),
-    #030b1f;
+    radial-gradient(1000px 600px at 20% 10%, rgba(43, 108, 176, 0.10), transparent 60%),
+    radial-gradient(900px 500px at 85% 90%, rgba(43, 108, 176, 0.08), transparent 60%),
+    #eef2f7;
 }
-/* 动态网格 */
+/* 极淡背景网格 */
 .bg-grid {
   position: absolute;
   inset: -50%;
   background-image:
-    linear-gradient(rgba(34, 211, 238, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34, 211, 238, 0.08) 1px, transparent 1px);
+    linear-gradient(rgba(43, 108, 176, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(43, 108, 176, 0.05) 1px, transparent 1px);
   background-size: 44px 44px;
   transform: perspective(400px) rotateX(60deg);
   animation: gridmove 18s linear infinite;
 }
 @keyframes gridmove { from { background-position: 0 0; } to { background-position: 0 440px; } }
-/* 光晕 */
+/* 柔和光晕 */
 .bg-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(60px);
-  opacity: 0.5;
+  filter: blur(70px);
+  opacity: 0.35;
   animation: float 12s ease-in-out infinite;
 }
-.orb1 { width: 340px; height: 340px; background: #1c9be6; top: 8%; left: 10%; }
-.orb2 { width: 300px; height: 300px; background: #22d3ee; bottom: 6%; right: 12%; animation-delay: -6s; }
+.orb1 { width: 340px; height: 340px; background: #2b6cb0; top: 8%; left: 10%; }
+.orb2 { width: 300px; height: 300px; background: #5b8fc9; bottom: 6%; right: 12%; animation-delay: -6s; }
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-26px); } }
 
-/* 玻璃霓虹登录卡 */
+/* 简洁白色登录卡 */
 .login-card {
   position: relative;
   z-index: 2;
   width: 400px;
   padding: 14px 22px;
-  background: rgba(10, 28, 60, 0.55) !important;
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(34, 211, 238, 0.35) !important;
-  box-shadow: 0 0 40px rgba(28, 155, 230, 0.3), inset 0 0 30px rgba(28, 155, 230, 0.06) !important;
+  background: #fff !important;
+  border: 1px solid var(--app-border) !important;
+  box-shadow: 0 12px 40px rgba(17, 24, 39, 0.12) !important;
+  border-radius: 12px;
 }
-.login-card::before { background: linear-gradient(90deg, #22d3ee, #1c9be6) !important; }
 .brand {
   text-align: center;
   margin-bottom: 22px;
   .brand-logo {
     display: inline-block;
-    font-weight: 900;
+    font-weight: 800;
     letter-spacing: 2px;
     font-size: 20px;
     padding: 6px 14px;
     border-radius: 8px;
-    background: linear-gradient(135deg, #1c9be6, #22d3ee);
-    color: #021018;
-    box-shadow: 0 0 20px rgba(34, 211, 238, 0.5);
+    background: var(--el-color-primary);
+    color: #fff;
     margin-bottom: 12px;
   }
   h2 {
     margin: 0;
     font-size: 20px;
-    background: linear-gradient(90deg, #eafcff, #7fd8ff);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--app-text-1);
   }
-  p { margin: 6px 0 0; color: #6f9dcf; font-size: 13px; letter-spacing: 1px; }
+  p { margin: 6px 0 0; color: var(--app-text-3); font-size: 13px; letter-spacing: 1px; }
 }
 .captcha-row {
   display: flex;
@@ -192,13 +187,13 @@ onMounted(refreshCaptcha)
   overflow: hidden;
   cursor: pointer;
   flex-shrink: 0;
-  border: 1px solid rgba(34, 211, 238, 0.25);
+  border: 1px solid var(--app-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #06142e;
+  background: #f5f7fa;
   img { width: 100%; height: 100%; display: block; }
-  .captcha-loading { color: #5b82b3; font-size: 12px; }
+  .captcha-loading { color: var(--app-text-3); font-size: 12px; }
 }
 .login-btn {
   width: 100%;
@@ -208,13 +203,7 @@ onMounted(refreshCaptcha)
 .tips {
   text-align: center;
   font-size: 12px;
-  color: #5b82b3;
+  color: var(--app-text-3);
   line-height: 1.7;
 }
-:deep(.el-input__wrapper) {
-  background: rgba(6, 20, 46, 0.6);
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25) inset;
-}
-:deep(.el-input__inner) { color: #d7ecff; }
-:deep(.el-input__inner::placeholder) { color: #5b82b3; }
 </style>

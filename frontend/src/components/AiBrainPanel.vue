@@ -103,27 +103,27 @@ async function diagnose() {
 .summary-text { font-size: 13px; line-height: 1.7; }
 .ai-metrics { margin-bottom: 8px; }
 .ai-engine { margin: 6px 0 2px; }
-.m-box { background: rgba(28,155,230,0.08); border: 1px solid rgba(96,150,210,0.16); border-radius: 8px; padding: 10px 12px; text-align: center; }
-.m-label { font-size: 12px; color: #7f9ec6; }
-.m-val { margin-top: 4px; font-size: 20px; font-weight: 700; color: #dcecff; }
+.m-box { background: #f0f5fb; border: 1px solid #e4e7ed; border-radius: 8px; padding: 10px 12px; text-align: center; }
+.m-label { font-size: 12px; color: #4b5563; }
+.m-val { margin-top: 4px; font-size: 20px; font-weight: 700; color: #1f2937; }
 .m-val.blue { color: #409eff; }
 .m-val.warn { color: #e6a23c; }
 .ai-cols { display: flex; gap: 16px; margin-top: 14px; }
 .ai-col { flex: 1; min-width: 0; }
-.col-title { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 10px; color: #eafcff; }
+.col-title { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 10px; color: #1f2937; }
 .col-title .el-icon { color: #3f6ad8; }
 .risk-item {
-  border: 1px solid rgba(96,150,210,0.16); border-left: 3px solid #47618a;
-  border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: rgba(10,28,60,0.55);
+  border: 1px solid #e4e7ed; border-left: 3px solid #47618a;
+  border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #f8fafc;
   &.lv-高 { border-left-color: #f56c6c; }
   &.lv-中 { border-left-color: #e6a23c; }
   &.lv-低 { border-left-color: #67c23a; }
 }
 .risk-head { display: flex; align-items: center; gap: 8px; }
-.risk-title { font-weight: 600; color: #eafcff; }
-.risk-detail { margin-top: 6px; font-size: 13px; color: #a9c2e0; line-height: 1.6; }
-.sug-item { border: 1px solid rgba(96,150,210,0.16); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: rgba(10,28,60,0.55); }
-.sug-title { font-weight: 600; color: #7fd8ff; }
-.sug-detail { margin-top: 6px; font-size: 13px; color: #a9c2e0; line-height: 1.6; }
-.ai-foot { margin-top: 8px; font-size: 12px; color: #c0c4cc; }
+.risk-title { font-weight: 600; color: #1f2937; }
+.risk-detail { margin-top: 6px; font-size: 13px; color: #4b5563; line-height: 1.6; }
+.sug-item { border: 1px solid #e4e7ed; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: #f8fafc; }
+.sug-title { font-weight: 600; color: #2b6cb0; }
+.sug-detail { margin-top: 6px; font-size: 13px; color: #4b5563; line-height: 1.6; }
+.ai-foot { margin-top: 8px; font-size: 12px; color: #9ca3af; }
 </style>
