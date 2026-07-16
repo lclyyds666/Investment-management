@@ -18,6 +18,7 @@ class Role(str, Enum):
     SCM_DIRECTOR = "scm_director"              # 供管公司负责人
     INVEST_DIRECTOR = "invest_director"        # 投资公司分管领导（原“投资公司负责人”，值不变）
     LEGAL_COUNSEL = "legal_counsel"            # 法律顾问：仅看合同管理 + 审批中心给意见
+    INFO_MAINTAINER = "info_maintainer"        # 信息维护：超管账号身份，不在 7 级审批链，权限来自 is_superuser
 
     @property
     def label(self) -> str:
@@ -34,6 +35,7 @@ ROLE_LABELS: dict[Role, str] = {
     Role.SCM_DIRECTOR: "供管公司负责人",
     Role.INVEST_DIRECTOR: "投资公司分管领导",
     Role.LEGAL_COUNSEL: "法律顾问",
+    Role.INFO_MAINTAINER: "信息维护",
 }
 
 # 合同审批链：列表顺序 == 逐级流转顺序（index 即 step）

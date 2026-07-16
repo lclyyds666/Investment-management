@@ -436,13 +436,15 @@ def download_legal_doc(
         select(Approval).where(Approval.contract_id == contract_id).order_by(Approval.id.asc())
     ).all()
     ap_names = _names_map(db, {a.approver_id for a in approvals})
-    # 每个意见栏取该角色最近一次“通过”的意见 + 签批人 + 日期
+    # 每个意见栏取该角色最近一次审批记录（id 升序 → 后者覆盖）：
+    #   意见渲染其“实际审批意见”(comment，不再默认“同意”)，签名取电子签名快照。
     opinions: dict[str, dict] = {}
     for a in approvals:
-        if a.approver_role in _OPINION_ROLES and a.action == ApprovalAction.APPROVE:
+        if a.approver_role in _OPINION_ROLES:
             opinions[a.approver_role] = {
-                "comment": a.comment or "同意",
+                "comment": a.comment or "",                    # 实际审批意见，空则留空
                 "approver_name": ap_names.get(a.approver_id, ""),
+                "signature": a.signature_snapshot or "",       # 电子签名快照(data-URI)
                 "date": str(a.created_at)[:10] if a.created_at else "",
             }
 

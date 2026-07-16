@@ -8,7 +8,8 @@ export const ROLES = {
   FINANCE_REVIEWER: 'finance_reviewer',   // 投资公司财务复核（原财务复核，值不变）
   SCM_DIRECTOR: 'scm_director',           // 供管公司负责人
   INVEST_DIRECTOR: 'invest_director',     // 投资公司分管领导（原投资公司负责人，值不变）
-  LEGAL_COUNSEL: 'legal_counsel'          // 法律顾问：仅看合同管理 + 审批中心给意见
+  LEGAL_COUNSEL: 'legal_counsel',         // 法律顾问：仅看合同管理 + 审批中心给意见
+  INFO_MAINTAINER: 'info_maintainer'      // 信息维护：超管账号身份，不在 7 级审批链，权限来自超管
 }
 
 export const ROLE_LABELS = {
@@ -19,7 +20,8 @@ export const ROLE_LABELS = {
   finance_reviewer: '投资公司财务复核',
   scm_director: '供管公司负责人',
   invest_director: '投资公司分管领导',
-  legal_counsel: '法律顾问'
+  legal_counsel: '法律顾问',
+  info_maintainer: '信息维护'
 }
 
 export const roleLabel = (v) => ROLE_LABELS[v] || v || '—'
@@ -39,8 +41,9 @@ export const APPROVER_ROLES = APPROVAL_CHAIN.slice(1)
 export const DIRECTOR_ROLES = [ROLES.SCM_DIRECTOR, ROLES.INVEST_DIRECTOR]
 export const FINANCE_ROLES = [ROLES.FINANCE_HANDLER, ROLES.FINANCE_REVIEWER]
 
-// 法律顾问：仅可访问「合同管理」+「审批中心」两个页面（其余菜单/路由全部隐藏拦截）
-export const LEGAL_COUNSEL_PATHS = ['/contract', '/approval', '/profile']
+// 法律顾问：仅可访问「合同管理」+「个人设置」（合同法律审批内嵌在合同管理页）；
+// 不再放行「业务审批」/approval —— 法律顾问不参与业务审批流程。
+export const LEGAL_COUNSEL_PATHS = ['/contract', '/profile']
 
 // 合同/审批单类型
 export const CONTRACT_TYPES = {

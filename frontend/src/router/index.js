@@ -47,15 +47,12 @@ const routes = [
         meta: { title: '文旅业务', icon: 'Sunny', group: '渠道业务管理', groupIcon: 'Connection', bizType: '文旅业务' }
       },
       {
-        path: 'channel/other',
-        name: 'ChannelOther',
-        component: () => import('@/views/channel/index.vue'),
-        // 渠道业务管理 · 其他业务
-        meta: { title: '其他业务', icon: 'Grid', group: '渠道业务管理', groupIcon: 'Connection', bizType: '其他业务' }
+        // 兼容旧地址 /channel、已下线的 /channel/other → 新地址 /channel/tourism
+        path: 'channel',
+        redirect: '/channel/tourism'
       },
       {
-        // 兼容旧地址 /channel → 新地址 /channel/tourism
-        path: 'channel',
+        path: 'channel/other',
         redirect: '/channel/tourism'
       },
       {
