@@ -40,20 +40,31 @@ const routes = [
         }
       },
       {
-        path: 'channel/tourism',
-        name: 'ChannelTourism',
-        component: () => import('@/views/channel/index.vue'),
-        // 渠道业务管理 · 文旅业务：以 meta.group 归为折叠菜单组子项；bizType 决定页面筛选
-        meta: { title: '文旅业务', icon: 'Sunny', group: '渠道业务管理', groupIcon: 'Connection', bizType: '文旅业务' }
+        // 渠道业务管理 · 文旅业务：入口页（MainView，景区卡片 Grid）。保留原菜单分组与位置。
+        path: 'cultural-tourism',
+        name: 'CulturalTourism',
+        component: () => import('@/views/cultural-tourism/MainView.vue'),
+        meta: { title: '文旅业务', icon: 'Sunny', group: '渠道业务管理', groupIcon: 'Connection' }
       },
       {
-        // 兼容旧地址 /channel、已下线的 /channel/other → 新地址 /channel/tourism
+        // 景区详情页（DetailView，动态路由）：与 MainView 共用全局外壳，不进侧边菜单(无 title)
+        path: 'cultural-tourism/:scenicId',
+        name: 'CulturalTourismDetail',
+        component: () => import('@/views/cultural-tourism/DetailView.vue'),
+        meta: { icon: 'Place' }
+      },
+      {
+        // 兼容旧地址 /channel、/channel/tourism、/channel/other → 新文旅业务入口
         path: 'channel',
-        redirect: '/channel/tourism'
+        redirect: '/cultural-tourism'
+      },
+      {
+        path: 'channel/tourism',
+        redirect: '/cultural-tourism'
       },
       {
         path: 'channel/other',
-        redirect: '/channel/tourism'
+        redirect: '/cultural-tourism'
       },
       {
         path: 'finance/fund',

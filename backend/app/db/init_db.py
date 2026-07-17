@@ -25,6 +25,7 @@ from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all �
 from app.models.operation import OperationData
 from app.models.project import ProjectMetrics  # noqa: F401
 from app.models.research import CustomerMaterial, CustomerResearch  # noqa: F401
+from app.models.scenic import ScenicLedger  # noqa: F401
 from app.models.user import User
 
 
