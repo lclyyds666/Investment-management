@@ -37,7 +37,7 @@
 
     <!-- 修改密码 -->
     <el-dialog v-model="pwdVisible" title="修改密码" width="460px" @closed="resetPwd">
-      <el-form ref="pwdRef" :model="pwd" :rules="pwdRules" label-width="90px">
+      <el-form ref="pwdRef" :model="pwd" :rules="pwdRules" label-width="100px" class="dlg-form">
         <el-form-item label="原密码" prop="old_password">
           <el-input v-model="pwd.old_password" type="password" show-password autocomplete="off" />
         </el-form-item>
@@ -60,7 +60,7 @@
         type="info" :closable="false" show-icon class="mb"
         title="修改登录账号后无需重新登录（令牌以用户 ID 为主体）。"
       />
-      <el-form ref="acctRef" :model="acct" :rules="acctRules" label-width="90px">
+      <el-form ref="acctRef" :model="acct" :rules="acctRules" label-width="100px" class="dlg-form">
         <el-form-item label="新登录账号" prop="new_username">
           <el-input v-model="acct.new_username" placeholder="字母 / 数字 / 下划线，3-64 位" />
         </el-form-item>
@@ -269,6 +269,20 @@ function resetSig() {
   color: #cfe6ff;
 }
 .mb { margin-bottom: 14px; }
+/* 弹窗表单：标签固定左侧、不换行，输入框右侧自适应，严禁 Label 换行错位 */
+.dlg-form :deep(.el-form-item) {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+.dlg-form :deep(.el-form-item__label) {
+  white-space: nowrap;
+  justify-content: flex-start;
+}
+.dlg-form :deep(.el-form-item__content) {
+  flex: 1;
+  min-width: 0;
+}
 .sig-preview { margin-bottom: 14px; }
 .sig-label { color: #909399; font-size: 13px; margin-bottom: 6px; }
 .sig-box {

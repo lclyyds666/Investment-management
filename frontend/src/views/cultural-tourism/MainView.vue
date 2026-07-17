@@ -63,13 +63,15 @@ function goDetail(id) {
   color: #909399;
   font-size: 14px;
 }
-/* Grid：每行严格 3 个卡片，卡片间距 24px */
+/* Grid：每行严格 3 个卡片，卡片间距 40px */
 .ct-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-  max-width: 1120px;
+  gap: 40px;
+  max-width: 1200px;
   margin: 0 auto;
+  padding: 4px 8px 8px;
+  box-sizing: border-box;
 }
 .ct-card {
   cursor: pointer;
