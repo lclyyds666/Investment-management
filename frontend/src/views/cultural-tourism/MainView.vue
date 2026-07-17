@@ -63,11 +63,11 @@ function goDetail(id) {
   color: #909399;
   font-size: 14px;
 }
-/* 响应式 Grid：自动填充，卡片最小 240px */
+/* Grid：每行严格 3 个卡片，卡片间距 24px */
 .ct-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
   max-width: 1120px;
   margin: 0 auto;
 }

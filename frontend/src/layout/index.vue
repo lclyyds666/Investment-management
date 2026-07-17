@@ -41,19 +41,7 @@
     <el-container>
       <el-header class="header">
         <span class="title">山东出版供应链管理公司业务平台</span>
-        <el-dropdown @command="onCommand">
-          <span class="user">
-            {{ userStore.userInfo?.full_name || '用户' }}
-            <el-tag size="small" type="warning" effect="plain">{{ roleLabel }}</el-tag>
-            <el-icon><ArrowDown /></el-icon>
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="profile" :icon="User">个人设置</el-dropdown-item>
-              <el-dropdown-item command="logout" :icon="SwitchButton" divided>退出登录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <UserDropdown />
       </el-header>
       <el-main>
         <router-view />
@@ -65,9 +53,9 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, User, SwitchButton } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { roleLabel as toRoleLabel, ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
+import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
+import UserDropdown from '@/components/UserDropdown.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,9 +69,6 @@ function toggleCollapse() {
   collapsed.value = !collapsed.value
   localStorage.setItem('sidebar_collapsed', collapsed.value ? '1' : '0')
 }
-
-// 优先用后端返回的角色中文名，回退到本地映射
-const roleLabel = computed(() => userStore.roleLabel || toRoleLabel(userStore.role))
 
 // 从路由表生成菜单：按角色 / 超管过滤，再按 meta.group 归组为折叠子菜单
 const menus = computed(() => {
@@ -114,15 +99,6 @@ const menus = computed(() => {
   }
   return result
 })
-
-function onCommand(cmd) {
-  if (cmd === 'logout') {
-    userStore.logout()
-    router.replace('/login')
-  } else if (cmd === 'profile') {
-    router.push('/profile')
-  }
-}
 </script>
 
 <style scoped lang="scss">
