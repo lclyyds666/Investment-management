@@ -38,6 +38,10 @@
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
               <el-button size="small" color="#626aef" :icon="MagicStick" @click="openAiReview(row)">AI 审查</el-button>
+              <template v-if="row.attachment_name">
+                <el-button size="small" type="primary" plain :icon="View" @click="previewContractAttachment(row)">预览附件</el-button>
+                <el-button size="small" type="primary" plain :icon="Download" @click="downloadContractAttachment(row)">下载附件</el-button>
+              </template>
               <template v-if="isBusinessHandler && ['draft', 'rejected'].includes(row.status)">
                 <el-button size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
                 <el-button size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
@@ -246,6 +250,10 @@
         <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无审查结果" />
       </div>
       <template #footer>
+        <template v-if="aiCurrent && aiCurrent.attachment_name">
+          <el-button :icon="View" @click="previewContractAttachment(aiCurrent)">预览附件</el-button>
+          <el-button :icon="Download" @click="downloadContractAttachment(aiCurrent)">下载附件</el-button>
+        </template>
         <el-button @click="aiVisible = false">关闭</el-button>
         <el-button v-if="aiResult" :icon="CopyDocument" @click="copyAi">复制全文</el-button>
         <el-button type="primary" :loading="aiLoading" @click="runAiReview">重新审查</el-button>
@@ -295,10 +303,12 @@ import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Downl
 import { marked } from 'marked'
 import { useUserStore } from '@/store/user'
 import { ROLES, STATUS_META } from '@/constants/business'
+import { previewBlob, downloadBlob } from '@/utils/file'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
 import {
   listContracts, createContract, updateContract, deleteContract, submitContract,
-  uploadContractAttachment, approveContract, rejectContract, aiReviewContract
+  uploadContractAttachment, approveContract, rejectContract, aiReviewContract,
+  fetchContractAttachmentBlob
 } from '@/api/contract'
 import { listCustomers } from '@/api/customer'
 import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge'
@@ -546,6 +556,26 @@ async function onDelete(row) {
   await deleteContract(row.id)
   ElMessage.success('删除成功')
   load()
+}
+
+// 合同附件：预览 / 下载（任意有查看权限的登录用户均可）
+async function previewContractAttachment(row) {
+  if (!row?.attachment_name) return
+  try {
+    const blob = await fetchContractAttachmentBlob(row.id)
+    previewBlob(blob, row.attachment_name)
+  } catch {
+    ElMessage.error('附件预览失败')
+  }
+}
+async function downloadContractAttachment(row) {
+  if (!row?.attachment_name) return
+  try {
+    const blob = await fetchContractAttachmentBlob(row.id)
+    downloadBlob(blob, row.attachment_name)
+  } catch {
+    ElMessage.error('附件下载失败')
+  }
 }
 
 // 详情抽屉

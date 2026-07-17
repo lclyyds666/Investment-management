@@ -47,7 +47,8 @@
           <template v-if="contract.attachment_name">
             <el-icon><Document /></el-icon>
             <span class="att-name">{{ contract.attachment_name }}</span>
-            <el-button size="small" link type="primary" @click="downloadAttachment">下载</el-button>
+            <el-button size="small" link type="primary" :icon="View" @click="previewAttachment">预览</el-button>
+            <el-button size="small" link type="primary" :icon="Download" @click="downloadAttachment">下载</el-button>
           </template>
           <span v-else>—</span>
         </el-descriptions-item>
@@ -91,10 +92,11 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Printer, Clock, Guide, Document } from '@element-plus/icons-vue'
+import { Printer, Clock, Guide, Document, View, Download } from '@element-plus/icons-vue'
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
 import { APPROVAL_CHAIN, STATUS_META, roleLabel } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
+import { previewBlob, downloadBlob } from '@/utils/file'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -113,13 +115,19 @@ async function downloadAttachment() {
   if (!contract.value?.attachment_name) return
   try {
     const blob = await fetchContractAttachmentBlob(contract.value.id)
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = contract.value.attachment_name
-    a.click()
-    URL.revokeObjectURL(a.href)
+    downloadBlob(blob, contract.value.attachment_name)
   } catch {
     ElMessage.error('附件下载失败')
+  }
+}
+
+async function previewAttachment() {
+  if (!contract.value?.attachment_name) return
+  try {
+    const blob = await fetchContractAttachmentBlob(contract.value.id)
+    previewBlob(blob, contract.value.attachment_name)
+  } catch {
+    ElMessage.error('附件预览失败')
   }
 }
 

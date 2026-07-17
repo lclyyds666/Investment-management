@@ -62,6 +62,15 @@ export function proofreadForm(id) {
   return request.post(`/approval-forms/${id}/proofread`, {}, { timeout: 120000 })
 }
 
+/** 以带 token 的请求拉取审批单合同附件为 Blob（预览 / 下载） */
+export async function fetchFormAttachmentBlob(id) {
+  const resp = await fetch(`/api/v1/approval-forms/${id}/attachment`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+  })
+  if (!resp.ok) throw new Error('附件获取失败')
+  return await resp.blob()
+}
+
 /** 以带 token 的请求下载打印导出的 xlsx（服务端填充原始模板） */
 export async function downloadFormPrint(id) {
   const resp = await fetch(`/api/v1/approval-forms/${id}/print`, {

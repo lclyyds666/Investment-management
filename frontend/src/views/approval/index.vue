@@ -70,6 +70,10 @@
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
               <el-button size="small" color="#626aef" :icon="MagicStick" @click="openProofread(row)">AI 合同校对</el-button>
+              <template v-if="row.attachment_name">
+                <el-button size="small" type="primary" plain :icon="View" @click="previewFormAttachment(row)">预览附件</el-button>
+                <el-button size="small" type="primary" plain :icon="Download" @click="downloadFormAttachment(row)">下载附件</el-button>
+              </template>
               <el-button size="small" :icon="Printer" @click="onPrint(row)">打印导出</el-button>
               <template v-if="isBusinessHandler && ['draft', 'rejected'].includes(row.status)">
                 <el-button size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
@@ -219,6 +223,10 @@
         <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无校对结果" />
       </div>
       <template #footer>
+        <template v-if="aiCurrent && aiCurrent.attachment_name">
+          <el-button :icon="View" @click="previewFormAttachment(aiCurrent)">预览附件</el-button>
+          <el-button :icon="Download" @click="downloadFormAttachment(aiCurrent)">下载附件</el-button>
+        </template>
         <el-button @click="aiVisible = false">关闭</el-button>
         <el-button v-if="aiResult" :icon="CopyDocument" @click="copyAi">复制全文</el-button>
         <el-button type="primary" :loading="aiLoading" @click="runProofread">重新校对</el-button>
@@ -245,7 +253,12 @@
             <el-descriptions-item label="备注" :span="2">{{ detail.remark || '—' }}</el-descriptions-item>
           </template>
           <el-descriptions-item label="合同附件" :span="2">
-            {{ detail.attachment_name || '未上传' }}
+            <template v-if="detail.attachment_name">
+              <span class="att-name">{{ detail.attachment_name }}</span>
+              <el-button size="small" link type="primary" :icon="View" @click="previewFormAttachment(detail)">预览</el-button>
+              <el-button size="small" link type="primary" :icon="Download" @click="downloadFormAttachment(detail)">下载</el-button>
+            </template>
+            <span v-else>未上传</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -276,17 +289,18 @@
 import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Plus, ArrowDown, Edit, Delete, Refresh, View, UploadFilled,
+  Search, Plus, ArrowDown, Edit, Delete, Refresh, View, Download, UploadFilled,
   MagicStick, CopyDocument, Money, Document, Printer
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { useUserStore } from '@/store/user'
 import { ROLES, STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
+import { previewBlob, downloadBlob } from '@/utils/file'
 import {
   listForms, createForm, updateForm, deleteForm, submitForm,
   uploadFormAttachment, approveForm, rejectForm, listActions,
-  proofreadForm, downloadFormPrint, getForm
+  proofreadForm, downloadFormPrint, getForm, fetchFormAttachmentBlob
 } from '@/api/approval'
 import { listCustomers } from '@/api/customer'
 
@@ -523,6 +537,26 @@ async function openDetail(row) {
     detail.value = d
     actions.value = acts
   } catch { /* 忽略 */ }
+}
+
+// 合同附件：预览 / 下载（任意登录用户可用）
+async function previewFormAttachment(row) {
+  if (!row?.attachment_name) return
+  try {
+    const blob = await fetchFormAttachmentBlob(row.id)
+    previewBlob(blob, row.attachment_name)
+  } catch {
+    ElMessage.error('附件预览失败')
+  }
+}
+async function downloadFormAttachment(row) {
+  if (!row?.attachment_name) return
+  try {
+    const blob = await fetchFormAttachmentBlob(row.id)
+    downloadBlob(blob, row.attachment_name)
+  } catch {
+    ElMessage.error('附件下载失败')
+  }
 }
 
 // AI 合同校对
