@@ -26,13 +26,15 @@ function platforms(name) {
   ]
 }
 
+// id 即数据作用域键 scenic_id（贯穿 路由参 → Ledger Props → 后端 WHERE scenic_id）。
+// 本轮已将 id 与新景区名对齐（拼音标识）；旧 id 见 migrations/20260717_scenic_id_rename.sql 的映射，
+// 数据库如有历史台账会随迁移脚本同步更新（当前空表，脚本为幂等 no-op）。
 export const scenicSpots = [
-  // id 即数据作用域键 scenic_id，保持不变（与已入库的核销台账绑定）；仅更新展示名称。
-  { id: 'qihe', name: '泉城欧乐堡', imagePath: '/cultural-tourism/qihe.jpg', platformList: platforms('泉城欧乐堡') },
-  { id: 'quanzhou', name: '泉州欧乐堡', imagePath: '/cultural-tourism/quanzhou.jpg', platformList: platforms('泉州欧乐堡') },
-  { id: 'penglai', name: '福州欧乐堡', imagePath: '/cultural-tourism/penglai.jpg', platformList: platforms('福州欧乐堡') },
-  { id: 'taishan', name: '遵义动物园', imagePath: '/cultural-tourism/taishan.jpg', platformList: platforms('遵义动物园') },
-  { id: 'mengshan', name: '南阳森林野生动物世界', imagePath: '/cultural-tourism/mengshan.jpg', platformList: platforms('南阳森林野生动物世界') }
+  { id: 'quancheng-ouleb', name: '泉城欧乐堡', imagePath: '/cultural-tourism/quancheng-ouleb.jpg', platformList: platforms('泉城欧乐堡') },
+  { id: 'quanzhou-ouleb', name: '泉州欧乐堡', imagePath: '/cultural-tourism/quanzhou-ouleb.jpg', platformList: platforms('泉州欧乐堡') },
+  { id: 'fuzhou-ouleb', name: '福州欧乐堡', imagePath: '/cultural-tourism/fuzhou-ouleb.jpg', platformList: platforms('福州欧乐堡') },
+  { id: 'zunyi-zoo', name: '遵义动物园', imagePath: '/cultural-tourism/zunyi-zoo.jpg', platformList: platforms('遵义动物园') },
+  { id: 'nanyang-wildlife', name: '南阳森林野生动物世界', imagePath: '/cultural-tourism/nanyang-wildlife.jpg', platformList: platforms('南阳森林野生动物世界') }
 ]
 
 /** 按 id 取景区配置；未知 id 返回 null。 */
