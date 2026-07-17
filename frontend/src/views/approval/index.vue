@@ -2,7 +2,7 @@
   <div class="approval" v-loading="loading">
     <el-card shadow="never">
       <template #header>
-        <div class="card-header"><span>审批中心</span></div>
+        <div class="card-header"><span>业务审批</span></div>
       </template>
 
       <!-- 工具栏 -->
