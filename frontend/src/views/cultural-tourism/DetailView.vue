@@ -160,13 +160,12 @@ function goBack() {
   }
 }
 .platform-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  height: 30px;
+  width: auto;
+  max-width: 80px;
   flex-shrink: 0;
   display: block;
   object-fit: contain;
-  box-shadow: 0 2px 6px rgba(4, 20, 48, 0.16);
   transition: transform 0.2s ease;
 }
 .platform-name { flex: 1; font-weight: 600; }
