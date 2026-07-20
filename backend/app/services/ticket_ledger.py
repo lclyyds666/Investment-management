@@ -134,6 +134,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     对账周期优先取自文件名（如 对账明细-2026.04.29-2026.05.19.xlsx）；
     文件名无法解析时，回退到核销时间跨度。
     """
+    # read_only=True 流式读取，内存可控；用 try/finally 保证异常时也释放工作簿
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
 
     supplier_received = Decimal("0")
@@ -142,49 +143,50 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     max_dt: date | None = None
     used_sheets: list[str] = []
 
-    for ws in wb.worksheets:
-        if not _is_detail_sheet(ws.title):
-            continue  # 跳过对账单汇总页/其它页
+    try:
+        for ws in wb.worksheets:
+            if not _is_detail_sheet(ws.title):
+                continue  # 跳过对账单汇总页/其它页
 
-        rows_iter = ws.iter_rows(values_only=True)
-        header = None
-        for raw in rows_iter:
-            if raw and any(c is not None and str(c).strip() for c in raw):
-                header = list(raw)
-                break
-        if header is None:
-            continue
-
-        i_shishou = _header_index(header, COL_SHISHOU)
-        if i_shishou < 0:
-            continue  # 非核销明细表结构，跳过
-        i_fees = [_header_index(header, c) for c in _FEE_COLS]
-        i_time = _header_index(header, COL_HEXIAO_TIME)
-
-        used_sheets.append(ws.title)
-        for raw in rows_iter:
-            if not raw:
+            rows_iter = ws.iter_rows(values_only=True)
+            header = None
+            for raw in rows_iter:
+                if raw and any(c is not None and str(c).strip() for c in raw):
+                    header = list(raw)
+                    break
+            if header is None:
                 continue
-            shishou = _num(raw[i_shishou]) if i_shishou < len(raw) else None
-            fee_vals = [
-                (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
-            ]
-            # 空行 / 小计行：实收与全部费用都无值 → 跳过
-            if shishou is None and all(f is None for f in fee_vals):
-                continue
-            base = (shishou or Decimal("0"))
-            for f in fee_vals:
-                base += (f or Decimal("0"))  # 费用在明细中为负数，直接相加
-            supplier_received += base
-            order_count += 1
 
-            if 0 <= i_time < len(raw):
-                d = _to_date(raw[i_time])
-                if d:
-                    min_dt = d if (min_dt is None or d < min_dt) else min_dt
-                    max_dt = d if (max_dt is None or d > max_dt) else max_dt
+            i_shishou = _header_index(header, COL_SHISHOU)
+            if i_shishou < 0:
+                continue  # 非核销明细表结构，跳过
+            i_fees = [_header_index(header, c) for c in _FEE_COLS]
+            i_time = _header_index(header, COL_HEXIAO_TIME)
 
-    wb.close()
+            used_sheets.append(ws.title)
+            for raw in rows_iter:
+                if not raw:
+                    continue
+                shishou = _num(raw[i_shishou]) if i_shishou < len(raw) else None
+                fee_vals = [
+                    (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
+                ]
+                # 空行 / 小计行：实收与全部费用都无值 → 跳过
+                if shishou is None and all(f is None for f in fee_vals):
+                    continue
+                base = (shishou or Decimal("0"))
+                for f in fee_vals:
+                    base += (f or Decimal("0"))  # 费用在明细中为负数，直接相加
+                supplier_received += base
+                order_count += 1
+
+                if 0 <= i_time < len(raw):
+                    d = _to_date(raw[i_time])
+                    if d:
+                        min_dt = d if (min_dt is None or d < min_dt) else min_dt
+                        max_dt = d if (max_dt is None or d > max_dt) else max_dt
+    finally:
+        wb.close()
 
     # 周期优先取文件名；否则回退核销时间跨度
     fn_start, fn_end = _period_from_filename(filename)

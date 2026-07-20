@@ -9,6 +9,7 @@
      → 前端确认「出版应得B」/录手工字段 → 保存落库(save)
      → 列表/编辑/删除 → 导出标准格式业务台账 xlsx。
 """
+import asyncio
 import io
 from datetime import date
 from decimal import Decimal
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
@@ -41,6 +43,10 @@ router = APIRouter()
 _XLSX_EXT = {".xlsx", ".xls"}
 _MAX_BYTES = 30 * 1024 * 1024  # ≤ 30MB（明细可能上万行）
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# 解析并发闸：小内存机(1.6GB)上，大文件解析(万行明细)峰值资源高。
+# 限制同一时刻只跑 1 个解析，重叠上传排队而非叠加 → 防 OOM 僵死。
+_PARSE_SEMAPHORE = asyncio.Semaphore(1)
 
 
 def _valid_scenic_id(scenic_id: str) -> str:
@@ -106,11 +112,19 @@ async def parse_files(
             warnings.append(f"{fname}：超过 30MB 上限，已跳过")
             continue
         try:
-            info = tl_svc.parse_reconciliation(content, filename=fname)
+            # 并发闸 + 线程池：CPU/内存密集的 openpyxl 解析不阻塞事件循环，
+            # 且同一时刻只跑一个解析，避免重叠上传在小内存机上叠加 OOM。
+            async with _PARSE_SEMAPHORE:
+                info = await run_in_threadpool(
+                    tl_svc.parse_reconciliation, content, filename=fname
+                )
         except Exception as exc:  # noqa: BLE001
             failed += 1
             warnings.append(f"{fname}：解析失败（{exc}）")
             continue
+        finally:
+            # 尽快释放大文件内存，降低小内存机 OOM 风险
+            del content
         if info["order_count"] == 0:
             warnings.append(f"{fname}：未解析到有效核销明细，请确认文件内容")
         parsed.append(ParsedFile(
