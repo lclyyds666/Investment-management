@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="美团">
+  <rect width="48" height="48" rx="12" fill="#ffc300"/>
+  <g font-family="'PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif" font-size="24" font-weight="800" text-anchor="middle" dominant-baseline="central">
+    <text x="24.6" y="25.8" fill="#000000" opacity="0.28">美</text>
+    <text x="24" y="25" fill="#ffffff">美</text>
+  </g>
+</svg>

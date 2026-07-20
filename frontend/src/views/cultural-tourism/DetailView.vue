@@ -7,24 +7,36 @@
     </div>
 
     <template v-if="spot">
-      <!-- 顶部：平台入口 -->
+      <!-- 顶部：平台入口（分组展示：景区平台 / 门票平台） -->
       <el-card shadow="never" class="ct-section">
         <template #header>
           <div class="sec-header"><el-icon><Link /></el-icon><span>平台入口</span></div>
         </template>
-        <div class="platform-grid">
-          <a
-            v-for="p in spot.platformList"
-            :key="p.key"
-            class="platform-item"
-            :href="p.url"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <span class="platform-badge" :style="{ background: p.color }">{{ p.name.slice(0, 1) }}</span>
-            <span class="platform-name">{{ p.name }}</span>
-            <el-icon class="platform-go"><TopRight /></el-icon>
-          </a>
+
+        <div
+          v-for="group in platformGroups"
+          :key="group.key"
+          class="entry-group"
+        >
+          <div class="group-title">
+            <span class="group-dot" :class="group.key"></span>{{ group.title }}
+          </div>
+          <div v-if="group.items.length" class="platform-grid">
+            <a
+              v-for="p in group.items"
+              :key="p.key"
+              class="platform-item"
+              :href="p.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="`前往 ${p.name}·${spot.name}`"
+            >
+              <img class="platform-logo" :src="p.logo" :alt="p.name" loading="lazy" />
+              <span class="platform-name">{{ p.name }}</span>
+              <el-icon class="platform-go"><TopRight /></el-icon>
+            </a>
+          </div>
+          <div v-else class="entry-empty">暂无入口</div>
         </div>
       </el-card>
 
@@ -54,6 +66,16 @@ const router = useRouter()
 const scenicId = computed(() => String(route.params.scenicId || ''))
 const spot = computed(() => getScenicById(scenicId.value))
 
+// 平台入口分组：景区平台入口 / 门票平台入口（空数组渲染「暂无入口」空状态）
+const platformGroups = computed(() => {
+  const s = spot.value
+  if (!s) return []
+  return [
+    { key: 'scenic', title: '景区平台入口', items: s.scenicPlatforms || [] },
+    { key: 'ticket', title: '门票平台入口', items: s.ticketPlatforms || [] }
+  ]
+})
+
 function goBack() {
   router.push('/cultural-tourism')
 }
@@ -81,7 +103,39 @@ function goBack() {
   font-weight: 700;
   .el-icon { color: var(--el-color-primary); }
 }
-/* 平台入口：图标/名称规律排列 */
+/* 平台入口·分组 */
+.entry-group {
+  & + .entry-group {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px dashed var(--el-border-color);
+  }
+}
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+}
+.group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  &.scenic { background: var(--el-color-primary); }
+  &.ticket { background: #f59e0b; }
+}
+.entry-empty {
+  color: var(--el-text-color-secondary);
+  font-style: italic;
+  font-size: 13px;
+  padding: 6px 2px;
+}
+
+/* 平台入口：Logo + 名称规律排列 */
 .platform-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -101,20 +155,28 @@ function goBack() {
     border-color: var(--el-color-primary);
     box-shadow: 0 4px 14px rgba(34, 211, 238, 0.2);
     transform: translateY(-2px);
+    .platform-logo { transform: scale(1.12); }
+    .platform-go { color: var(--el-color-primary); }
   }
 }
-.platform-badge {
+.platform-logo {
   width: 34px;
   height: 34px;
   border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-weight: 800;
-  font-size: 16px;
   flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+  box-shadow: 0 2px 6px rgba(4, 20, 48, 0.16);
+  transition: transform 0.2s ease;
 }
 .platform-name { flex: 1; font-weight: 600; }
-.platform-go { color: var(--el-text-color-secondary); }
+.platform-go {
+  color: var(--el-text-color-secondary);
+  transition: color 0.2s ease;
+}
+
+/* 响应式：窄屏单列，标题与列表左对齐 */
+@media (max-width: 640px) {
+  .platform-grid { grid-template-columns: 1fr; }
+}
 </style>
