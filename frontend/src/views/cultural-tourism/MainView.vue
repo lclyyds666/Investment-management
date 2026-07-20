@@ -20,8 +20,6 @@
           <div v-else class="ct-card-fallback">
             <el-icon><Place /></el-icon>
           </div>
-          <div class="ct-card-mask"></div>
-          <span class="ct-card-name">{{ spot.name }}</span>
         </div>
       </div>
     </div>
@@ -105,20 +103,5 @@ function goDetail(id) {
     font-size: 52px;
     color: rgba(255, 255, 255, 0.85);
   }
-}
-.ct-card-mask {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 45%, rgba(4, 20, 48, 0.72) 100%);
-}
-.ct-card-name {
-  position: absolute;
-  left: 14px;
-  bottom: 12px;
-  right: 14px;
-  color: #fff;
-  font-size: 17px;
-  font-weight: 700;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 </style>

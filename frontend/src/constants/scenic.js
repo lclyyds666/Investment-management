@@ -30,7 +30,7 @@ function platforms(name) {
 // 本轮已将 id 与新景区名对齐（拼音标识）；旧 id 见 migrations/20260717_scenic_id_rename.sql 的映射，
 // 数据库如有历史台账会随迁移脚本同步更新（当前空表，脚本为幂等 no-op）。
 export const scenicSpots = [
-  { id: 'quancheng-ouleb', name: '泉城欧乐堡', imagePath: '/cultural-tourism/quancheng-ouleb.jpg', platformList: platforms('泉城欧乐堡') },
+  { id: 'quancheng-ouleb', name: '泉城欧乐堡', imagePath: '/cultural-tourism/quancheng-ouleb.png', platformList: platforms('泉城欧乐堡') },
   { id: 'quanzhou-ouleb', name: '泉州欧乐堡', imagePath: '/cultural-tourism/quanzhou-ouleb.jpg', platformList: platforms('泉州欧乐堡') },
   { id: 'fuzhou-ouleb', name: '福州欧乐堡', imagePath: '/cultural-tourism/fuzhou-ouleb.jpg', platformList: platforms('福州欧乐堡') },
   { id: 'zunyi-zoo', name: '遵义动物园', imagePath: '/cultural-tourism/zunyi-zoo.jpg', platformList: platforms('遵义动物园') },
