@@ -41,6 +41,7 @@
 - **多 worker 必须用 Redis**:验证码/防爆破计数跨 worker 共享,靠的就是 Redis;内存兜底只在单进程有效。
 - `.env` 已含第1周安全项(REDIS_URL/CAPTCHA_*/LOGIN_*),`DEBUG=false`、`SECRET_KEY` 已是自定义。改 .env 前会自动 `.bak` 备份。
 - **`/opt/sd-scm` 不是 git 仓库**:更新代码走「本地 `npm run build` → tar over ssh 传 `backend/app`+`requirements.txt`+`frontend/dist`」;传完 `chown -R www-data:www-data`、`.venv/bin/pip install -r requirements.txt`、`systemctl restart sd-scm-backend`、`nginx -t && systemctl reload nginx`。
+- ⚠️ **前端 dist 目标绝对路径是 `/opt/sd-scm/frontend/dist`**(nginx `root` 指向它,见 `/etc/nginx/conf.d/sd-scm.conf`),**别传成 `/opt/sd-scm/dist`**(nginx 不读该目录,曾误传导致公网看不到更新)。部署后务必 `curl -s http://39.107.52.146/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'` 比对入口 hash 是否与本地 `frontend/dist/index.html` 一致,一致才算前端真上线。
 - SSH 已配本机免密公钥(`~/.ssh/id_ed25519`),后续可直接 `ssh root@39.107.52.146` 免密操作。
 - ⚠️ 上线后务必:①把所有默认账号密码 `123456` 改掉;②考虑轮换服务器 root 密码(曾在对话中出现)。
 - **数据库已于 2026-07-13 补齐到最新 schema**:曾因生产库停留在 7-02 初版(缺 `biz_finance_config`/`biz_financial_metrics`/`biz_project_metrics` 表、`biz_channel_data.mapping` 列、`sys_user.signature` 仅 TEXT)导致 `/operation/financial` 等接口 500。已 `ALTER` 补列 + 加宽 signature + `python -m app.db.init_db`(create_all 建缺失表)修复。
