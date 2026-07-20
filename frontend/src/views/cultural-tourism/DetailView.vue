@@ -40,9 +40,27 @@
         </div>
       </el-card>
 
-      <!-- 底部：核销数据台账（作用域组件，scenicId 作为 Props 传入） -->
+      <!-- 底部：核销数据台账（按平台类型分选项卡；scenicId 作为数据作用域键） -->
       <el-card shadow="never" class="ct-section">
-        <ScenicLedger :scenic-id="scenicId" />
+        <el-tabs v-model="ledgerTab" class="ledger-tabs">
+          <el-tab-pane label="门票平台核销台账" name="ticket">
+            <TicketLedger :scenic-id="scenicId" />
+            <!-- 原始明细预览（保留，可折叠对照/校验） -->
+            <el-collapse class="raw-collapse">
+              <el-collapse-item name="raw">
+                <template #title>
+                  <el-icon><Files /></el-icon>
+                  <span style="margin-left: 6px">原始核销明细预览（对照/校验用）</span>
+                </template>
+                <ScenicLedger :scenic-id="scenicId" />
+              </el-collapse-item>
+            </el-collapse>
+          </el-tab-pane>
+
+          <el-tab-pane label="景区平台核销台账" name="scenic">
+            <el-empty description="景区平台核销台账开发中，敬请期待" :image-size="90" />
+          </el-tab-pane>
+        </el-tabs>
       </el-card>
     </template>
 
@@ -53,11 +71,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Link, TopRight } from '@element-plus/icons-vue'
+import { ArrowLeft, Link, TopRight, Files } from '@element-plus/icons-vue'
 import { getScenicById } from '@/constants/scenic'
 import ScenicLedger from '@/components/ScenicLedger.vue'
+import TicketLedger from '@/components/TicketLedger.vue'
+
+// 核销台账选项卡：门票平台（本期实现）/ 景区平台（占位待开发）
+const ledgerTab = ref('ticket')
 
 const route = useRoute()
 const router = useRouter()

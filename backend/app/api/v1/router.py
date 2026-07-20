@@ -3,7 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     approval, auth, channel, contract, customer, health, invoice, knowledge, operation,
-    scenic, user,
+    scenic, ticket_ledger, user,
 )
 
 api_router = APIRouter()
@@ -18,3 +18,4 @@ api_router.include_router(channel.router, prefix="/channels", tags=["渠道集�
 api_router.include_router(invoice.router, prefix="/invoices", tags=["发票管理"])
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["法规知识库"])
 api_router.include_router(scenic.router, prefix="/scenic-spots", tags=["文旅业务"])
+api_router.include_router(ticket_ledger.router, prefix="/scenic-spots", tags=["文旅业务·门票台账"])

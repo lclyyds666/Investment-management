@@ -1,0 +1,70 @@
+"""文旅业务·门票平台核销业务台账模型（按 scenic_id 严格数据隔离）。
+
+每行 = 一个对账明细文件（含多周 Sheet）汇总为一期台账。
+计算列（景区核销/实收服务费/锦盈结算）由「出版应得到账金额」按比例算出并落库；
+固定/手工字段（付款日期、平台、回款等）随行保存。金额统一以元存储 Numeric(18,2)。
+"""
+from datetime import date
+from decimal import Decimal
+
+from sqlalchemy import Date, ForeignKey, Integer, Numeric, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+class TicketLedger(Base):
+    __tablename__ = "biz_ticket_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
+    # 景区作用域键：数据隔离核心，按景区过滤
+    scenic_id: Mapped[str] = mapped_column(
+        String(64), index=True, nullable=False, comment="景区ID(作用域键)"
+    )
+    row_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="行序(稳定排序)")
+
+    # —— 固定 / 手工录入字段 ——
+    pay_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="付款日期(手工)")
+    platform: Mapped[str] = mapped_column(String(32), default="", comment="平台(抖音/美团/携程/同程,手工)")
+    ticket_product: Mapped[str] = mapped_column(
+        String(200), default="水上世界/童话世界/海洋王国", comment="景区门票产品名(默认固定)"
+    )
+    check_date_text: Mapped[str] = mapped_column(String(64), default="", comment="核对日期(自动,周期跨度)")
+    period_text: Mapped[str] = mapped_column(String(64), default="", comment="对账周期文本(自动)")
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True, comment="对账周期起(自动)")
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True, comment="对账周期止(自动)")
+
+    # —— 计算相关字段 ——
+    supplier_received: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="服务商到账金额(明细算:订单实收-软件-达人-团长)"
+    )
+    publisher_due: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="出版应得到账金额 B(用户确认/录入,计算基数)"
+    )
+    hexiao_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="景区核销金额 = B × 核销率"
+    )
+    jinying_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="锦盈结算金额 = 景区核销 + 实收服务费"
+    )
+    service_fee: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="实收服务费 = B × 服务费率"
+    )
+    rate_hexiao: Mapped[Decimal] = mapped_column(
+        Numeric(6, 4), default=Decimal("0.9000"), comment="景区核销率(默认0.90)"
+    )
+    rate_fee: Mapped[Decimal] = mapped_column(
+        Numeric(6, 4), default=Decimal("0.0400"), comment="实收服务费率(默认0.04)"
+    )
+    order_count: Mapped[int] = mapped_column(Integer, default=0, comment="核销订单数(明细统计)")
+
+    # —— 回款（手工录入）——
+    repay_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="回款日期(手工)")
+    repay_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2), nullable=True, comment="回款金额(手工)"
+    )
+
+    source_file: Mapped[str] = mapped_column(String(255), default="", comment="来源Excel文件名")
+    uploaded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("sys_user.id"), nullable=True, comment="上传/创建人"
+    )
