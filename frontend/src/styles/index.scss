@@ -10,8 +10,9 @@ body {
   font-family: 'Segoe UI', 'Helvetica Neue', Helvetica, 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
-  color: #d7e6fb;
-  background: #071228;
+  color: var(--el-text-color-primary);
+  background: var(--el-bg-color-page);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 * {
@@ -19,11 +20,83 @@ body {
 }
 
 /* ============================================================
-   科技风 · 全站暗色主题（Tech Dark Mode）
-   主色科技蓝 + 青色强调；深蓝底 + 毛玻璃霓虹卡片。
-   覆盖 Element Plus 暗色 CSS 变量为科技深蓝配色。
+   双主题体系 · 明亮 (Light) 默认 + 暗黑 (Dark) 覆盖
+   ------------------------------------------------------------
+   · Light 为默认(:root),Dark 通过 <html class="dark"> 覆盖。
+   · --tech-* 强调色两套通用;--chrome-* 是「外壳」(侧边栏/顶栏)
+     专用变量,让 layout 的 sidebar/header 随主题翻转。
+   · 数据大屏 /screen 恒定深色,不吃这套变量(见各自组件内联)。
    ============================================================ */
+
+/* ---------- 明亮主题(默认) ---------- */
 :root {
+  /* 品牌主色(明暗通用,亮色下略深保证对比) */
+  --el-color-primary: #1c83c9;
+  --el-color-primary-light-3: #52a6dd;
+  --el-color-primary-light-5: #8ecdf3;
+  --el-color-primary-light-7: #bfe0f5;
+  --el-color-primary-light-8: #d8ecfa;
+  --el-color-primary-light-9: #eef7fd;
+  --el-color-primary-dark-2: #166ba3;
+  --tech-cyan: #0ea5c4;
+  --tech-blue: #1c83c9;
+
+  /* 内容区背景纹理(亮色:柔和天蓝晕染) */
+  --content-bg:
+    radial-gradient(900px 500px at 100% 0, rgba(28, 131, 201, 0.06), transparent 60%),
+    radial-gradient(700px 400px at 0 100%, rgba(14, 165, 196, 0.05), transparent 60%),
+    #f2f5fa;
+
+  /* 卡片 */
+  --card-bg: rgba(255, 255, 255, 0.92);
+  --card-border: rgba(28, 131, 201, 0.16);
+  --card-border-hover: rgba(14, 165, 196, 0.45);
+  --card-shadow: 0 4px 16px rgba(30, 58, 110, 0.08);
+  --card-shadow-hover: 0 10px 26px rgba(30, 58, 110, 0.14), 0 0 14px rgba(28, 131, 201, 0.12);
+  --card-header-bg: linear-gradient(90deg, rgba(28, 131, 201, 0.08), transparent);
+  --card-header-color: #1a3a5c;
+  --card-header-border: rgba(28, 131, 201, 0.14);
+
+  /* 表格表头 */
+  --table-header-bg: linear-gradient(180deg, #eaf3fb, #dfedf8);
+  --table-header-color: #1a3a5c;
+  --table-border: rgba(28, 131, 201, 0.16);
+  --table-row-hover: rgba(28, 131, 201, 0.07);
+
+  /* 主按钮 */
+  --btn-primary-bg: linear-gradient(135deg, #1c83c9, #2494cf);
+  --btn-primary-bg-hover: linear-gradient(135deg, #2494cf, #1c83c9);
+  --btn-primary-shadow: 0 4px 12px rgba(28, 131, 201, 0.22);
+  --btn-primary-shadow-hover: 0 6px 18px rgba(14, 165, 196, 0.35);
+
+  /* 滚动条 */
+  --scrollbar-thumb: linear-gradient(180deg, #9fc4e4, #6ea9d6);
+  --scrollbar-track: #e4ecf4;
+
+  /* ---- 外壳(侧边栏 / 顶栏)---- */
+  --chrome-sidebar-bg: linear-gradient(180deg, #ffffff 0%, #f4f8fc 100%);
+  --chrome-sidebar-border: rgba(28, 131, 201, 0.16);
+  --chrome-logo-gradient: linear-gradient(90deg, #1c83c9, #0ea5c4);
+  --chrome-logo-shadow: 0 0 12px rgba(28, 131, 201, 0.18);
+  --chrome-menu-text: #4a5a70;
+  --chrome-menu-active-text: #1c83c9;
+  --chrome-menu-hover-bg: rgba(28, 131, 201, 0.08);
+  --chrome-menu-hover-text: #14608f;
+  --chrome-menu-active-bg: linear-gradient(90deg, rgba(28, 131, 201, 0.14), rgba(28, 131, 201, 0.02));
+  --chrome-menu-active-bar: #1c83c9;
+  --chrome-menu-active-glow: 0 0 10px rgba(28, 131, 201, 0.14);
+
+  --chrome-header-bg: linear-gradient(90deg, #ffffff, #eef5fb);
+  --chrome-header-border: rgba(28, 131, 201, 0.16);
+  --chrome-header-shadow: 0 2px 12px rgba(30, 58, 110, 0.06);
+  --chrome-title-gradient: linear-gradient(90deg, #14608f, #1c83c9);
+  --chrome-title-color: #1a3a5c;
+
+  color-scheme: light;
+}
+
+/* ---------- 暗黑主题(覆盖)· 科技霓虹 ---------- */
+html.dark {
   --el-color-primary: #1c9be6;
   --el-color-primary-light-3: #52b3ec;
   --el-color-primary-light-5: #8ecdf3;
@@ -33,9 +106,7 @@ body {
   --el-color-primary-dark-2: #45b3f0;
   --tech-cyan: #22d3ee;
   --tech-blue: #1c9be6;
-}
 
-html.dark {
   /* 背景层次 */
   --el-bg-color: #0a1a35;
   --el-bg-color-page: #071228;
@@ -57,25 +128,79 @@ html.dark {
   --el-fill-color-lighter: rgba(28, 155, 230, 0.06);
   --el-fill-color-blank: #0b1f3d;
   --el-mask-color: rgba(3, 11, 31, 0.8);
-  color-scheme: dark;
-}
 
-/* 内容区：深蓝科技底纹 */
-.el-main {
-  background:
+  /* 内容区:深蓝科技底纹 */
+  --content-bg:
     radial-gradient(900px 500px at 100% 0, rgba(28, 155, 230, 0.14), transparent 60%),
     radial-gradient(700px 400px at 0 100%, rgba(34, 211, 238, 0.1), transparent 60%),
     #071228;
+
+  /* 卡片:毛玻璃霓虹 */
+  --card-bg: rgba(14, 34, 68, 0.72);
+  --card-border: rgba(96, 150, 210, 0.2);
+  --card-border-hover: rgba(34, 211, 238, 0.5);
+  --card-shadow: 0 4px 18px rgba(2, 10, 28, 0.5);
+  --card-shadow-hover: 0 10px 28px rgba(2, 10, 28, 0.6), 0 0 18px rgba(28, 155, 230, 0.22);
+  --card-header-bg: linear-gradient(90deg, rgba(28, 155, 230, 0.12), transparent);
+  --card-header-color: #eafcff;
+  --card-header-border: rgba(96, 150, 210, 0.16);
+
+  /* 表格表头 */
+  --table-header-bg: linear-gradient(180deg, #123057, #0e2244);
+  --table-header-color: #cfe6ff;
+  --table-border: rgba(96, 150, 210, 0.16);
+  --table-row-hover: rgba(28, 155, 230, 0.12);
+
+  /* 主按钮 */
+  --btn-primary-bg: linear-gradient(135deg, #1c9be6, #22a7d8);
+  --btn-primary-bg-hover: linear-gradient(135deg, #34a9ec, #1c9be6);
+  --btn-primary-shadow: 0 4px 12px rgba(28, 155, 230, 0.3);
+  --btn-primary-shadow-hover: 0 6px 18px rgba(34, 211, 238, 0.45);
+
+  /* 滚动条 */
+  --scrollbar-thumb: linear-gradient(180deg, #22d3ee, #1c9be6);
+  --scrollbar-track: #0a1a35;
+
+  /* ---- 外壳(侧边栏 / 顶栏)---- */
+  --chrome-sidebar-bg: linear-gradient(180deg, #0a1b3a 0%, #071228 100%);
+  --chrome-sidebar-border: rgba(34, 211, 238, 0.14);
+  --chrome-logo-gradient: linear-gradient(90deg, #39c5ff, #22d3ee);
+  --chrome-logo-shadow: 0 0 18px rgba(34, 211, 238, 0.4);
+  --chrome-menu-text: #a9c2e0;
+  --chrome-menu-active-text: #22d3ee;
+  --chrome-menu-hover-bg: rgba(34, 211, 238, 0.08);
+  --chrome-menu-hover-text: #d7f6ff;
+  --chrome-menu-active-bg: linear-gradient(90deg, rgba(34, 211, 238, 0.22), rgba(28, 155, 230, 0.05));
+  --chrome-menu-active-bar: #22d3ee;
+  --chrome-menu-active-glow: 0 0 16px rgba(34, 211, 238, 0.18);
+
+  --chrome-header-bg: linear-gradient(90deg, #0a1b3a, #0e2450);
+  --chrome-header-border: rgba(34, 211, 238, 0.2);
+  --chrome-header-shadow: 0 2px 16px rgba(4, 20, 48, 0.4);
+  --chrome-title-gradient: linear-gradient(90deg, #eafcff, #7fd8ff);
+  --chrome-title-color: #cfe6ff;
+
+  color-scheme: dark;
 }
 
-/* 卡片：毛玻璃霓虹 */
+/* ============================================================
+   组件通用皮肤(两套主题共用,颜色全走上面的变量)
+   ============================================================ */
+
+/* 内容区背景纹理 */
+.el-main {
+  background: var(--content-bg);
+  transition: background-color 0.3s ease;
+}
+
+/* 卡片:两主题共用结构,颜色走变量 */
 .el-card {
   position: relative;
   border-radius: 10px !important;
-  background: rgba(14, 34, 68, 0.72) !important;
+  background: var(--card-bg) !important;
   backdrop-filter: blur(6px);
-  border: 1px solid rgba(96, 150, 210, 0.2) !important;
-  box-shadow: 0 4px 18px rgba(2, 10, 28, 0.5) !important;
+  border: 1px solid var(--card-border) !important;
+  box-shadow: var(--card-shadow) !important;
   transition: box-shadow 0.3s ease, transform 0.3s ease, border-color 0.3s ease;
   overflow: hidden;
 }
@@ -89,61 +214,61 @@ html.dark {
 }
 .el-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(34, 211, 238, 0.5) !important;
-  box-shadow: 0 10px 28px rgba(2, 10, 28, 0.6), 0 0 18px rgba(28, 155, 230, 0.22) !important;
+  border-color: var(--card-border-hover) !important;
+  box-shadow: var(--card-shadow-hover) !important;
 }
 .el-card__header {
   font-weight: 600;
   font-size: 15px;
-  border-bottom: 1px solid rgba(96, 150, 210, 0.16);
-  background: linear-gradient(90deg, rgba(28, 155, 230, 0.12), transparent);
-  color: #eafcff;
+  border-bottom: 1px solid var(--card-header-border);
+  background: var(--card-header-bg);
+  color: var(--card-header-color);
 }
 
-/* 表格：科技暗色表头 */
+/* 表格 */
 .el-table {
-  --el-table-border-color: rgba(96, 150, 210, 0.16);
+  --el-table-border-color: var(--table-border);
   --el-table-header-bg-color: transparent;
-  --el-table-row-hover-bg-color: rgba(28, 155, 230, 0.12);
+  --el-table-row-hover-bg-color: var(--table-row-hover);
   --el-table-tr-bg-color: transparent;
   --el-table-bg-color: transparent;
   background: transparent;
   border-radius: 8px;
   th.el-table__cell {
-    background: linear-gradient(180deg, #123057, #0e2244) !important;
-    color: #cfe6ff;
+    background: var(--table-header-bg) !important;
+    color: var(--table-header-color);
     font-weight: 600;
   }
 }
 
-/* 主按钮：渐变 + 发光 */
+/* 主按钮:渐变 + 发光 */
 .el-button--primary {
-  background: linear-gradient(135deg, #1c9be6, #22a7d8) !important;
-  border-color: #1c9be6 !important;
-  box-shadow: 0 4px 12px rgba(28, 155, 230, 0.3);
+  background: var(--btn-primary-bg) !important;
+  border-color: var(--el-color-primary) !important;
+  box-shadow: var(--btn-primary-shadow);
 }
 .el-button--primary:hover {
-  background: linear-gradient(135deg, #34a9ec, #1c9be6) !important;
-  box-shadow: 0 6px 18px rgba(34, 211, 238, 0.45);
+  background: var(--btn-primary-bg-hover) !important;
+  box-shadow: var(--btn-primary-shadow-hover);
 }
 
 /* 弹窗 / 抽屉 */
 .el-dialog { border-radius: 12px; overflow: hidden; }
-.el-dialog__header { background: linear-gradient(90deg, rgba(28, 155, 230, 0.14), transparent); }
+.el-dialog__header { background: var(--card-header-bg); }
 .el-drawer .el-drawer__header {
   margin-bottom: 0;
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(96, 150, 210, 0.16);
+  border-bottom: 1px solid var(--card-header-border);
   font-weight: 600;
-  color: #eafcff;
+  color: var(--card-header-color);
 }
 
-.el-statistic__number { font-variant-numeric: tabular-nums; color: #dcecff; }
+.el-statistic__number { font-variant-numeric: tabular-nums; color: var(--el-text-color-primary); }
 
 /* 科技滚动条 */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #22d3ee, #1c9be6);
+  background: var(--scrollbar-thumb);
   border-radius: 6px;
 }
-::-webkit-scrollbar-track { background: #0a1a35; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }

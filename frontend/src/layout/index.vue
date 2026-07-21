@@ -8,8 +8,8 @@
         :collapse-transition="false"
         router
         background-color="transparent"
-        text-color="#a9c2e0"
-        active-text-color="#22d3ee"
+        text-color="var(--chrome-menu-text)"
+        active-text-color="var(--chrome-menu-active-text)"
       >
         <template v-for="item in menus" :key="item.group || item.path">
           <!-- 分组一级菜单（如「经营合规管理」）→ 折叠子菜单 -->
@@ -41,7 +41,10 @@
     <el-container>
       <el-header class="header">
         <span class="title">山东出版供应链管理公司业务平台</span>
-        <UserDropdown />
+        <div class="header-right">
+          <ThemeToggle />
+          <UserDropdown />
+        </div>
       </el-header>
       <el-main>
         <router-view />
@@ -56,6 +59,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
 import UserDropdown from '@/components/UserDropdown.vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -105,13 +109,13 @@ const menus = computed(() => {
 .app-wrapper {
   height: 100%;
 }
-/* 深色霓虹侧边栏 */
+/* 侧边栏(外壳变量驱动:明亮=白底、暗黑=科技霓虹) */
 .sidebar {
-  background: linear-gradient(180deg, #0a1b3a 0%, #071228 100%);
+  background: var(--chrome-sidebar-bg);
   position: relative;
-  border-right: 1px solid rgba(34, 211, 238, 0.14);
-  /* 收起/展开平滑过渡 */
-  transition: width 0.28s ease;
+  border-right: 1px solid var(--chrome-sidebar-border);
+  /* 收起/展开平滑过渡 + 主题切换过渡 */
+  transition: width 0.28s ease, background-color 0.3s ease, border-color 0.3s ease;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -124,12 +128,12 @@ const menus = computed(() => {
     letter-spacing: 1px;
     white-space: nowrap;
     overflow: hidden;
-    background: linear-gradient(90deg, #39c5ff, #22d3ee);
+    background: var(--chrome-logo-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    text-shadow: 0 0 18px rgba(34, 211, 238, 0.4);
-    border-bottom: 1px solid rgba(34, 211, 238, 0.14);
+    text-shadow: var(--chrome-logo-shadow);
+    border-bottom: 1px solid var(--chrome-sidebar-border);
   }
   /* 菜单区占满、可滚动；收起条固定底部 */
   :deep(.el-menu) {
@@ -153,12 +157,12 @@ const menus = computed(() => {
     justify-content: center;
     gap: 6px;
     cursor: pointer;
-    color: #a9c2e0;
-    border-top: 1px solid rgba(34, 211, 238, 0.14);
+    color: var(--chrome-menu-text);
+    border-top: 1px solid var(--chrome-sidebar-border);
     transition: background 0.2s, color 0.2s;
     &:hover {
-      background: rgba(34, 211, 238, 0.08);
-      color: #d7f6ff;
+      background: var(--chrome-menu-hover-bg);
+      color: var(--chrome-menu-hover-text);
     }
   }
   :deep(.el-menu-item) {
@@ -167,26 +171,26 @@ const menus = computed(() => {
     margin-bottom: 4px;
   }
   :deep(.el-menu-item:hover) {
-    background: rgba(34, 211, 238, 0.08) !important;
-    color: #d7f6ff !important;
+    background: var(--chrome-menu-hover-bg) !important;
+    color: var(--chrome-menu-hover-text) !important;
   }
   :deep(.el-menu-item.is-active) {
-    background: linear-gradient(90deg, rgba(34, 211, 238, 0.22), rgba(28, 155, 230, 0.05)) !important;
-    box-shadow: inset 3px 0 0 #22d3ee, 0 0 16px rgba(34, 211, 238, 0.18);
+    background: var(--chrome-menu-active-bg) !important;
+    box-shadow: inset 3px 0 0 var(--chrome-menu-active-bar), var(--chrome-menu-active-glow);
   }
-  /* 折叠子菜单：一级标题沿用霓虹风格 */
+  /* 折叠子菜单：一级标题沿用外壳风格 */
   :deep(.el-sub-menu__title) {
     height: 46px;
     border-radius: 8px;
     margin-bottom: 4px;
   }
   :deep(.el-sub-menu__title:hover) {
-    background: rgba(34, 211, 238, 0.08) !important;
-    color: #d7f6ff !important;
+    background: var(--chrome-menu-hover-bg) !important;
+    color: var(--chrome-menu-hover-text) !important;
   }
   /* 含选中子项时，父级标题点亮 */
   :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
-    color: #22d3ee !important;
+    color: var(--chrome-menu-active-text) !important;
   }
   /* 展开的子项容器保持透明背景 + 子项缩进 */
   :deep(.el-menu--inline) {
@@ -197,19 +201,20 @@ const menus = computed(() => {
     min-width: auto;
   }
 }
-/* 玻璃质感顶栏 */
+/* 顶栏(外壳变量驱动) */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(90deg, #0a1b3a, #0e2450);
-  border-bottom: 1px solid rgba(34, 211, 238, 0.2);
-  box-shadow: 0 2px 16px rgba(4, 20, 48, 0.4);
+  background: var(--chrome-header-bg);
+  border-bottom: 1px solid var(--chrome-header-border);
+  box-shadow: var(--chrome-header-shadow);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
   .title {
     font-size: 18px;
     font-weight: 700;
     letter-spacing: 1px;
-    background: linear-gradient(90deg, #eafcff, #7fd8ff);
+    background: var(--chrome-title-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -220,7 +225,12 @@ const menus = computed(() => {
     gap: 6px;
     cursor: pointer;
     outline: none;
-    color: #cfe6ff;
+    color: var(--chrome-title-color);
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 }
 </style>

@@ -279,5 +279,5 @@ onMounted(load)
 .ops { display: flex; gap: 8px; }
 .mb { margin-bottom: 14px; }
 .filters { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-.hint { margin-left: 10px; color: #909399; font-size: 12px; }
+.hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 </style>

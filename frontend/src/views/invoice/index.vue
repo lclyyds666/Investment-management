@@ -152,8 +152,8 @@ onMounted(load)
 
 <style scoped lang="scss">
 .stat-row { margin-bottom: 16px; }
-.stat-label { color: #909399; font-size: 14px; }
-.stat-value { margin-top: 8px; font-size: 26px; font-weight: 700; color: #dcecff; }
+.stat-label { color: var(--el-text-color-secondary); font-size: 14px; }
+.stat-value { margin-top: 8px; font-size: 26px; font-weight: 700; color: var(--el-text-color-primary); }
 .stat-value.warn { color: #e6a23c; }
 .stat-value.ok { color: #67c23a; }
 .stat-value.blue { color: #409eff; }

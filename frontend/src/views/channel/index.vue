@@ -249,12 +249,12 @@ onMounted(load)
 .ch-card { :deep(.el-card__body) { padding: 16px; } }
 .ch-top { display: flex; align-items: center; gap: 12px; }
 .ch-logo { font-size: 34px; line-height: 1; }
-.ch-name { font-size: 16px; font-weight: 700; color: #eafcff; margin-bottom: 4px; }
-.ch-desc { margin: 12px 0; color: #909399; font-size: 13px; min-height: 20px; }
-.ch-cred { background: rgba(28,155,230,0.08); border: 1px solid rgba(96,150,210,0.16); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
+.ch-name { font-size: 16px; font-weight: 700; color: var(--el-text-color-primary); margin-bottom: 4px; }
+.ch-desc { margin: 12px 0; color: var(--el-text-color-secondary); font-size: 13px; min-height: 20px; }
+.ch-cred { background: var(--el-fill-color-light); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
 .cred-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
-.cred-label { color: #909399; width: 32px; flex: 0 0 auto; }
-.cred-val { flex: 1; font-family: monospace; color: #7fd8ff; overflow: hidden; text-overflow: ellipsis; }
+.cred-label { color: var(--el-text-color-secondary); width: 32px; flex: 0 0 auto; }
+.cred-val { flex: 1; font-family: monospace; color: var(--el-color-primary); overflow: hidden; text-overflow: ellipsis; }
 .ch-actions { display: flex; gap: 8px; }
 .data-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .flex-1 { flex: 1; }
@@ -262,7 +262,7 @@ onMounted(load)
 .add-row { margin-top: 10px; }
 .map-card { margin-bottom: 12px; :deep(.el-card__header) { padding: 10px 14px; } :deep(.el-card__body) { padding: 12px 14px; } }
 .map-title { font-weight: 700; margin-right: 10px; }
-.map-tip { color: #909399; font-size: 12px; }
+.map-tip { color: var(--el-text-color-secondary); font-size: 12px; }
 .map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-.map-item { display: flex; flex-direction: column; gap: 4px; label { font-size: 12px; color: #606266; em { color: #f56c6c; font-style: normal; } } .el-select { width: 100%; } }
+.map-item { display: flex; flex-direction: column; gap: 4px; label { font-size: 12px; color: var(--el-text-color-regular); em { color: var(--el-color-danger); font-style: normal; } } .el-select { width: 100%; } }
 </style>

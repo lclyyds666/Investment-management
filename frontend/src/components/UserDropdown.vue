@@ -266,7 +266,7 @@ function resetSig() {
   gap: 6px;
   cursor: pointer;
   outline: none;
-  color: #cfe6ff;
+  color: var(--chrome-title-color);
 }
 .mb { margin-bottom: 14px; }
 /* 弹窗表单：标签固定左侧、不换行，输入框右侧自适应，严禁 Label 换行错位 */
@@ -284,7 +284,7 @@ function resetSig() {
   min-width: 0;
 }
 .sig-preview { margin-bottom: 14px; }
-.sig-label { color: #909399; font-size: 13px; margin-bottom: 6px; }
+.sig-label { color: var(--el-text-color-secondary); font-size: 13px; margin-bottom: 6px; }
 .sig-box {
   min-height: 90px;
   border: 1px dashed var(--el-border-color);

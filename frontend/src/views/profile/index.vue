@@ -242,15 +242,15 @@ onMounted(refresh)
 .pwd-card { margin-top: 16px; }
 .sig-header { display: flex; align-items: center; gap: 8px; }
 .sig-preview { margin-bottom: 14px; }
-.sig-label { font-size: 13px; color: #909399; margin-bottom: 6px; }
+.sig-label { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 6px; }
 .sig-box {
-  border: 1px dashed rgba(96,150,210,0.3);
+  border: 1px dashed var(--el-border-color);
   border-radius: 8px;
   min-height: 92px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(28,155,230,0.06);
+  background: var(--el-fill-color-light);
 }
 .sig-img { max-height: 80px; max-width: 100%; }
 .sig-upload {

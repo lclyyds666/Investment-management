@@ -201,7 +201,7 @@ watch(
 }
 .flex-1 { flex: 1; }
 .mb { margin-bottom: 8px; }
-.rmb { color: #909399; font-size: 12px; }
+.rmb { color: var(--el-text-color-secondary); font-size: 12px; }
 .att-name { margin: 0 8px 0 4px; }
 .section-title {
   display: flex;
@@ -209,8 +209,8 @@ watch(
   gap: 6px;
   margin: 22px 0 14px;
   font-size: 15px;
-  color: #eafcff;
-  .el-icon { color: #3f6ad8; }
+  color: var(--el-text-color-primary);
+  .el-icon { color: var(--el-color-primary); }
 }
 .chain-steps {
   margin-bottom: 8px;
@@ -224,9 +224,9 @@ watch(
   align-items: center;
   gap: 8px;
 }
-.flow-role { font-weight: 600; color: #eafcff; }
-.flow-approver { color: #a9c2e0; font-size: 13px; }
-.flow-comment { margin-top: 4px; color: #909399; font-size: 13px; }
+.flow-role { font-weight: 600; color: var(--el-text-color-primary); }
+.flow-approver { color: var(--el-text-color-regular); font-size: 13px; }
+.flow-comment { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 13px; }
 .flow-sig {
   margin-top: 6px;
   height: 44px;

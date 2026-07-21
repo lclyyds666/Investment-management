@@ -50,7 +50,7 @@ function goDetail(id) {
   font-size: 30px;
   font-weight: 800;
   letter-spacing: 4px;
-  background: linear-gradient(90deg, #39c5ff, #22d3ee);
+  background: var(--chrome-title-gradient);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -58,7 +58,7 @@ function goDetail(id) {
 .ct-subtitle {
   text-align: center;
   margin: 0 0 26px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 14px;
 }
 /* Grid：每行严格 3 个卡片，卡片间距 40px */
@@ -75,11 +75,11 @@ function goDetail(id) {
   cursor: pointer;
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 4px 18px rgba(4, 20, 48, 0.18);
+  box-shadow: var(--card-shadow);
   transition: transform 0.25s ease, box-shadow 0.25s ease;
   &:hover {
     transform: translateY(-4px);
-    box-shadow: 0 10px 28px rgba(34, 211, 238, 0.28);
+    box-shadow: var(--card-shadow-hover);
   }
 }
 .ct-card-img {

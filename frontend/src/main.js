@@ -10,9 +10,7 @@ import App from './App.vue'
 import router from './router'
 import './permission' // 路由守卫（登录 + 角色拦截）
 import './styles/index.scss'
-
-// 启用全站暗色科技主题
-document.documentElement.classList.add('dark')
+import { useThemeStore } from './store/theme'
 
 const app = createApp(App)
 
@@ -21,8 +19,12 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
-app.use(createPinia())
+const pinia = createPinia()
+app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+
+// 挂载前按持久化值就位主题(明亮/暗黑),避免刷新时闪烁
+useThemeStore(pinia).init()
 
 app.mount('#app')

@@ -210,18 +210,18 @@ onMounted(load)
   .toolbar-card { margin-bottom: 16px; :deep(.el-card__body) { padding: 14px 18px; } }
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .tb-left { display: flex; align-items: center; gap: 10px; }
-  .tb-title { font-size: 16px; font-weight: 700; color: #303133; }
+  .tb-title { font-size: 16px; font-weight: 700; color: var(--el-text-color-primary); }
   .tb-right { display: flex; align-items: center; gap: 10px; }
-  .cost-label { color: #606266; font-size: 13px; }
+  .cost-label { color: var(--el-text-color-regular); font-size: 13px; }
 
   .kpi-row { margin-bottom: 4px; row-gap: 16px; }
   .kpi-card {
-    border-top: 3px solid #ccc;
+    border-top: 3px solid var(--el-border-color);
     transition: box-shadow .3s ease, transform .3s ease;
     &:hover { transform: translateY(-4px); box-shadow: 0 10px 24px rgba(64,158,255,.16) !important; }
-    .kpi-label { color: #909399; font-size: 14px; }
+    .kpi-label { color: var(--el-text-color-secondary); font-size: 14px; }
     .kpi-value { margin-top: 8px; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .kpi-foot { margin-top: 6px; font-size: 12px; color: #c0c4cc; min-height: 16px; }
+    .kpi-foot { margin-top: 6px; font-size: 12px; color: var(--el-text-color-placeholder); min-height: 16px; }
   }
   .mt { margin-top: 16px; }
   .card-title { font-weight: 700; }

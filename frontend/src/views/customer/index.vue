@@ -272,21 +272,21 @@ onMounted(load)
 .customer-form :deep(.el-form-item__label) { white-space: nowrap; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
 .search-input { max-width: 320px; }
-.muted { color: #c0c4cc; }
+.muted { color: var(--el-text-color-placeholder); }
 .files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; width: 100%; }
 .file-tag { display: inline-flex; align-items: center; gap: 4px; }
-.upload-hint { margin-top: 6px; color: #909399; font-size: 12px; line-height: 1.4; }
+.upload-hint { margin-top: 6px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.4; }
 .file-line { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
 
-/* 「编辑」按钮:无任何背景色,文字改为白色 + 轻微加粗 */
+/* 「编辑」按钮:无背景色,文字随主题自适应(暗黑近白 / 明亮深色)+ 轻微加粗 */
 :deep(.op-edit.el-button.is-link) {
-  color: #fff;
+  color: var(--el-text-color-primary);
   font-weight: 600;
   background-color: transparent;
 }
 :deep(.op-edit.el-button.is-link:hover),
 :deep(.op-edit.el-button.is-link:focus) {
-  color: #fff;
+  color: var(--el-color-primary);
   background-color: transparent;
 }
 </style>

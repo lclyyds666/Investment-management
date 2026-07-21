@@ -606,14 +606,14 @@ loadCustomers()
 .cur-role { margin-top: 4px; font-size: 12px; color: #e6a23c; }
 .op-cell { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .op-cell :deep(.el-button) { margin: 0; }
-.muted { color: #909399; }
+.muted { color: var(--el-text-color-secondary); }
 .mb { margin-bottom: 12px; }
 .upload-mock {
   width: 100%;
   :deep(.el-upload), :deep(.el-upload-dragger) { width: 100%; }
   :deep(.el-upload-dragger) { padding: 16px; }
 }
-.upload-tip { color: #a8abb2; font-size: 12px; margin-top: 4px; }
+.upload-tip { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
 .upload-tip .picked { color: #67c23a; margin-left: 8px; }
 .ai-wrap { min-height: 120px; }
 .ai-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }

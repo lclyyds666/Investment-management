@@ -681,7 +681,7 @@ onMounted(() => { load(); loadCustomers() })
   :deep(.el-upload-dragger) { width: 100%; }
   :deep(.el-upload-dragger) { padding: 16px; }
 }
-.upload-tip { color: #a8abb2; font-size: 12px; margin-top: 4px; }
+.upload-tip { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
 .upload-tip .picked { color: #67c23a; margin-left: 8px; }
 .ledger-toolbar {
   display: flex;
@@ -689,8 +689,8 @@ onMounted(() => { load(); loadCustomers() })
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.ledger-count { color: #909399; font-size: 13px; }
-.muted { color: #909399; }
+.ledger-count { color: var(--el-text-color-secondary); font-size: 13px; }
+.muted { color: var(--el-text-color-secondary); }
 .small { font-size: 12px; }
 /* AI 审查 */
 .ai-wrap { min-height: 120px; }
