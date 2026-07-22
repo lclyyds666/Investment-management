@@ -2,10 +2,10 @@ import request from './request'
 
 // 文旅业务·门票平台核销业务台账 API —— 均以 scenicId 作用域，后端按 scenic_id 隔离。
 
-/** 批量上传对账明细并解析（算服务商到账+周期，不落库），返回每文件汇总 */
-export function parseTicketFiles(scenicId, files) {
+/** 上传单个对账明细并解析（单文件=一期；算服务商到账+周期、落盘源文件，不落台账） */
+export function parseTicketFile(scenicId, file) {
   const form = new FormData()
-  files.forEach((f) => form.append('files', f))
+  form.append('files', file) // 后端字段名沿用 files（单文件）
   return request.post(
     `/scenic-spots/${encodeURIComponent(scenicId)}/ticket-ledger/parse`,
     form,
@@ -53,5 +53,16 @@ export async function fetchTicketLedgerExportBlob(scenicId) {
     { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
   )
   if (!resp.ok) throw new Error('台账导出失败')
+  return await resp.blob()
+}
+
+/** 以带 token 的请求拉取对账明细源文件为 Blob（预览/下载） */
+export async function fetchTicketDetailBlob(scenicId, stored, name = '') {
+  const q = new URLSearchParams({ stored, name }).toString()
+  const resp = await fetch(
+    `/api/v1/scenic-spots/${encodeURIComponent(scenicId)}/ticket-ledger/detail?${q}`,
+    { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+  )
+  if (!resp.ok) throw new Error('明细源文件获取失败')
   return await resp.blob()
 }

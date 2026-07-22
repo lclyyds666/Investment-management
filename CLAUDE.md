@@ -82,9 +82,16 @@
 5. **合同全生命周期**:审批链改为 **5 节点**(`APPROVAL_CHAIN`:业务经办→供管公司负责人→法律顾问→投资公司法务风控→投资公司分管领导);审批意见沿用 `biz_approval.comment`(未加表/列);`biz_contract` **新增列** is_internal/subject/currency/payment_terms/attachment_name/attachment_stored;**合同附件真实上传下载** `POST/GET /contracts/{id}/attachment`(落盘 `uploads/contract_{id}/`);打印改为「法律文件审批表」(模板 `合同打印模板.docx`,4 意见栏按角色回填);合同台账「生成合同台账」→ 导出 CSV。
 - ⚠️ **在途合同**:审批链由 7 级换 5 节点,旧「审批中」合同 `current_step` 可能错位,建议重新提交。
 
+## 本轮迭代(2026-07-22):核销台账期次递推 + 对账明细单文件流 + 审批导航角标
+1. **计算逻辑**:出版应得到账金额 = **服务商到账 − 服务商佣金**(佣金手工录入,默认0);景区待核销金额=**滚动余额**,首期=付款金额−景区核销,续期=上期余额+本期付款−本期核销。滚动余额由后端 `_recompute_running_balance` **集中重算**(保存/编辑/删除后触发),避免多期重算混乱。算法与合计取值(待核销取末期余额,非逐行相加)见 `services/ticket_ledger.py::running_pending`。
+2. **上传流程**:对账明细改为**单文件=一期**(`parse` 接口拒绝多文件);源文件落盘 `uploads/ticket_detail_{scenic_id}/`,待确认区下方列出本期明细文件并支持**预览/下载**(`GET .../ticket-ledger/detail?stored=`)。待确认台账**仅展示本次上传**(前端每次上传替换草稿),不混历史已确认记录;**移除「覆盖现有台账」**,保存恒 append。
+3. **UI**:锦盈结算金额→**结算金额**、实收服务费→**服务费**、批量上传对账明细→**上传对账明细**;已保存台账**隐藏「付款日期」列**(字段仍在库);**核销率/服务费率移入「编辑台账行」弹窗**集中编辑(草稿按默认 90%/4% 预览)。
+4. **审批导航角标**:`GET /approval/pending-count` 按当前角色返回 `{contract,business,total}`(pending 且当前环节角色==我);前端 `store/approvalBadge.js` 30s 轮询 + 审批/提交后 `refresh()` 实时刷新;`layout/index.vue` 在「合同管理」「业务审批」子项及「经营合规」分组标题渲染 `el-badge`。
+5. **新列**:`biz_ticket_ledger` 增 supplier_commission/payment_amount/pending_writeoff/detail_stored/detail_name → 跑 `20260722_ticket_ledger_recurrence.sql`;⚠️历史台账升级后建议**重新保存一次**以回填滚动余额。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

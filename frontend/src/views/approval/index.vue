@@ -294,6 +294,7 @@ import {
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { useUserStore } from '@/store/user'
+import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { ROLES, STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
@@ -305,6 +306,7 @@ import {
 import { listCustomers } from '@/api/customer'
 
 const userStore = useUserStore()
+const badgeStore = useApprovalBadgeStore()
 const isSuperuser = computed(() => userStore.isSuperuser)
 const isBusinessHandler = computed(
   () => userStore.role === ROLES.BUSINESS_HANDLER || userStore.isSuperuser
@@ -457,6 +459,7 @@ async function onSubmit(row) {
   await submitForm(row.id)
   ElMessage.success('已提交审批，进入审批流')
   load()
+  badgeStore.refresh() // 提交后可能轮到下一环节角色，实时刷新角标
 }
 
 // 通过 / 驳回
@@ -489,6 +492,7 @@ async function confirmAction() {
       await rejectForm(actionCurrent.value.id, actionForm.comment)
       ElMessage.success('已驳回')
     }
+    badgeStore.refresh() // 审批完成后本人待办数减少，实时刷新角标
     actionVisible.value = false
     load()
   } finally {

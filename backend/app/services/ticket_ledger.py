@@ -4,11 +4,11 @@
 1. 解析平台对账明细 xlsx（多个「周」明细 Sheet），逐单累加
    订单实收 − 软件服务费 − 达人服务费 − 团长服务费 − 服务商服务费
    得到「服务商到账金额」，并解析对账周期跨度 / 核对日期文本。
-2. 由用户在前端确认/录入「出版应得到账金额」B 后，按固定拆分比例计算：
+2. 出版应得到账金额 B = 服务商到账 − 服务商佣金(手工录入)；再按固定拆分比例计算：
      景区核销金额 = B × 核销率(默认 90%)
-     实收服务费   = B × 服务费率(默认 4%)
-     锦盈结算金额 = 景区核销金额 + 实收服务费   (= B × 94%)
-   —— 该逻辑已用真实台账三期数据实证，生成值与手工台账逐分吻合。
+     服务费       = B × 服务费率(默认 4%)
+     结算金额     = 景区核销金额 + 服务费   (= B × 94%)
+   另按期次递推出景区待核销金额(滚动余额，见 running_pending)。
 3. 用 openpyxl 生成标准格式业务台账 xlsx（含合计行）供导出。
 
 列一律按「表头名」定位，兼容明细表 70/72 列的差异；金额解析宽松（去 ¥、逗号等）。
@@ -209,32 +209,49 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
 
 
 def compute_row(
-    publisher_due: Decimal,
+    supplier_received: Decimal,
+    supplier_commission: Decimal = Decimal("0"),
     rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
     rate_fee: Decimal = DEFAULT_RATE_FEE,
 ) -> dict:
-    """由出版应得到账金额 B 计算台账三列。
+    """由服务商到账、服务商佣金与比例计算台账计算列。
 
+      出版应得到账金额 B = 服务商到账 - 服务商佣金
       景区核销金额 = B × 核销率
-      实收服务费   = B × 服务费率
-      锦盈结算金额 = 景区核销金额 + 实收服务费
+      服务费       = B × 服务费率
+      结算金额     = 景区核销金额 + 服务费
     """
-    b = publisher_due or Decimal("0")
+    received = supplier_received or Decimal("0")
+    commission = supplier_commission or Decimal("0")
+    b = received - commission
     hexiao = _q(b * rate_hexiao)
     fee = _q(b * rate_fee)
     jinying = _q(hexiao + fee)
     return {
-        "publisher_due": _q(b),
+        "supplier_commission": _q(commission),
+        "publisher_due": _q(b),        # 出版应得到账金额 = 服务商到账 - 服务商佣金
         "hexiao_amount": hexiao,       # 景区核销金额
-        "service_fee": fee,            # 实收服务费
-        "jinying_amount": jinying,     # 锦盈结算金额
+        "service_fee": fee,            # 服务费
+        "jinying_amount": jinying,     # 结算金额
     }
 
 
-# 导出台账列顺序（对齐手工业务台账样表）
+def running_pending(prev_balance: Decimal, payment_amount: Decimal, hexiao_amount: Decimal) -> Decimal:
+    """期次递推：本期景区待核销金额 = 上期剩余余额 + 本期付款金额 - 本期景区核销金额。
+
+    首期时 prev_balance 传 0 即为「首期付款金额 - 首期景区核销金额」。
+    """
+    prev = prev_balance or Decimal("0")
+    pay = payment_amount or Decimal("0")
+    hexiao = hexiao_amount or Decimal("0")
+    return _q(prev + pay - hexiao)
+
+
+# 导出台账列顺序（对齐手工业务台账样表；景区待核销金额紧邻景区核销金额右侧）
 _EXPORT_HEADERS = [
-    "付款日期", "平台", "景区门票", "核对日期",
-    "景区核销金额", "锦盈结算金额", "实收服务费", "回款日期", "回款金额",
+    "平台", "景区门票", "核对日期",
+    "景区核销金额", "景区待核销金额", "付款金额", "结算金额", "服务费",
+    "回款日期", "回款金额",
 ]
 
 
@@ -288,17 +305,20 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
 
     # 数据行
     sum_hexiao = Decimal("0")
+    sum_pending = Decimal("0")
+    sum_payment = Decimal("0")
     sum_jinying = Decimal("0")
     sum_fee = Decimal("0")
     sum_repay = Decimal("0")
     r = 3
     for row in rows:
         vals = [
-            _fmt_date(row.get("pay_date")),
             row.get("platform", "") or "",
             row.get("ticket_product", "") or DEFAULT_TICKET_PRODUCT,
             row.get("check_date_text", "") or "",
             _fmt_amount(row.get("hexiao_amount")),
+            _fmt_amount(row.get("pending_writeoff")),
+            _fmt_amount(row.get("payment_amount")),
             _fmt_amount(row.get("jinying_amount")),
             _fmt_amount(row.get("service_fee")),
             _fmt_date(row.get("repay_date")),
@@ -309,16 +329,21 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
             cell.alignment = center
             cell.border = border
         sum_hexiao += _num(row.get("hexiao_amount")) or Decimal("0")
+        sum_payment += _num(row.get("payment_amount")) or Decimal("0")
         sum_jinying += _num(row.get("jinying_amount")) or Decimal("0")
         sum_fee += _num(row.get("service_fee")) or Decimal("0")
         sum_repay += _num(row.get("repay_amount")) or Decimal("0")
         r += 1
+    # 景区待核销金额为滚动余额，合计取末期余额（最后一行的值）
+    if rows:
+        sum_pending = _num(rows[-1].get("pending_writeoff")) or Decimal("0")
 
     # 合计行
     total_fill = PatternFill("solid", fgColor="FDE9D9")
     total_vals = [
-        "合计", "", "", "",
-        float(_q(sum_hexiao)), float(_q(sum_jinying)), float(_q(sum_fee)),
+        "合计", "", "",
+        float(_q(sum_hexiao)), float(_q(sum_pending)), float(_q(sum_payment)),
+        float(_q(sum_jinying)), float(_q(sum_fee)),
         "", float(_q(sum_repay)),
     ]
     for c, v in enumerate(total_vals, start=1):
@@ -329,7 +354,7 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
         cell.border = border
 
     # 列宽
-    widths = [13, 8, 22, 20, 15, 15, 14, 13, 14]
+    widths = [8, 22, 20, 15, 15, 14, 15, 14, 13, 14]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

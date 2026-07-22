@@ -2,6 +2,11 @@ import request from './request'
 
 // 审批中心：两套独立审批单工作流（业务付款审批单 / 业务审批单）
 
+/** 待我审批数量统计（合同 + 业务审批），供导航角标；返回 { contract, business, total } */
+export function getPendingCount() {
+  return request.get('/approval/pending-count')
+}
+
 export function listForms() {
   return request.get('/approval-forms')
 }

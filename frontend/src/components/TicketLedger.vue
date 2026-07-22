@@ -1,6 +1,6 @@
 <template>
   <div class="ticket-ledger" v-loading="loading">
-    <!-- 顶部：标题 + 比例配置 + 操作 -->
+    <!-- 顶部：标题 + 操作（核销率/服务费率已迁至「编辑台账行」弹窗集中编辑） -->
     <div class="tl-head">
       <div class="tl-title">
         <el-icon><Tickets /></el-icon>
@@ -8,25 +8,11 @@
         <el-tag size="small" effect="plain">共 {{ savedRows.length }} 期</el-tag>
       </div>
       <div class="tl-ops">
-        <div class="rate-box">
-          <span>核销率</span>
-          <el-input-number
-            v-model="ratePctHexiao" :min="0" :max="100" :step="1" :precision="2"
-            size="small" controls-position="right" style="width: 108px"
-          /><span class="pct">%</span>
-        </div>
-        <div class="rate-box">
-          <span>服务费率</span>
-          <el-input-number
-            v-model="ratePctFee" :min="0" :max="100" :step="1" :precision="2"
-            size="small" controls-position="right" style="width: 108px"
-          /><span class="pct">%</span>
-        </div>
         <el-upload
-          :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls" multiple
+          :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls"
           :on-change="onFileChange"
         >
-          <el-button type="primary" :icon="UploadFilled" :loading="parsing">批量上传对账明细</el-button>
+          <el-button type="primary" :icon="UploadFilled" :loading="parsing">上传对账明细</el-button>
         </el-upload>
         <el-button :icon="Refresh" @click="loadSaved">刷新</el-button>
         <el-button
@@ -38,21 +24,17 @@
 
     <el-alert
       type="info" :closable="false" show-icon class="tl-tip"
-      title="流程：批量上传对账明细 → 自动识别周期并算出「服务商到账金额」→ 在下表确认/录入「出版应得到账金额」→ 系统按核销率/服务费率算出景区核销、锦盈结算、实收服务费 → 保存生成台账 → 导出标准 Excel。"
+      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账金额」→ 录入「服务商佣金」得出出版应得到账、录入「付款金额」→ 系统按核销率/服务费率算景区核销、结算金额、服务费，并按期次递推出「景区待核销金额」→ 保存生成台账。"
     />
 
-    <!-- 待确认区：上传解析后的可编辑草稿表 -->
+    <!-- 待确认区：本期上传解析后的可编辑草稿表（仅展示本次上传，不含历史已确认记录） -->
     <el-card v-if="draftRows.length" shadow="never" class="tl-draft">
       <template #header>
         <div class="draft-header">
-          <span><el-icon><EditPen /></el-icon> 待确认台账（{{ draftRows.length }} 期）—— 请录入「出版应得到账金额」与手工字段</span>
+          <span><el-icon><EditPen /></el-icon> 待确认台账（本期）—— 请录入「服务商佣金」与「付款金额」</span>
           <div>
-            <el-radio-group v-model="saveMode" size="small">
-              <el-radio-button label="replace">覆盖现有台账</el-radio-button>
-              <el-radio-button label="append">追加到台账</el-radio-button>
-            </el-radio-group>
             <el-button type="primary" size="small" :icon="Check" :loading="saving" @click="onSave">保存生成台账</el-button>
-            <el-button size="small" text @click="draftRows = []">清空草稿</el-button>
+            <el-button size="small" text @click="clearDraft">清空草稿</el-button>
           </div>
         </div>
       </template>
@@ -79,27 +61,46 @@
         <el-table-column label="服务商到账（自动）" width="140" align="right">
           <template #default="{ row }">{{ fmtMoney(row.supplier_received) }}</template>
         </el-table-column>
-        <el-table-column label="出版应得到账金额 ★" width="170" align="right">
+        <el-table-column label="服务商佣金 ★" width="150" align="right">
           <template #default="{ row }">
             <el-input-number
-              v-model="row.publisher_due" :min="0" :precision="2" :step="1000"
-              size="small" controls-position="right" style="width: 150px"
+              v-model="row.supplier_commission" :min="0" :precision="2" :step="100"
+              size="small" controls-position="right" style="width: 130px"
             />
+          </template>
+        </el-table-column>
+        <el-table-column label="出版应得到账金额" width="150" align="right">
+          <template #default="{ row }">
+            <span class="calc">{{ fmtMoney(draftPublisherDue(row)) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="景区核销金额" width="130" align="right">
           <template #default="{ row }">
-            <span class="calc">{{ fmtMoney(calcHexiao(row.publisher_due)) }}</span>
+            <span class="calc">{{ fmtMoney(calcHexiao(draftPublisherDue(row))) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="锦盈结算金额" width="130" align="right">
+        <!-- 景区待核销金额：紧邻景区核销金额右侧；按期次递推预览 -->
+        <el-table-column label="景区待核销金额" width="140" align="right">
           <template #default="{ row }">
-            <span class="calc">{{ fmtMoney(calcJinying(row.publisher_due)) }}</span>
+            <span class="calc pending">{{ fmtMoney(draftPending(row)) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="实收服务费" width="120" align="right">
+        <el-table-column label="付款金额 ★" width="150" align="right">
           <template #default="{ row }">
-            <span class="calc">{{ fmtMoney(calcFee(row.publisher_due)) }}</span>
+            <el-input-number
+              v-model="row.payment_amount" :min="0" :precision="2" :step="1000"
+              size="small" controls-position="right" style="width: 130px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="结算金额" width="130" align="right">
+          <template #default="{ row }">
+            <span class="calc">{{ fmtMoney(calcJinying(draftPublisherDue(row))) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="服务费" width="120" align="right">
+          <template #default="{ row }">
+            <span class="calc">{{ fmtMoney(calcFee(draftPublisherDue(row))) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="回款日期" width="150">
@@ -114,39 +115,56 @@
         </el-table-column>
         <el-table-column label="来源文件" min-width="200" prop="source_file" show-overflow-tooltip />
       </el-table>
+
+      <!-- 本次上传的对账明细文件列表：预览 / 下载源文件 -->
+      <div class="detail-files" v-if="detailFiles.length">
+        <div class="detail-files-title"><el-icon><Files /></el-icon><span>本期对账明细源文件</span></div>
+        <div v-for="f in detailFiles" :key="f.detail_stored || f.source_file" class="detail-file-item">
+          <el-icon class="df-icon"><Document /></el-icon>
+          <span class="df-name" :title="f.detail_name || f.source_file">{{ f.detail_name || f.source_file }}</span>
+          <el-button size="small" text type="primary" :icon="View" :disabled="!f.detail_stored" @click="onPreviewDetail(f)">预览/查看</el-button>
+          <el-button size="small" text type="success" :icon="Download" :disabled="!f.detail_stored" @click="onDownloadDetail(f)">下载</el-button>
+        </div>
+      </div>
     </el-card>
 
-    <!-- 已保存台账 -->
+    <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库） -->
     <el-table :data="savedRows" border stripe size="small" class="saved-table" :show-summary="savedRows.length > 0" :summary-method="summary">
       <el-table-column type="index" label="#" width="46" align="center" />
-      <el-table-column label="付款日期" width="110" prop="pay_date" />
       <el-table-column label="平台" width="80" prop="platform" />
       <el-table-column label="景区门票" min-width="160" prop="ticket_product" show-overflow-tooltip />
       <el-table-column label="核对日期" width="160" prop="check_date_text" />
       <el-table-column label="景区核销金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
-      <el-table-column label="锦盈结算金额" width="130" align="right">
+      <!-- 景区待核销金额：紧邻景区核销金额右侧 -->
+      <el-table-column label="景区待核销金额" width="140" align="right">
+        <template #default="{ row }"><span class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
+      </el-table-column>
+      <el-table-column label="付款金额" width="130" align="right">
+        <template #default="{ row }">{{ fmtMoney(row.payment_amount) }}</template>
+      </el-table-column>
+      <el-table-column label="结算金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
       </el-table-column>
-      <el-table-column label="实收服务费" width="120" align="right">
+      <el-table-column label="服务费" width="120" align="right">
         <template #default="{ row }">{{ fmtMoney(row.service_fee) }}</template>
       </el-table-column>
       <el-table-column label="回款日期" width="110" prop="repay_date" />
       <el-table-column label="回款金额" width="130" align="right">
         <template #default="{ row }">{{ row.repay_amount != null ? fmtMoney(row.repay_amount) : '—' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" text type="primary" @click="openEdit(row)">回款/编辑</el-button>
+          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
         </template>
       </el-table-column>
       <template #empty>暂无台账，请上传对账明细并保存生成</template>
     </el-table>
 
-    <!-- 编辑单行弹窗（回款为主） -->
-    <el-dialog v-model="editVisible" title="编辑台账行" width="440px">
+    <!-- 编辑单行弹窗（集中编辑：服务商佣金 / 核销率 / 服务费率 / 付款金额 / 回款） -->
+    <el-dialog v-model="editVisible" title="编辑台账行" width="480px">
       <el-form label-width="120px" v-if="editRow">
         <el-form-item label="付款日期">
           <el-date-picker v-model="editForm.pay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -156,8 +174,26 @@
             <el-option v-for="p in PLATFORMS" :key="p" :label="p" :value="p" />
           </el-select>
         </el-form-item>
+        <el-form-item label="服务商到账">
+          <el-input :model-value="fmtMoney(editRow.supplier_received)" disabled style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="服务商佣金">
+          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width: 100%" />
+        </el-form-item>
         <el-form-item label="出版应得到账">
-          <el-input-number v-model="editForm.publisher_due" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
+          <el-input :model-value="fmtMoney(editPublisherDue)" disabled style="width: 100%" />
+          <div class="edit-hint">出版应得到账 = 服务商到账 − 服务商佣金（自动）</div>
+        </el-form-item>
+        <el-form-item label="核销率">
+          <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
+          <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="服务费率">
+          <el-input-number v-model="editForm.ratePctFee" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
+          <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="付款金额">
+          <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
         </el-form-item>
         <el-form-item label="回款日期">
           <el-date-picker v-model="editForm.repay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -177,38 +213,56 @@
 <script setup>
 import { ref, computed, watch, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Refresh, Download, Tickets, EditPen, Check } from '@element-plus/icons-vue'
+import { UploadFilled, Refresh, Download, Tickets, EditPen, Check, Files, Document, View } from '@element-plus/icons-vue'
 import {
-  parseTicketFiles, getTicketLedger, saveTicketLedger,
-  updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob
+  parseTicketFile, getTicketLedger, saveTicketLedger,
+  updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob, fetchTicketDetailBlob
 } from '@/api/ticketLedger'
-import { downloadBlob } from '@/utils/file'
+import { downloadBlob, previewBlob } from '@/utils/file'
 
 const props = defineProps({
   scenicId: { type: String, required: true }
 })
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
+// 默认拆分比例（核销率/服务费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
+const DEFAULT_RATE_HEXIAO = 0.9
+const DEFAULT_RATE_FEE = 0.04
 
 const loading = ref(false)
 const parsing = ref(false)
 const saving = ref(false)
 const savedRows = ref([])
 const draftRows = ref([])
-const saveMode = ref('replace')
-
-// 比例（百分数展示，默认 90 / 4）
-const ratePctHexiao = ref(90)
-const ratePctFee = ref(4)
-const rateHexiao = computed(() => Number(ratePctHexiao.value) / 100)
-const rateFee = computed(() => Number(ratePctFee.value) / 100)
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100
 }
-function calcHexiao(b) { return round2((Number(b) || 0) * rateHexiao.value) }
-function calcFee(b) { return round2((Number(b) || 0) * rateFee.value) }
+// 出版应得到账 = 服务商到账 − 服务商佣金
+function draftPublisherDue(row) {
+  return round2((Number(row.supplier_received) || 0) - (Number(row.supplier_commission) || 0))
+}
+function calcHexiao(b) { return round2((Number(b) || 0) * DEFAULT_RATE_HEXIAO) }
+function calcFee(b) { return round2((Number(b) || 0) * DEFAULT_RATE_FEE) }
 function calcJinying(b) { return round2(calcHexiao(b) + calcFee(b)) }
+
+// 已保存台账末期滚动余额（新一期递推起点）
+const lastSavedPending = computed(() => {
+  const n = savedRows.value.length
+  return n ? (Number(savedRows.value[n - 1].pending_writeoff) || 0) : 0
+})
+// 草稿期景区待核销金额预览：上期余额 + 本期付款 − 本期核销
+function draftPending(row) {
+  const hexiao = calcHexiao(draftPublisherDue(row))
+  return round2(lastSavedPending.value + (Number(row.payment_amount) || 0) - hexiao)
+}
+
+// 本次上传的明细源文件（供预览/下载）
+const detailFiles = computed(() =>
+  draftRows.value
+    .filter((r) => r.detail_stored || r.source_file)
+    .map((r) => ({ detail_stored: r.detail_stored, detail_name: r.detail_name, source_file: r.source_file }))
+)
 
 function fmtMoney(n) {
   const v = Number(n)
@@ -227,22 +281,24 @@ async function loadSaved() {
   }
 }
 
-async function onFileChange(file, fileList) {
-  // el-upload multiple 会逐个回调；聚合去重后统一解析一次
-  const raws = fileList.map((f) => f.raw).filter(Boolean)
-  if (!raws.length) return
-  // 校验
-  for (const r of raws) {
-    const name = (r.name || '').toLowerCase()
-    if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
-      ElMessage.error(`${r.name}：仅支持 Excel(.xlsx/.xls)`)
-      return
-    }
+function clearDraft() {
+  draftRows.value = []
+}
+
+async function onFileChange(file) {
+  // 单文件=一期：每次仅取本次选择的文件，替换旧草稿（仅展示本次上传）
+  const raw = file?.raw
+  if (!raw) return
+  const name = (raw.name || '').toLowerCase()
+  if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+    ElMessage.error('仅支持 Excel 文件(.xlsx/.xls)')
+    return
   }
   parsing.value = true
   try {
-    const res = await parseTicketFiles(props.scenicId, raws)
+    const res = await parseTicketFile(props.scenicId, raw)
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
+    // 本次上传仅生成本期一条待确认记录，替换旧草稿
     draftRows.value = (res.files || []).map((f) => ({
       pay_date: null,
       platform: '抖音',
@@ -252,13 +308,16 @@ async function onFileChange(file, fileList) {
       period_start: f.period_start,
       period_end: f.period_end,
       supplier_received: f.supplier_received,
-      publisher_due: Number(f.suggested_publisher_due) || 0,
+      supplier_commission: 0,
+      payment_amount: 0,
       order_count: f.order_count,
       repay_date: null,
       repay_amount: null,
-      source_file: f.source_file
+      source_file: f.source_file,
+      detail_stored: f.detail_stored,
+      detail_name: f.detail_name
     }))
-    ElMessage.success(`解析完成：成功 ${res.succeeded} 个，失败 ${res.failed} 个。请确认「出版应得到账金额」。`)
+    ElMessage.success('解析完成（本期），请录入「服务商佣金」与「付款金额」后保存。')
   } catch {
     ElMessage.error('解析失败，请检查文件内容')
   } finally {
@@ -277,17 +336,21 @@ async function onSave() {
     period_start: r.period_start,
     period_end: r.period_end,
     supplier_received: r.supplier_received,
-    publisher_due: r.publisher_due,
-    rate_hexiao: rateHexiao.value,
-    rate_fee: rateFee.value,
+    supplier_commission: r.supplier_commission || 0,
+    payment_amount: r.payment_amount || 0,
+    rate_hexiao: DEFAULT_RATE_HEXIAO,
+    rate_fee: DEFAULT_RATE_FEE,
     order_count: r.order_count,
     repay_date: r.repay_date,
     repay_amount: r.repay_amount,
-    source_file: r.source_file
+    source_file: r.source_file,
+    detail_stored: r.detail_stored,
+    detail_name: r.detail_name
   }))
   saving.value = true
   try {
-    const res = await saveTicketLedger(props.scenicId, rows, saveMode.value)
+    // 单期上传恒为追加（后端会集中重算滚动余额）
+    const res = await saveTicketLedger(props.scenicId, rows, 'append')
     savedRows.value = res.rows || []
     draftRows.value = []
     ElMessage.success('已保存生成台账')
@@ -298,17 +361,47 @@ async function onSave() {
   }
 }
 
+// —— 明细源文件预览 / 下载 ——
+async function onPreviewDetail(f) {
+  try {
+    const blob = await fetchTicketDetailBlob(props.scenicId, f.detail_stored, f.detail_name || f.source_file)
+    previewBlob(blob, f.detail_name || f.source_file || '对账明细.xlsx')
+  } catch {
+    ElMessage.error('预览失败')
+  }
+}
+async function onDownloadDetail(f) {
+  try {
+    const blob = await fetchTicketDetailBlob(props.scenicId, f.detail_stored, f.detail_name || f.source_file)
+    downloadBlob(blob, f.detail_name || f.source_file || '对账明细.xlsx')
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+
 // —— 编辑单行 ——
 const editVisible = ref(false)
 const editRow = ref(null)
 const savingEdit = ref(false)
-const editForm = reactive({ pay_date: null, platform: '', publisher_due: 0, repay_date: null, repay_amount: null })
+const editForm = reactive({
+  pay_date: null, platform: '', supplier_commission: 0,
+  ratePctHexiao: 90, ratePctFee: 4, payment_amount: 0,
+  repay_date: null, repay_amount: null
+})
+
+const editPublisherDue = computed(() => {
+  if (!editRow.value) return 0
+  return round2((Number(editRow.value.supplier_received) || 0) - (Number(editForm.supplier_commission) || 0))
+})
 
 function openEdit(row) {
   editRow.value = row
   editForm.pay_date = row.pay_date
   editForm.platform = row.platform
-  editForm.publisher_due = Number(row.publisher_due) || 0
+  editForm.supplier_commission = Number(row.supplier_commission) || 0
+  editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
+  editForm.ratePctFee = round2((Number(row.rate_fee) || DEFAULT_RATE_FEE) * 100)
+  editForm.payment_amount = Number(row.payment_amount) || 0
   editForm.repay_date = row.repay_date
   editForm.repay_amount = row.repay_amount != null ? Number(row.repay_amount) : null
   editVisible.value = true
@@ -321,7 +414,10 @@ async function onSaveEdit() {
     await updateTicketRow(props.scenicId, editRow.value.id, {
       pay_date: editForm.pay_date,
       platform: editForm.platform,
-      publisher_due: editForm.publisher_due,
+      supplier_commission: editForm.supplier_commission,
+      rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
+      rate_fee: round2(Number(editForm.ratePctFee) / 100),
+      payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     })
@@ -337,7 +433,7 @@ async function onSaveEdit() {
 
 async function onDeleteRow(row) {
   try {
-    await ElMessageBox.confirm(`确定删除该期台账（${row.check_date_text || row.id}）吗？`, '删除确认', {
+    await ElMessageBox.confirm(`确定删除该期台账（${row.check_date_text || row.id}）吗？删除后其后各期待核销余额将自动重算。`, '删除确认', {
       type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
     })
   } catch { return }
@@ -359,13 +455,18 @@ async function onExport() {
   }
 }
 
-// el-table 合计行
+// el-table 合计行（列序：# 平台 景区门票 核对日期 景区核销 景区待核销 付款金额 结算金额 服务费 回款日期 回款金额 操作）
 function summary({ columns, data }) {
   const sums = []
-  const moneyCols = { 5: 'hexiao_amount', 6: 'jinying_amount', 7: 'service_fee', 9: 'repay_amount' }
+  const sumCols = { 4: 'hexiao_amount', 6: 'payment_amount', 7: 'jinying_amount', 8: 'service_fee', 10: 'repay_amount' }
   columns.forEach((col, idx) => {
     if (idx === 0) { sums[idx] = '合计'; return }
-    const key = moneyCols[idx]
+    // 景区待核销为滚动余额 → 取末期值
+    if (idx === 5) {
+      sums[idx] = data.length ? fmtMoney(data[data.length - 1].pending_writeoff) : ''
+      return
+    }
+    const key = sumCols[idx]
     if (key) {
       const total = data.reduce((acc, r) => acc + (Number(r[key]) || 0), 0)
       sums[idx] = fmtMoney(total)
@@ -399,14 +500,6 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   .el-icon { color: var(--el-color-primary); }
 }
 .tl-ops { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.rate-box {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-  .pct { color: var(--el-text-color-secondary); }
-}
 .tl-tip { margin-bottom: 12px; }
 .tl-draft { margin-bottom: 16px; border: 1px solid var(--el-color-primary-light-5); }
 .draft-header {
@@ -420,5 +513,36 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 }
 .draft-table :deep(.el-table__cell) { padding: 4px 0; }
 .calc { color: var(--el-color-primary); font-weight: 600; }
+.pending { color: #f59e0b; font-weight: 700; }
 .saved-table { margin-top: 4px; }
+
+/* 本期对账明细源文件列表 */
+.detail-files {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+.detail-files-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: var(--el-text-color-regular);
+  .el-icon { color: var(--el-color-primary); }
+}
+.detail-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  .df-icon { color: var(--el-color-success); }
+  .df-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+}
+
+.edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
+.pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }
 </style>

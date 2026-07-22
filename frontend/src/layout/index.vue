@@ -12,21 +12,33 @@
         active-text-color="var(--chrome-menu-active-text)"
       >
         <template v-for="item in menus" :key="item.group || item.path">
-          <!-- 分组一级菜单（如「经营合规管理」）→ 折叠子菜单 -->
+          <!-- 分组一级菜单（如「经营合规」）→ 折叠子菜单；标题角标=组内子项待审批合计 -->
           <el-sub-menu v-if="item.group" :index="item.group">
             <template #title>
               <el-icon><component :is="item.icon" /></el-icon>
               <span>{{ item.group }}</span>
+              <el-badge
+                v-if="groupBadge(item)"
+                :value="groupBadge(item)" :max="99" class="menu-badge" type="danger"
+              />
             </template>
             <el-menu-item v-for="sub in item.children" :key="sub.path" :index="sub.path">
               <el-icon><component :is="sub.meta.icon" /></el-icon>
               <span>{{ sub.meta.title }}</span>
+              <el-badge
+                v-if="menuBadge(sub.path)"
+                :value="menuBadge(sub.path)" :max="99" class="menu-badge" type="danger"
+              />
             </el-menu-item>
           </el-sub-menu>
           <!-- 普通一级菜单 -->
           <el-menu-item v-else :index="item.path">
             <el-icon><component :is="item.meta.icon" /></el-icon>
             <span>{{ item.meta.title }}</span>
+            <el-badge
+              v-if="menuBadge(item.path)"
+              :value="menuBadge(item.path)" :max="99" class="menu-badge" type="danger"
+            />
           </el-menu-item>
         </template>
       </el-menu>
@@ -54,9 +66,10 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
+import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
 import UserDropdown from '@/components/UserDropdown.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
@@ -64,8 +77,24 @@ import ThemeToggle from '@/components/ThemeToggle.vue'
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const badgeStore = useApprovalBadgeStore()
 
 const activeMenu = computed(() => route.path)
+
+// 导航角标：按当前角色的待我审批数量。/contract=合同类、/approval=业务审批类
+function menuBadge(path) {
+  if (path === '/contract') return badgeStore.contract
+  if (path === '/approval') return badgeStore.business
+  return 0
+}
+// 分组标题角标 = 组内各子项角标之和
+function groupBadge(item) {
+  return (item.children || []).reduce((acc, sub) => acc + menuBadge(sub.path), 0)
+}
+
+// 登录期间轮询待审批数量（30s）；组件卸载（登出跳登录页）时停止
+onMounted(() => badgeStore.startPolling())
+onUnmounted(() => badgeStore.stopPolling())
 
 // 侧边栏收起/展开（localStorage 持久化）
 const collapsed = ref(localStorage.getItem('sidebar_collapsed') === '1')
@@ -169,6 +198,14 @@ const menus = computed(() => {
     height: 46px;
     border-radius: 8px;
     margin-bottom: 4px;
+  }
+  /* 导航待审批角标：紧随标题文字右侧 */
+  .menu-badge {
+    margin-left: 8px;
+    :deep(.el-badge__content) {
+      border: none;
+      transform: translateY(-1px);
+    }
   }
   :deep(.el-menu-item:hover) {
     background: var(--chrome-menu-hover-bg) !important;

@@ -2,8 +2,8 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
-    approval, auth, channel, contract, customer, health, invoice, knowledge, operation,
-    scenic, ticket_ledger, user,
+    approval, approval_stats, auth, channel, contract, customer, health, invoice,
+    knowledge, operation, scenic, ticket_ledger, user,
 )
 
 api_router = APIRouter()
@@ -12,6 +12,7 @@ api_router.include_router(auth.router, tags=["认证"])
 api_router.include_router(user.router, prefix="/users", tags=["用户与组织"])
 api_router.include_router(contract.router, prefix="/contracts", tags=["合同管理"])
 api_router.include_router(approval.router, prefix="/approval-forms", tags=["业务审批"])
+api_router.include_router(approval_stats.router, prefix="/approval", tags=["审批角标"])
 api_router.include_router(operation.router, prefix="/operation", tags=["经营数据"])
 api_router.include_router(customer.router, prefix="/customers", tags=["客户档案"])
 api_router.include_router(channel.router, prefix="/channels", tags=["渠道集成"])

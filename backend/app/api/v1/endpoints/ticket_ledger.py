@@ -11,6 +11,7 @@
 """
 import asyncio
 import io
+import uuid
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -18,11 +19,12 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
@@ -66,6 +68,9 @@ def _totals(rows: list[TicketLedger]) -> TicketLedgerTotals:
 
     return TicketLedgerTotals(
         hexiao_amount=s("hexiao_amount"),
+        payment_amount=s("payment_amount"),
+        # 景区待核销金额为滚动余额 → 合计取末期(最后一行)余额，而非逐行相加
+        pending_writeoff=(rows[-1].pending_writeoff or Decimal("0")) if rows else Decimal("0"),
         jinying_amount=s("jinying_amount"),
         service_fee=s("service_fee"),
         publisher_due=s("publisher_due"),
@@ -81,66 +86,92 @@ def _load_rows(db: Session, sid: str) -> list[TicketLedger]:
     ).all()
 
 
+def _recompute_running_balance(rows: list[TicketLedger]) -> None:
+    """按行序集中重算「景区待核销金额」滚动余额，避免多期数据重算混乱。
+
+    首期：付款金额 - 景区核销金额；续期：上期余额 + 本期付款 - 本期核销。
+    传入 rows 须按 row_no 升序；就地写回每行 pending_writeoff（调用方负责 commit）。
+    """
+    prev = Decimal("0")
+    for r in rows:
+        prev = tl_svc.running_pending(prev, r.payment_amount, r.hexiao_amount)
+        r.pending_writeoff = prev
+
+
+def _detail_dir(sid: str) -> Path:
+    """某景区对账明细源文件落盘目录（供预览/下载）。"""
+    return Path(settings.UPLOAD_DIR) / f"ticket_detail_{sid}"
+
+
 # --------------------------------------------------------------------------- #
 # 1) 批量上传 → 解析（不落库）
 # --------------------------------------------------------------------------- #
 @router.post(
     "/{scenic_id}/ticket-ledger/parse",
     response_model=Response[ParseResult],
-    summary="批量上传对账明细并解析(算服务商到账+周期，不落库)",
+    summary="上传对账明细并解析(单文件=一期，算服务商到账+周期，落盘源文件，不落台账)",
 )
 async def parse_files(
     scenic_id: str,
-    files: list[UploadFile] = File(..., description="对账明细 Excel(.xlsx/.xls)，可多选"),
+    files: list[UploadFile] = File(..., description="对账明细 Excel(.xlsx/.xls)，每次仅限 1 个"),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     sid = _valid_scenic_id(scenic_id)
+    # 单期逻辑：每次上传只允许 1 个文件，1 文件即计为一期
+    if len(files) != 1:
+        raise HTTPException(status_code=400, detail="每次仅能上传 1 个对账明细文件（1 个文件=1 期）")
+
     parsed: list[ParsedFile] = []
     warnings: list[str] = []
     failed = 0
 
-    for f in files:
-        fname = f.filename or "对账明细.xlsx"
-        if Path(fname).suffix.lower() not in _XLSX_EXT:
-            failed += 1
-            warnings.append(f"{fname}：仅支持 Excel(.xlsx/.xls)，已跳过")
-            continue
-        content = await f.read()
-        if len(content) > _MAX_BYTES:
-            failed += 1
-            warnings.append(f"{fname}：超过 30MB 上限，已跳过")
-            continue
-        try:
-            # 并发闸 + 线程池：CPU/内存密集的 openpyxl 解析不阻塞事件循环，
-            # 且同一时刻只跑一个解析，避免重叠上传在小内存机上叠加 OOM。
-            async with _PARSE_SEMAPHORE:
-                info = await run_in_threadpool(
-                    tl_svc.parse_reconciliation, content, filename=fname
-                )
-        except Exception as exc:  # noqa: BLE001
-            failed += 1
-            warnings.append(f"{fname}：解析失败（{exc}）")
-            continue
-        finally:
-            # 尽快释放大文件内存，降低小内存机 OOM 风险
-            del content
-        if info["order_count"] == 0:
-            warnings.append(f"{fname}：未解析到有效核销明细，请确认文件内容")
-        parsed.append(ParsedFile(
-            source_file=fname,
-            supplier_received=info["supplier_received"],
-            order_count=info["order_count"],
-            period_text=info["period_text"],
-            check_date_text=info["check_date_text"],
-            period_start=info["period_start"],
-            period_end=info["period_end"],
-            sheets=info["sheets"],
-            suggested_publisher_due=info["supplier_received"],  # 建议值=服务商到账，用户可改
-        ))
+    f = files[0]
+    fname = f.filename or "对账明细.xlsx"
+    ext = Path(fname).suffix.lower()
+    if ext not in _XLSX_EXT:
+        raise HTTPException(status_code=400, detail="仅支持 Excel(.xlsx/.xls)")
+    content = await f.read()
+    if len(content) > _MAX_BYTES:
+        raise HTTPException(status_code=400, detail="文件超过 30MB 上限")
 
-    # 按周期起始排序，便于台账时间顺序
-    parsed.sort(key=lambda p: (p.period_start or date.max))
+    # 源文件落盘（供预览/下载）：即使后续解析失败也保留，方便排查
+    detail_stored = ""
+    try:
+        d = _detail_dir(sid)
+        d.mkdir(parents=True, exist_ok=True)
+        detail_stored = f"{uuid.uuid4().hex}{ext}"
+        (d / detail_stored).write_bytes(content)
+    except OSError:
+        detail_stored = ""  # 落盘失败不阻断解析，仅无法预览/下载
+
+    try:
+        # 并发闸 + 线程池：CPU/内存密集的 openpyxl 解析不阻塞事件循环，
+        # 且同一时刻只跑一个解析，避免重叠上传在小内存机上叠加 OOM。
+        async with _PARSE_SEMAPHORE:
+            info = await run_in_threadpool(
+                tl_svc.parse_reconciliation, content, filename=fname
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"解析失败：{exc}")
+    finally:
+        del content  # 尽快释放大文件内存
+
+    if info["order_count"] == 0:
+        warnings.append(f"{fname}：未解析到有效核销明细，请确认文件内容")
+    parsed.append(ParsedFile(
+        source_file=fname,
+        detail_stored=detail_stored,
+        detail_name=fname,
+        supplier_received=info["supplier_received"],
+        order_count=info["order_count"],
+        period_text=info["period_text"],
+        check_date_text=info["check_date_text"],
+        period_start=info["period_start"],
+        period_end=info["period_end"],
+        sheets=info["sheets"],
+    ))
+
     return Response.ok(
         ParseResult(
             scenic_id=sid,
@@ -149,7 +180,7 @@ async def parse_files(
             failed=failed,
             warnings=warnings,
         ),
-        message=f"解析完成：成功 {len(parsed)} 个，失败 {failed} 个",
+        message="解析完成：本期 1 个文件",
     )
 
 
@@ -204,7 +235,9 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
-        calc = tl_svc.compute_row(r.publisher_due, r.rate_hexiao, r.rate_fee)
+        calc = tl_svc.compute_row(
+            r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_fee
+        )
         db.add(TicketLedger(
             scenic_id=sid,                       # ← 铁律：作用域键来自路径
             row_no=base_no + i,
@@ -216,8 +249,10 @@ def save_ledger(
             period_start=r.period_start,
             period_end=r.period_end,
             supplier_received=r.supplier_received or Decimal("0"),
+            supplier_commission=calc["supplier_commission"],
             publisher_due=calc["publisher_due"],
             hexiao_amount=calc["hexiao_amount"],
+            payment_amount=r.payment_amount or Decimal("0"),
             jinying_amount=calc["jinying_amount"],
             service_fee=calc["service_fee"],
             rate_hexiao=r.rate_hexiao,
@@ -226,8 +261,14 @@ def save_ledger(
             repay_date=r.repay_date,
             repay_amount=r.repay_amount,
             source_file=r.source_file or "",
+            detail_stored=r.detail_stored or "",
+            detail_name=r.detail_name or r.source_file or "",
             uploaded_by=current_user.id,
         ))
+    db.flush()
+
+    # 期次递推：集中重算全景区滚动余额（含新增期），避免多期重算混乱
+    _recompute_running_balance(_load_rows(db, sid))
     db.commit()
 
     rows = _load_rows(db, sid)
@@ -277,24 +318,36 @@ def update_row(
     if payload.repay_amount is not None:
         row.repay_amount = payload.repay_amount
 
-    # B 或比例变化 → 重算三列
+    # 服务商佣金 / 比例变化 → 重算计算列（出版应得=到账-佣金，再按比例拆分）
+    calc_dirty = False
+    if payload.supplier_commission is not None:
+        row.supplier_commission = payload.supplier_commission
+        calc_dirty = True
     if payload.rate_hexiao is not None:
         row.rate_hexiao = payload.rate_hexiao
+        calc_dirty = True
     if payload.rate_fee is not None:
         row.rate_fee = payload.rate_fee
-    if payload.publisher_due is not None:
-        row.publisher_due = payload.publisher_due
-    if (
-        payload.publisher_due is not None
-        or payload.rate_hexiao is not None
-        or payload.rate_fee is not None
-    ):
-        calc = tl_svc.compute_row(row.publisher_due, row.rate_hexiao, row.rate_fee)
+        calc_dirty = True
+    if calc_dirty:
+        calc = tl_svc.compute_row(
+            row.supplier_received, row.supplier_commission, row.rate_hexiao, row.rate_fee
+        )
+        row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]
         row.hexiao_amount = calc["hexiao_amount"]
         row.jinying_amount = calc["jinying_amount"]
         row.service_fee = calc["service_fee"]
 
+    # 付款金额变化，或核销金额变化 → 影响滚动余额，全景区重算
+    balance_dirty = calc_dirty
+    if payload.payment_amount is not None:
+        row.payment_amount = payload.payment_amount
+        balance_dirty = True
+
+    db.flush()
+    if balance_dirty:
+        _recompute_running_balance(_load_rows(db, sid))
     db.commit()
     db.refresh(row)
     return Response.ok(_row_out(row), message="已更新")
@@ -315,15 +368,27 @@ def delete_row(
     _: User = Depends(get_current_user),
 ):
     sid = _valid_scenic_id(scenic_id)
-    result = db.execute(
-        sa_delete(TicketLedger).where(
+    row = db.scalar(
+        select(TicketLedger).where(
             TicketLedger.id == row_id, TicketLedger.scenic_id == sid
         )
     )
-    db.commit()
-    if not result.rowcount:
+    if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
-    return Response.ok({"deleted": result.rowcount}, message="已删除")
+    # 顺带清理明细源文件
+    if row.detail_stored:
+        try:
+            fp = _detail_dir(sid) / Path(row.detail_stored).name
+            if fp.exists():
+                fp.unlink()
+        except OSError:
+            pass
+    db.delete(row)
+    db.flush()
+    # 删除某期后，其后各期滚动余额需重算
+    _recompute_running_balance(_load_rows(db, sid))
+    db.commit()
+    return Response.ok({"deleted": 1}, message="已删除")
 
 
 @router.delete(
@@ -361,11 +426,12 @@ def export_ledger(
 
     export_rows = [
         {
-            "pay_date": r.pay_date,
             "platform": r.platform,
             "ticket_product": r.ticket_product,
             "check_date_text": r.check_date_text,
             "hexiao_amount": r.hexiao_amount,
+            "pending_writeoff": r.pending_writeoff,
+            "payment_amount": r.payment_amount,
             "jinying_amount": r.jinying_amount,
             "service_fee": r.service_fee,
             "repay_date": r.repay_date,
@@ -379,4 +445,33 @@ def export_ledger(
         io.BytesIO(data),
         media_type=_XLSX_MIME,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 7) 明细源文件预览 / 下载（本次上传或已存台账的对账明细原件）
+# --------------------------------------------------------------------------- #
+@router.get(
+    "/{scenic_id}/ticket-ledger/detail",
+    summary="预览/下载对账明细源文件(按 stored 磁盘名，作用域为该景区)",
+)
+def download_detail(
+    scenic_id: str,
+    stored: str,
+    name: str = "",
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    sid = _valid_scenic_id(scenic_id)
+    # 路径安全：只取 basename，杜绝 ../ 越权访问其它目录
+    safe = Path(stored or "").name
+    if not safe:
+        raise HTTPException(status_code=400, detail="缺少文件标识")
+    path = _detail_dir(sid) / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="明细源文件不存在或已清理")
+    return FileResponse(
+        str(path),
+        filename=name or safe,
+        media_type=_XLSX_MIME,
     )

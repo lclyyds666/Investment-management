@@ -60,6 +60,7 @@
 | 2026-07-17~18 | 全局命名规范 + 文旅业务景区数据隔离 + 信息维护角色 | 生产 ✅ |
 | 2026-07-20 | 门票台账非阻塞解析 + 并发闸 + 服务器扩容方案文档 | 生产 ✅ |
 | 2026-07-21 | 景区详情页重构(经营数据卡 + 平台入口放大改名 + 台账折叠)+ **明暗双主题切换** | 生产 ✅ |
+| 2026-07-22 | 核销台账期次递推(出版应得=到账−佣金、景区待核销滚动余额)+ 对账明细单文件流(源文件预览/下载、待确认仅展示本期、去覆盖按钮、费率移入编辑弹窗、列改名/隐藏付款日期)+ **审批导航角标**(/approval/pending-count,合同/业务审批按角色显示待办数) | 待部署 🟡 |
 
 ---
 
@@ -203,6 +204,8 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260716_scenic_ledger.sql 
 mysql -u root -p sd_publish_scm < backend/migrations/20260717_rename_admin.sql         # admin 显示名→信息维护
 mysql -u root -p sd_publish_scm < backend/migrations/20260717_scenic_id_rename.sql     # 景区 scenic_id 与新名对齐(幂等,空表 no-op)
 mysql -u root -p sd_publish_scm < backend/migrations/20260718_info_maintainer_role.sql # 信息维护角色
+mysql -u root -p sd_publish_scm < backend/migrations/20260720_ticket_ledger.sql        # 门票平台核销业务台账(biz_ticket_ledger)
+mysql -u root -p sd_publish_scm < backend/migrations/20260722_ticket_ledger_recurrence.sql # 门票台账期次递推(佣金/付款金额/待核销滚动余额/明细源文件列)
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。
@@ -306,98 +309,3 @@ git push
 ---
 
 ## 十、最新迭代(2026-07)
-
-> 完整迭代时间线见文首「📊 任务进度 · 迭代日志」。以下详列近两轮重点改动。
-
-### 0. 景区详情页重构 + 明暗双主题(2026-07-21)
-- **景区详情页(DetailView)**:内容区重排为三段——顶部「经营数据」占位指标卡(当日核销/本月销售额/核销率/本月核销数,待接后端)、中部「平台入口」(改名「景区酒店平台入口」「景区门票平台入口」+ 卡片放大、Logo 2 倍)、底部「核销数据台账」改为**折叠面板默认收起**。
-- **明暗双主题切换**:顶栏用户区旁新增切换按钮(太阳/月亮 + Tooltip);Pinia `store/theme.js` 统一开关(切 `html.dark` + localStorage 持久化,刷新不闪烁);`styles/index.scss` 重构为「明亮默认 + `html.dark` 覆盖」双套变量,外壳(侧边栏/顶栏)用 `--chrome-*` 变量随主题翻转;全站页面硬编码色映射到 EP/主题变量。**数据大屏 `/screen` 与登录页保持恒定深色**(投屏/沉浸式设计,行业惯例)。
-
-### 1. 业务审批(原「审批中心」)重构为双工作流
-- 两张新表 `biz_approval_form` + `biz_approval_form_action`,以 `form_type` 区分 **业务付款审批单(payment,7 节点)** 与 **业务审批单(business,5 节点)**,两条审批链独立(见第三节)。
-- 付款单含 **付款金额大小写自动转换**(`services/num_cn.py`,零依赖)、开户行、银行账号;业务单不含金额字段。
-- **打印**:后端 openpyxl 加载 `backend/app/templates/approval/{payment,business}.xlsx` 原始模板填充数据格,**格式高度还原**;签章栏按链回填,装 Pillow 时叠加签名图。
-- 前端「新建审批」为**悬停下拉**,选择单据类型;列表统一列(申请日期/客户/业务类型/合同编号/付款金额,业务单该列留空)。
-
-### 2. AI 合同校对
-- 入口在业务审批列表;取审批单「合同编号 + 附件」与「合同管理」按编号匹配的合同原件,**文本比对**(DeepSeek,规则引擎兜底,接口永不 500)。
-- Prompt 严格聚焦**正文条款/义务/金额/责任/定义**,强制**排除落款、日期栏、盖章、电子签章、签字页**并加抗干扰(仅落款/盖章差异一律判「一致」)。
-
-### 3. 权限与签章
-- **信息维护**角色关闭电子签名:`PUT /users/me/signature` 拦截(403)+ 前端隐藏签章入口。
-- 合同/审批单 **PDF 附件预览/下载** 恢复:任意有查看权限的登录用户可打开/预览/下载(`utils/file.js` 统一 blob 预览/下载)。
-
-### 4. 文旅业务模块(全局外壳 + 嵌套路由 + 数据隔离)
-- 路由 `cultural-tourism`(MainView,景区卡片 Grid 每行 3 个)与 `cultural-tourism/:scenicId`(DetailView,平台入口 + 核销台账),同为 layout 子路由,共用侧边栏/顶栏。
-- 景区配置在 `frontend/src/constants/scenic.js`(`scenicSpots`:`id`/`name`/`imagePath`/`platformList`);**Key(scenic_id/slug)与 Label(显示名)分离**。
-- 台账 `biz_scenic_ledger` 含 `scenic_id` 列;接口 `GET/POST/DELETE /scenic-spots/{scenic_id}/ledger` **一律以路径 scenic_id 为作用域**、强制 `WHERE scenic_id`,绝不跨景区返回数据(已过隔离测试)。
-- 景区标识符与新名对齐(如 `penglai→fuzhou-ouleb`),迁移脚本 `20260717_scenic_id_rename.sql` 幂等同步 DB。
-
-### 5. 导航与命名规范
-- 菜单精简:渠道业务管理→**渠道业务**、智慧财务管理→**智慧财务**、经营合规管理→**经营合规**、审批中心→**业务审批**。
-- 用户下拉菜单弹窗化(见第二节末行)。
-
-> ⚠️ 生产升级顺序:构建 dist → tar 上传 `backend/app`+`frontend/dist` → `pip install`(新增 Pillow)→ 跑上述新迁移(`20260716_approval_center` / `20260716_scenic_ledger` / `20260717_scenic_id_rename` 等)→ 重启后端 + reload nginx。
-
----
-
-## 十一、服务器硬件配置与扩容方案(门票台账高频上传场景)
-
-> 背景:门票平台核销台账是**每周高频使用**的核心功能,业务量约 **每周上传 20 个对账明细文件**(单文件约 6MB、1.7 万行 × 70 列)。本节给出经**真实压测**的硬件方案,目标:**上传响应快 + 2 年内不爆内存**。
-
-### 11.1 真实性能基线(2026-07-20 在生产机实测)
-
-当前生产机:阿里云 ECS `39.107.52.146`,**2 vCPU / 1.6GB 内存 / 40GB 系统盘(SSD)/ 无 swap(已补 2GB)**。用真实文件 `对账明细-2026.04.29-2026.05.19.xlsx`(6.2MB / 17683 行)压测:
-
-| 指标 | 实测值 | 说明 |
-| --- | --- | --- |
-| 单文件解析耗时 | **11~21s** | openpyxl 流式解析 1.7 万行 × 70 列,**单线程 CPU 密集**,是效率瓶颈 |
-| 单文件解析进程峰值 RSS | **仅 53MB** | 流式读取(`read_only=True`),**内存不是瓶颈** |
-| 并发 3 个解析峰值 RSS | **仅 89MB** | 内存随并发近似线性、增量很小 |
-| MySQL 常驻内存 | ~142MB | `innodb_buffer_pool` 默认档 |
-| 后端 2 worker 常驻 | ~167MB | 空闲态 |
-
-**关键结论(纠正直觉):此负载的瓶颈是 CPU 解析速度,不是内存容量。** 之前整机僵死的主因是「21s 同步解析阻塞事件循环 + 无 swap」,已由代码修复(见 11.4)+ 补 swap 解决,并非内存不足。因此扩容重点应放在 **CPU 核数** 与 **为 2 年数据增长/MySQL 预留的内存冗余**,而非盲目堆内存。
-
-### 11.2 2 年容量测算(数据增长)
-
-- **业务数据**:台账每期 1 行,20 文件/周 × 104 周 ≈ **2080 行**,`biz_ticket_ledger` 每行 < 1KB → 2 年 **< 5MB**。合同/审批/客户等其它表按现有增速 2 年合计 **< 2GB**。
-- **原始对账明细**:若将来落盘留存,20 文件/周 × 6MB × 104 周 ≈ **12.5GB / 2 年**(当前设计**不落盘原始明细**,仅存解析结果,磁盘压力可忽略;若开启留存需按此预留)。
-- **MySQL 内存**:数据量 < 2GB 时,`innodb_buffer_pool_size` 给 **1~2GB** 即可让热数据全进内存,查询飞快。
-- 结论:**磁盘 40GB→建议 100GB;内存需求主要来自 MySQL buffer pool 与并发解析冗余,而非数据行本身。**
-
-### 11.3 推荐配置(三档,按预算与并发选择)
-
-| 档位 | 规格 | 适用场景 | 内存分配预估 | 2 年评估 |
-| --- | --- | --- | --- | --- |
-| **最低可用** | 2 vCPU / **4GB** / 100GB SSD | 员工**错峰**上传(一次 1~2 个) | MySQL 1.5G + 后端 1G + 解析并发 0.3G + 系统 0.8G,余 ~0.4G | ✅ 不爆内存;解析仍 ~15s/文件 |
-| **✅ 推荐** | **4 vCPU / 8GB** / 100GB SSD | 员工**可能同时**批量上传 20 文件 | MySQL 2G + 后端 1.5G + 解析并发(可放开到 3~4)1G + 系统 1G,余 ~2.5G 冗余 | ✅✅ 2 年充裕;4 核让解析并发提速、Web 不卡 |
-| **高性能** | 8 vCPU / 16GB / 200GB SSD | 未来景区/平台翻倍、多台账并行 | 各项翻倍仍余 > 6G | ✅✅✅ 3~5 年无忧 |
-
-**推荐选「4 vCPU / 8GB」**,理由:
-1. **4 核是效率关键**:解析是单线程 CPU 密集,多核让多文件**真正并行**解析(配合 uvicorn 多 worker + 线程池),20 文件批量上传总耗时显著下降;2 核时并发解析会互相抢 CPU。
-2. **8GB 给足冗余**:MySQL buffer pool 可提到 2GB(热数据全内存),后端 worker 可加到 4 个,解析并发闸可放开,仍余 2GB+ 缓冲——**2 年数据增长 + 峰值并发双重安全**。
-3. 阿里云对应实例族参考:**`ecs.c7` / `ecs.g7` 系列 4 核 8G**(计算型/通用型),或性价比的 **`ecs.e` 系列**;系统盘换 **ESSD PL0/PL1** 保证 IO。
-
-> 💡 **省钱提示**:若预算紧张,「2 vCPU / 4GB」+ 现有代码优化(线程池+并发闸+swap)已能稳定支撑「错峰上传」不爆内存,只是批量并发时解析排队较慢。**要「快」必须上 4 核**;要「2 年不爆内存」4GB 是底线、8GB 是舒适线。
-
-### 11.4 已落地的软件侧优化(配合硬件,缺一不可)
-
-即使升级硬件,以下代码/系统优化仍是**稳定性前提**(已上线生产):
-
-- **解析非阻塞**:`endpoints/ticket_ledger.py` 的 parse 端点用 `run_in_threadpool` 跑 openpyxl,**不阻塞事件循环**——单个大文件解析期间 `/health` 及所有请求照常秒回(实测解析 11s 期间 22 次 health 探测全 200、最慢 0.056s)。
-- **并发闸**:`asyncio.Semaphore(1)` 限制同时只跑 1 个解析,重叠上传排队而非叠加。**升级到 4 核 8G 后,可把该值调到 2~3**(`_PARSE_SEMAPHORE = asyncio.Semaphore(3)`)以提升批量吞吐,内存实测每并发仅 +30~50MB,完全安全。
-- **swap 兜底**:生产已加 **2GB swap**(`/swapfile`,写入 `fstab`,`vm.swappiness=60`),内存瞬时紧张时兜底,杜绝 OOM 僵死。**升级内存后 swap 仍建议保留**。
-- **MySQL 调优(升级后执行)**:`/etc/mysql/mysql.conf.d/mysqld.cnf` 设 `innodb_buffer_pool_size = 2G`(8G 机),重启 mysql 生效,让热数据常驻内存。
-- **uvicorn worker(升级后执行)**:4 核可将 systemd `sd-scm-backend` 的 `--workers 2` 提到 `--workers 4`,Web 并发能力翻倍(注意多 worker 必须靠 Redis 共享验证码/防爆破计数,已配)。
-
-### 11.5 升级后的落地检查清单
-
-1. 阿里云控制台升配到 **4 vCPU / 8GB**、系统盘扩到 **100GB ESSD**(升配需停机,选业务低谷期)。
-2. 扩容后 `growpart` + `resize2fs` 扩展根分区文件系统(阿里云文档有指引)。
-3. 改 `mysqld.cnf`:`innodb_buffer_pool_size = 2G` → `systemctl restart mysql`。
-4. 改 systemd:`--workers 4` → `systemctl daemon-reload && systemctl restart sd-scm-backend`。
-5. 可选:`_PARSE_SEMAPHORE` 调到 `Semaphore(3)`,重新部署后端。
-6. 压测验证:批量上传 20 文件,观察 `free -m`(available 不跌破 1G)、`/health` 全程 200、单文件解析 < 15s。
-
-> ⚠️ **不要盲目只加内存**:此负载加内存对「解析速度」几乎无提升(瓶颈是 CPU 单核解析)。「又快又 2 年不爆」的正解是 **4 核(提速)+ 8GB(容量冗余)+ 上述软件优化(稳定)** 三者配合。

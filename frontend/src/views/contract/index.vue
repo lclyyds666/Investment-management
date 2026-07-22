@@ -302,6 +302,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download, MagicStick, Collection, CopyDocument } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { useUserStore } from '@/store/user'
+import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { ROLES, STATUS_META } from '@/constants/business'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
@@ -316,6 +317,7 @@ import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 
 const userStore = useUserStore()
+const badgeStore = useApprovalBadgeStore()
 const isSuperuser = computed(() => userStore.isSuperuser)
 const isBusinessHandler = computed(
   () => userStore.role === ROLES.BUSINESS_HANDLER || userStore.isSuperuser
@@ -470,6 +472,7 @@ async function onSubmit(row) {
   await submitContract(row.id)
   ElMessage.success('已提交审批，合同进入审批流')
   load()
+  badgeStore.refresh() // 提交后可能轮到下一环节角色，实时刷新角标
 }
 
 // 合同审批：通过 / 驳回
@@ -502,6 +505,7 @@ async function confirmAction() {
       await rejectContract(actionCurrent.value.id, actionForm.comment)
       ElMessage.success('已驳回')
     }
+    badgeStore.refresh() // 审批完成后本人待办数减少，实时刷新角标
     actionVisible.value = false
     load()
   } finally {

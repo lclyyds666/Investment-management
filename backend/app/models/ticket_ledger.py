@@ -1,7 +1,7 @@
 """文旅业务·门票平台核销业务台账模型（按 scenic_id 严格数据隔离）。
 
 每行 = 一个对账明细文件（含多周 Sheet）汇总为一期台账。
-计算列（景区核销/实收服务费/锦盈结算）由「出版应得到账金额」按比例算出并落库；
+计算列（景区核销/服务费/结算金额）由「出版应得到账金额」按比例算出并落库；
 固定/手工字段（付款日期、平台、回款等）随行保存。金额统一以元存储 Numeric(18,2)。
 """
 from datetime import date
@@ -38,23 +38,34 @@ class TicketLedger(Base):
     supplier_received: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="服务商到账金额(明细算:订单实收-软件-达人-团长)"
     )
+    supplier_commission: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="服务商佣金(手工录入,默认0)"
+    )
     publisher_due: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="出版应得到账金额 B(用户确认/录入,计算基数)"
+        Numeric(18, 2), default=0, comment="出版应得到账金额 B = 服务商到账 - 服务商佣金(计算基数)"
     )
     hexiao_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="景区核销金额 = B × 核销率"
     )
+    # 付款金额(手工录入,仅待确认台账录入) + 景区待核销金额(滚动余额,后端集中记录)
+    payment_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, comment="付款金额(手工录入,期次递推输入)"
+    )
+    pending_writeoff: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0,
+        comment="景区待核销金额(滚动余额)=上期余额+本期付款金额-本期景区核销金额",
+    )
     jinying_amount: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="锦盈结算金额 = 景区核销 + 实收服务费"
+        Numeric(18, 2), default=0, comment="结算金额 = 景区核销 + 服务费"
     )
     service_fee: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="实收服务费 = B × 服务费率"
+        Numeric(18, 2), default=0, comment="服务费 = B × 服务费率"
     )
     rate_hexiao: Mapped[Decimal] = mapped_column(
         Numeric(6, 4), default=Decimal("0.9000"), comment="景区核销率(默认0.90)"
     )
     rate_fee: Mapped[Decimal] = mapped_column(
-        Numeric(6, 4), default=Decimal("0.0400"), comment="实收服务费率(默认0.04)"
+        Numeric(6, 4), default=Decimal("0.0400"), comment="服务费率(默认0.04)"
     )
     order_count: Mapped[int] = mapped_column(Integer, default=0, comment="核销订单数(明细统计)")
 
@@ -65,6 +76,9 @@ class TicketLedger(Base):
     )
 
     source_file: Mapped[str] = mapped_column(String(255), default="", comment="来源Excel文件名")
+    # 明细源文件落盘(供预览/下载)：detail_stored=磁盘uuid文件名, detail_name=原始文件名
+    detail_stored: Mapped[str] = mapped_column(String(255), default="", comment="明细文件磁盘存储名(uuid)")
+    detail_name: Mapped[str] = mapped_column(String(255), default="", comment="明细文件原始名")
     uploaded_by: Mapped[int | None] = mapped_column(
         ForeignKey("sys_user.id"), nullable=True, comment="上传/创建人"
     )
