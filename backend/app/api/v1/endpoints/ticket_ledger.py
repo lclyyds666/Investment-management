@@ -164,6 +164,7 @@ async def parse_files(
         detail_stored=detail_stored,
         detail_name=fname,
         supplier_received=info["supplier_received"],
+        suggested_commission=info["suggested_commission"],
         order_count=info["order_count"],
         period_text=info["period_text"],
         check_date_text=info["check_date_text"],

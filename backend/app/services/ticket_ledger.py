@@ -25,7 +25,9 @@ import openpyxl
 # 台账固定字段（泉州欧乐堡门票平台）
 DEFAULT_TICKET_PRODUCT = "水上世界/童话世界/海洋王国"
 DEFAULT_RATE_HEXIAO = Decimal("0.90")  # 景区核销率
-DEFAULT_RATE_FEE = Decimal("0.04")     # 实收服务费率
+DEFAULT_RATE_FEE = Decimal("0.04")     # 服务费率
+# 服务商佣金默认率(对订单实收金额)：服务商佣金 = 订单实收×6% − 达人服务费 − 团长服务费
+DEFAULT_COMMISSION_RATE = Decimal("0.06")
 _CENT = Decimal("0.01")
 
 # 明细表关键列的表头名（按名定位，抗列数差异）
@@ -138,6 +140,10 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
 
     supplier_received = Decimal("0")
+    # 服务商佣金计算所需分项累计（订单实收 / 达人服务费 / 团长服务费）
+    shishou_total = Decimal("0")
+    daren_total = Decimal("0")
+    tuanzhang_total = Decimal("0")
     order_count = 0
     min_dt: date | None = None
     max_dt: date | None = None
@@ -178,6 +184,10 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                 for f in fee_vals:
                     base += (f or Decimal("0"))  # 费用在明细中为负数，直接相加
                 supplier_received += base
+                # 分项累计：fee_vals 顺序 = (软件, 达人, 团长)
+                shishou_total += (shishou or Decimal("0"))
+                daren_total += (fee_vals[1] or Decimal("0"))       # 达人服务费(负)
+                tuanzhang_total += (fee_vals[2] or Decimal("0"))   # 团长服务费(负)
                 order_count += 1
 
                 if 0 <= i_time < len(raw):
@@ -197,8 +207,15 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     if p_start and p_end:
         period_text = f"{p_start.year}/{p_start.month}/{p_start.day}-{p_end.year}/{p_end.month}/{p_end.day}"
 
+    # 服务商佣金(建议值) = 订单实收×6% − 达人服务费 − 团长服务费
+    #   明细中达人/团长为负数，直接相加即等价于「减去费用」；结果供前端预填、可手工修改。
+    suggested_commission = _q(
+        shishou_total * DEFAULT_COMMISSION_RATE + daren_total + tuanzhang_total
+    )
+
     return {
         "supplier_received": _q(supplier_received),
+        "suggested_commission": suggested_commission,
         "order_count": order_count,
         "period_start": p_start,
         "period_end": p_end,

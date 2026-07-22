@@ -14,6 +14,8 @@ class ParsedFile(BaseModel):
     detail_stored: str = ""
     detail_name: str = ""
     supplier_received: Decimal = Decimal("0")   # 服务商到账金额（明细算）
+    # 服务商佣金建议值 = 订单实收×6% − 达人 − 团长（前端预填，可手工修改）
+    suggested_commission: Decimal = Decimal("0")
     order_count: int = 0
     period_text: str = ""                        # 对账周期文本
     check_date_text: str = ""                    # 核对日期（=周期）

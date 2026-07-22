@@ -24,7 +24,7 @@
 
     <el-alert
       type="info" :closable="false" show-icon class="tl-tip"
-      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账金额」→ 录入「服务商佣金」得出出版应得到账、录入「付款金额」→ 系统按核销率/服务费率算景区核销、结算金额、服务费，并按期次递推出「景区待核销金额」→ 保存生成台账。"
+      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账」与「服务商佣金(=订单实收×6%−达人−团长，可改)」→ 出版应得到账=服务商到账−服务商佣金 → 录入「付款金额」→ 系统按核销率/服务费率算景区核销(=出版应得×90%)、服务费(=出版应得×4%)、结算金额(=核销+服务费)，并按期次递推「景区待核销金额」→ 保存生成台账。"
     />
 
     <!-- 待确认区：本期上传解析后的可编辑草稿表（仅展示本次上传，不含历史已确认记录） -->
@@ -61,7 +61,7 @@
         <el-table-column label="服务商到账（自动）" width="140" align="right">
           <template #default="{ row }">{{ fmtMoney(row.supplier_received) }}</template>
         </el-table-column>
-        <el-table-column label="服务商佣金 ★" width="150" align="right">
+        <el-table-column label="服务商佣金(自动·可改)" width="160" align="right">
           <template #default="{ row }">
             <el-input-number
               v-model="row.supplier_commission" :min="0" :precision="2" :step="100"
@@ -308,7 +308,8 @@ async function onFileChange(file) {
       period_start: f.period_start,
       period_end: f.period_end,
       supplier_received: f.supplier_received,
-      supplier_commission: 0,
+      // 服务商佣金 = 订单实收×6% − 达人 − 团长（后端算出的建议值，可手工修改）
+      supplier_commission: Number(f.suggested_commission) || 0,
       payment_amount: 0,
       order_count: f.order_count,
       repay_date: null,
