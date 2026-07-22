@@ -123,6 +123,7 @@ import { ArrowDown, User, Lock, EditPen, Stamp, SwitchButton, UploadFilled } fro
 import { useUserStore } from '@/store/user'
 import { roleLabel as toRoleLabel, ROLES } from '@/constants/business'
 import { getMe, updateSignature, changeMyPassword, changeMyUsername } from '@/api/user'
+import { logout as logoutAudit } from '@/api/audit'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -144,9 +145,10 @@ async function refreshInfo() {
   } catch { /* 保底用 store 里的信息 */ }
 }
 
-function onCommand(cmd) {
+async function onCommand(cmd) {
   if (cmd === 'logout') {
-    // 退出登录逻辑保持不变
+    // 先留痕退出（best-effort，令牌还在时调用），再清本地并跳登录
+    await logoutAudit()
     userStore.logout()
     router.replace('/login')
     return

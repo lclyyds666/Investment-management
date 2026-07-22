@@ -34,7 +34,7 @@
 | 渠道业务 | P0 | 🟡🔒 | CRUD + CSV 导入/回传 + 列映射汇入经营表。缺:真实 OTA(美团/抖音)对接🔒、账号密码加密(现明文) |
 | 文旅业务(景区核销台账) | — | ✅ | 景区卡片 Grid → 详情(经营数据卡 + 平台入口 + 折叠台账);Excel 上传;按 `scenic_id` 严格数据隔离 |
 | 明暗双主题切换 | — | ✅ | 明亮/暗黑切换 + localStorage 持久化;`--chrome-*` 外壳变量;大屏/登录页恒定深色 |
-| 操作审计 | P1 | 🟡 | 仅审批记录。缺:登录日志、操作日志、查询、导出 |
+| 操作审计 | P1 | ✅ | 登录日志 + 写操作中间件自动留痕(POST/PUT/DELETE)+ 导出类 GET;按用户/模块/动作/状态/时间筛选查询 + CSV 导出;仅超管可见 |
 | 系统配置 / 监控 / 定时任务 / 消息通知 | P2 | ❌ | 参数/字典/公告/部门/岗位、服务监控、缓存监控、定时同步、WebSocket 推送均未开工 |
 | 传输加密(RSA+AES)、Docker Compose | P2 | ❌ | 未开工 |
 | 小程序端 | — | ❌ | 移动审批 / 待办 / 查看 / 个人中心整套未开工 |
@@ -60,7 +60,8 @@
 | 2026-07-17~18 | 全局命名规范 + 文旅业务景区数据隔离 + 信息维护角色 | 生产 ✅ |
 | 2026-07-20 | 门票台账非阻塞解析 + 并发闸 + 服务器扩容方案文档 | 生产 ✅ |
 | 2026-07-21 | 景区详情页重构(经营数据卡 + 平台入口放大改名 + 台账折叠)+ **明暗双主题切换** | 生产 ✅ |
-| 2026-07-22 | 核销台账期次递推(出版应得=到账−佣金、景区待核销滚动余额)+ 对账明细单文件流(源文件预览/下载、待确认仅展示本期、去覆盖按钮、费率移入编辑弹窗、列改名/隐藏付款日期)+ **审批导航角标**(/approval/pending-count,合同/业务审批按角色显示待办数) | 待部署 🟡 |
+| 2026-07-22 | 核销台账期次递推(出版应得=到账−佣金、景区待核销滚动余额)+ 对账明细单文件流(源文件预览/下载、待确认仅展示本期、去覆盖按钮、费率移入编辑弹窗、列改名/隐藏付款日期)+ **审批导航角标**(/approval/pending-count,合同/业务审批按角色显示待办数) | 生产 ✅ |
+| 2026-07-23 | **操作审计**(登录日志 + 写操作中间件自动留痕 + 查询筛选 + CSV 导出,仅超管);导航新增「系统管理」组(用户管理 + 操作审计) | 待部署 🟡 |
 
 ---
 
@@ -206,6 +207,7 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260717_scenic_id_rename.s
 mysql -u root -p sd_publish_scm < backend/migrations/20260718_info_maintainer_role.sql # 信息维护角色
 mysql -u root -p sd_publish_scm < backend/migrations/20260720_ticket_ledger.sql        # 门票平台核销业务台账(biz_ticket_ledger)
 mysql -u root -p sd_publish_scm < backend/migrations/20260722_ticket_ledger_recurrence.sql # 门票台账期次递推(佣金/付款金额/待核销滚动余额/明细源文件列)
+mysql -u root -p sd_publish_scm < backend/migrations/20260723_audit_log.sql             # 操作审计日志表 sys_audit_log
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。

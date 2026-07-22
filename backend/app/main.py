@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.core.audit import AuditMiddleware
 from app.core.config import settings
 
 
@@ -14,6 +15,9 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
     )
+
+    # 操作审计中间件：自动采集写操作 + 导出类 GET（失败不影响主请求）
+    app.add_middleware(AuditMiddleware)
 
     if settings.BACKEND_CORS_ORIGINS:
         app.add_middleware(

@@ -16,6 +16,7 @@ from app.db.session import SessionLocal, engine
 # 导入全部模型，确保 create_all 能发现并建表
 from app.models.approval import Approval  # noqa: F401
 from app.models.approval_form import ApprovalForm, ApprovalFormAction  # noqa: F401
+from app.models.audit import AuditLog  # noqa: F401 确保 create_all 建表
 from app.models.channel import Channel, ChannelData
 from app.models.contract import Contract  # noqa: F401
 from app.models.customer import Customer

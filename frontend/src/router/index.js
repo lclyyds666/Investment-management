@@ -122,8 +122,15 @@ const routes = [
         path: 'org',
         name: 'Org',
         component: () => import('@/views/system/users.vue'),
-        // 用户管理：仅超级管理员可见 / 可访问（菜单隐藏 + 路由守卫双保险）
-        meta: { title: '用户管理', icon: 'OfficeBuilding', requiresSuperuser: true }
+        // 用户管理：归入「系统管理」菜单组；仅超级管理员可见 / 可访问（菜单隐藏 + 路由守卫双保险）
+        meta: { title: '用户管理', icon: 'OfficeBuilding', requiresSuperuser: true, group: '系统管理', groupIcon: 'Setting' }
+      },
+      {
+        path: 'audit',
+        name: 'Audit',
+        component: () => import('@/views/system/audit.vue'),
+        // 操作审计：归入「系统管理」菜单组；仅超级管理员可见 / 可访问
+        meta: { title: '操作审计', icon: 'List', requiresSuperuser: true, group: '系统管理', groupIcon: 'Setting' }
       },
       {
         path: 'profile',

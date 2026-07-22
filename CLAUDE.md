@@ -89,9 +89,16 @@
 4. **审批导航角标**:`GET /approval/pending-count` 按当前角色返回 `{contract,business,total}`(pending 且当前环节角色==我);前端 `store/approvalBadge.js` 30s 轮询 + 审批/提交后 `refresh()` 实时刷新;`layout/index.vue` 在「合同管理」「业务审批」子项及「经营合规」分组标题渲染 `el-badge`。
 5. **新列**:`biz_ticket_ledger` 增 supplier_commission/payment_amount/pending_writeoff/detail_stored/detail_name → 跑 `20260722_ticket_ledger_recurrence.sql`;⚠️历史台账升级后建议**重新保存一次**以回填滚动余额。
 
+## 操作审计(2026-07-23)
+- **表** `sys_audit_log`(models/audit.py):操作者快照(user_id/username/full_name/role)+ action/module/target_desc + method/path/ip + status/http_status/detail。迁移 `20260723_audit_log.sql`。
+- **采集(core/audit.py)**:①`AuditMiddleware`(main.py 挂载)自动记录**所有写操作 POST/PUT/DELETE/PATCH** + 白名单导出/下载类 GET(export/print/legal-doc/attachment);从 Bearer token 解析操作者、查用户快照;**独立会话写库、异常全吞、绝不影响主请求**;不记请求体(天然不泄密)。②`auth.py` 显式埋点登录成功/失败(含原因)/锁定/退出(`POST /auth/logout`,前端登出时best-effort调用)。IP 优先 `X-Forwarded-For`/`X-Real-IP`。
+- **接口(endpoints/audit.py,全部 `require_superuser`)**:`GET /audit/logs`(分页+筛选:keyword/module/action/status/method/start/end)、`GET /audit/logs/export`(CSV,UTF-8 BOM)、`GET /audit/meta`(下拉枚举)。
+- **前端**:`views/system/audit.vue`(筛选栏+表格+分页+导出),`api/audit.js`;导航新增**「系统管理」分组** = 用户管理 + 操作审计(均 `requiresSuperuser`,路由 `/audit`)。
+- ⚠️ 生产上线跑 `20260723_audit_log.sql`(或 `init_db` create_all);确认 Nginx 传 `X-Real-IP`/`X-Forwarded-For` 否则 IP 记为 127.0.0.1。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。
