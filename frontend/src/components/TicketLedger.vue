@@ -115,17 +115,6 @@
         </el-table-column>
         <el-table-column label="来源文件" min-width="200" prop="source_file" show-overflow-tooltip />
       </el-table>
-
-      <!-- 本次上传的对账明细文件列表：预览 / 下载源文件 -->
-      <div class="detail-files" v-if="detailFiles.length">
-        <div class="detail-files-title"><el-icon><Files /></el-icon><span>本期对账明细源文件</span></div>
-        <div v-for="f in detailFiles" :key="f.detail_stored || f.source_file" class="detail-file-item">
-          <el-icon class="df-icon"><Document /></el-icon>
-          <span class="df-name" :title="f.detail_name || f.source_file">{{ f.detail_name || f.source_file }}</span>
-          <el-button size="small" text type="primary" :icon="View" :disabled="!f.detail_stored" @click="onPreviewDetail(f)">预览/查看</el-button>
-          <el-button size="small" text type="success" :icon="Download" :disabled="!f.detail_stored" @click="onDownloadDetail(f)">下载</el-button>
-        </div>
-      </div>
     </el-card>
 
     <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库） -->
@@ -140,9 +129,6 @@
       <!-- 景区待核销金额：紧邻景区核销金额右侧 -->
       <el-table-column label="景区待核销金额" width="140" align="right">
         <template #default="{ row }"><span class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
-      </el-table-column>
-      <el-table-column label="付款金额" width="130" align="right">
-        <template #default="{ row }">{{ fmtMoney(row.payment_amount) }}</template>
       </el-table-column>
       <el-table-column label="结算金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
@@ -213,12 +199,12 @@
 <script setup>
 import { ref, computed, watch, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Refresh, Download, Tickets, EditPen, Check, Files, Document, View } from '@element-plus/icons-vue'
+import { UploadFilled, Refresh, Download, Tickets, EditPen, Check } from '@element-plus/icons-vue'
 import {
   parseTicketFile, getTicketLedger, saveTicketLedger,
-  updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob, fetchTicketDetailBlob
+  updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob
 } from '@/api/ticketLedger'
-import { downloadBlob, previewBlob } from '@/utils/file'
+import { downloadBlob } from '@/utils/file'
 
 const props = defineProps({
   scenicId: { type: String, required: true }
@@ -256,13 +242,6 @@ function draftPending(row) {
   const hexiao = calcHexiao(draftPublisherDue(row))
   return round2(lastSavedPending.value + (Number(row.payment_amount) || 0) - hexiao)
 }
-
-// 本次上传的明细源文件（供预览/下载）
-const detailFiles = computed(() =>
-  draftRows.value
-    .filter((r) => r.detail_stored || r.source_file)
-    .map((r) => ({ detail_stored: r.detail_stored, detail_name: r.detail_name, source_file: r.source_file }))
-)
 
 function fmtMoney(n) {
   const v = Number(n)
@@ -362,24 +341,6 @@ async function onSave() {
   }
 }
 
-// —— 明细源文件预览 / 下载 ——
-async function onPreviewDetail(f) {
-  try {
-    const blob = await fetchTicketDetailBlob(props.scenicId, f.detail_stored, f.detail_name || f.source_file)
-    previewBlob(blob, f.detail_name || f.source_file || '对账明细.xlsx')
-  } catch {
-    ElMessage.error('预览失败')
-  }
-}
-async function onDownloadDetail(f) {
-  try {
-    const blob = await fetchTicketDetailBlob(props.scenicId, f.detail_stored, f.detail_name || f.source_file)
-    downloadBlob(blob, f.detail_name || f.source_file || '对账明细.xlsx')
-  } catch {
-    ElMessage.error('下载失败')
-  }
-}
-
 // —— 编辑单行 ——
 const editVisible = ref(false)
 const editRow = ref(null)
@@ -456,10 +417,10 @@ async function onExport() {
   }
 }
 
-// el-table 合计行（列序：# 平台 景区门票 核对日期 景区核销 景区待核销 付款金额 结算金额 服务费 回款日期 回款金额 操作）
+// el-table 合计行（列序：# 平台 景区门票 核对日期 景区核销 景区待核销 结算金额 服务费 回款日期 回款金额 操作）
 function summary({ columns, data }) {
   const sums = []
-  const sumCols = { 4: 'hexiao_amount', 6: 'payment_amount', 7: 'jinying_amount', 8: 'service_fee', 10: 'repay_amount' }
+  const sumCols = { 4: 'hexiao_amount', 6: 'jinying_amount', 7: 'service_fee', 9: 'repay_amount' }
   columns.forEach((col, idx) => {
     if (idx === 0) { sums[idx] = '合计'; return }
     // 景区待核销为滚动余额 → 取末期值
@@ -516,33 +477,6 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .calc { color: var(--el-color-primary); font-weight: 600; }
 .pending { color: #f59e0b; font-weight: 700; }
 .saved-table { margin-top: 4px; }
-
-/* 本期对账明细源文件列表 */
-.detail-files {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px dashed var(--el-border-color);
-  border-radius: 8px;
-  background: var(--el-fill-color-lighter);
-}
-.detail-files-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  font-size: 13px;
-  margin-bottom: 8px;
-  color: var(--el-text-color-regular);
-  .el-icon { color: var(--el-color-primary); }
-}
-.detail-file-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  .df-icon { color: var(--el-color-success); }
-  .df-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-}
 
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
 .pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }

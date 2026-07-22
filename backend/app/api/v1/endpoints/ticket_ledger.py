@@ -79,10 +79,18 @@ def _totals(rows: list[TicketLedger]) -> TicketLedgerTotals:
 
 
 def _load_rows(db: Session, sid: str) -> list[TicketLedger]:
+    """按「核对日期(对账周期起) 升序」返回：最早的即第一期。
+    period_start 为空的行排在最后，再按 row_no/id 兜底稳定排序。
+    该顺序同时作为期次递推(滚动余额)的计算顺序。"""
     return db.scalars(
         select(TicketLedger)
         .where(TicketLedger.scenic_id == sid)
-        .order_by(TicketLedger.row_no.asc(), TicketLedger.id.asc())
+        .order_by(
+            TicketLedger.period_start.is_(None),  # NULL(=1) 排最后
+            TicketLedger.period_start.asc(),
+            TicketLedger.row_no.asc(),
+            TicketLedger.id.asc(),
+        )
     ).all()
 
 

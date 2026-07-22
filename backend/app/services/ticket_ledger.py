@@ -265,9 +265,10 @@ def running_pending(prev_balance: Decimal, payment_amount: Decimal, hexiao_amoun
 
 
 # 导出台账列顺序（对齐手工业务台账样表；景区待核销金额紧邻景区核销金额右侧）
+# 注：付款金额不在生成台账中展示（仅待确认台账录入 + 参与后端递推），故导出亦不含该列。
 _EXPORT_HEADERS = [
     "平台", "景区门票", "核对日期",
-    "景区核销金额", "景区待核销金额", "付款金额", "结算金额", "服务费",
+    "景区核销金额", "景区待核销金额", "结算金额", "服务费",
     "回款日期", "回款金额",
 ]
 
@@ -323,7 +324,6 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
     # 数据行
     sum_hexiao = Decimal("0")
     sum_pending = Decimal("0")
-    sum_payment = Decimal("0")
     sum_jinying = Decimal("0")
     sum_fee = Decimal("0")
     sum_repay = Decimal("0")
@@ -335,7 +335,6 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
             row.get("check_date_text", "") or "",
             _fmt_amount(row.get("hexiao_amount")),
             _fmt_amount(row.get("pending_writeoff")),
-            _fmt_amount(row.get("payment_amount")),
             _fmt_amount(row.get("jinying_amount")),
             _fmt_amount(row.get("service_fee")),
             _fmt_date(row.get("repay_date")),
@@ -346,7 +345,6 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
             cell.alignment = center
             cell.border = border
         sum_hexiao += _num(row.get("hexiao_amount")) or Decimal("0")
-        sum_payment += _num(row.get("payment_amount")) or Decimal("0")
         sum_jinying += _num(row.get("jinying_amount")) or Decimal("0")
         sum_fee += _num(row.get("service_fee")) or Decimal("0")
         sum_repay += _num(row.get("repay_amount")) or Decimal("0")
@@ -359,7 +357,7 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
     total_fill = PatternFill("solid", fgColor="FDE9D9")
     total_vals = [
         "合计", "", "",
-        float(_q(sum_hexiao)), float(_q(sum_pending)), float(_q(sum_payment)),
+        float(_q(sum_hexiao)), float(_q(sum_pending)),
         float(_q(sum_jinying)), float(_q(sum_fee)),
         "", float(_q(sum_repay)),
     ]
@@ -371,7 +369,7 @@ def build_export_workbook(rows: list[dict], title: str = "业务台账") -> byte
         cell.border = border
 
     # 列宽
-    widths = [8, 22, 20, 15, 15, 14, 15, 14, 13, 14]
+    widths = [8, 22, 20, 15, 15, 15, 14, 13, 14]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

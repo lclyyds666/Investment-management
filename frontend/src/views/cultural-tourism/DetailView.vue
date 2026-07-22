@@ -76,14 +76,14 @@
           <el-tabs v-model="ledgerTab" class="ledger-tabs">
             <el-tab-pane label="门票平台核销台账" name="ticket">
               <TicketLedger :scenic-id="scenicId" />
-              <!-- 原始明细预览（保留,可折叠对照/校验） -->
+              <!-- 原始核销明细预览（对照/校验用）：仅展示已保存的对账明细源文件，点击查看/下载 -->
               <el-collapse class="raw-collapse">
                 <el-collapse-item name="raw">
                   <template #title>
                     <el-icon><Files /></el-icon>
                     <span style="margin-left: 6px">原始核销明细预览（对照/校验用）</span>
                   </template>
-                  <ScenicLedger :scenic-id="scenicId" />
+                  <TicketDetailFiles :scenic-id="scenicId" />
                 </el-collapse-item>
               </el-collapse>
             </el-tab-pane>
@@ -110,8 +110,8 @@ import {
   Checked, Money, DataLine, Calendar
 } from '@element-plus/icons-vue'
 import { getScenicById } from '@/constants/scenic'
-import ScenicLedger from '@/components/ScenicLedger.vue'
 import TicketLedger from '@/components/TicketLedger.vue'
+import TicketDetailFiles from '@/components/TicketDetailFiles.vue'
 
 // 核销台账选项卡：门票平台（本期实现）/ 景区平台（占位待开发）
 const ledgerTab = ref('ticket')

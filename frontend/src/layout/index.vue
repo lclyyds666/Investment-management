@@ -16,29 +16,20 @@
           <el-sub-menu v-if="item.group" :index="item.group">
             <template #title>
               <el-icon><component :is="item.icon" /></el-icon>
-              <span>{{ item.group }}</span>
-              <el-badge
-                v-if="groupBadge(item)"
-                :value="groupBadge(item)" :max="99" class="menu-badge" type="danger"
-              />
+              <span class="menu-label">{{ item.group }}</span>
+              <span v-if="groupBadge(item)" class="nav-badge">{{ badgeText(groupBadge(item)) }}</span>
             </template>
             <el-menu-item v-for="sub in item.children" :key="sub.path" :index="sub.path">
               <el-icon><component :is="sub.meta.icon" /></el-icon>
-              <span>{{ sub.meta.title }}</span>
-              <el-badge
-                v-if="menuBadge(sub.path)"
-                :value="menuBadge(sub.path)" :max="99" class="menu-badge" type="danger"
-              />
+              <span class="menu-label">{{ sub.meta.title }}</span>
+              <span v-if="menuBadge(sub.path)" class="nav-badge">{{ badgeText(menuBadge(sub.path)) }}</span>
             </el-menu-item>
           </el-sub-menu>
           <!-- 普通一级菜单 -->
           <el-menu-item v-else :index="item.path">
             <el-icon><component :is="item.meta.icon" /></el-icon>
-            <span>{{ item.meta.title }}</span>
-            <el-badge
-              v-if="menuBadge(item.path)"
-              :value="menuBadge(item.path)" :max="99" class="menu-badge" type="danger"
-            />
+            <span class="menu-label">{{ item.meta.title }}</span>
+            <span v-if="menuBadge(item.path)" class="nav-badge">{{ badgeText(menuBadge(item.path)) }}</span>
           </el-menu-item>
         </template>
       </el-menu>
@@ -90,6 +81,10 @@ function menuBadge(path) {
 // 分组标题角标 = 组内各子项角标之和
 function groupBadge(item) {
   return (item.children || []).reduce((acc, sub) => acc + menuBadge(sub.path), 0)
+}
+// 角标文案：超过 99 显示 99+
+function badgeText(n) {
+  return n > 99 ? '99+' : String(n)
 }
 
 // 登录期间轮询待审批数量（30s）；组件卸载（登出跳登录页）时停止
@@ -199,14 +194,28 @@ const menus = computed(() => {
     border-radius: 8px;
     margin-bottom: 4px;
   }
-  /* 导航待审批角标：紧随标题文字右侧 */
-  .menu-badge {
+  /* 菜单标题文字占满剩余宽度，把角标推到行尾并与文字同基线 */
+  .menu-label { flex: 1; }
+  /* 导航待审批角标：内联小药丸，垂直居中对齐导航文字（不再浮在右上角） */
+  .nav-badge {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
     margin-left: 8px;
-    :deep(.el-badge__content) {
-      border: none;
-      transform: translateY(-1px);
-    }
+    border-radius: 9px;
+    background: var(--el-color-danger);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 600;
+    vertical-align: middle;
   }
+  /* 收起态：文字隐藏，角标一并隐藏，避免溢出图标 */
+  &.collapsed .nav-badge { display: none; }
   :deep(.el-menu-item:hover) {
     background: var(--chrome-menu-hover-bg) !important;
     color: var(--chrome-menu-hover-text) !important;
