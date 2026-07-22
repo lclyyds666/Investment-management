@@ -89,6 +89,14 @@
 4. **审批导航角标**:`GET /approval/pending-count` 按当前角色返回 `{contract,business,total}`(pending 且当前环节角色==我);前端 `store/approvalBadge.js` 30s 轮询 + 审批/提交后 `refresh()` 实时刷新;`layout/index.vue` 在「合同管理」「业务审批」子项及「经营合规」分组标题渲染 `el-badge`。
 5. **新列**:`biz_ticket_ledger` 增 supplier_commission/payment_amount/pending_writeoff/detail_stored/detail_name → 跑 `20260722_ticket_ledger_recurrence.sql`;⚠️历史台账升级后建议**重新保存一次**以回填滚动余额。
 
+## 景区酒店平台核销台账(2026-07-24)
+门票台账的姊妹功能,DetailView「景区平台核销台账」Tab(原占位)。**一份对账明细=一期,内含多平台(抖音/美团/携程)→每平台一行**;已用真实业务台账 6 期反推验证。
+- **表** `biz_hotel_ledger`(models/hotel_ledger.py);服务 `services/hotel_ledger.py`(多平台分派解析器,列名别名容错);端点 `/scenic-spots/{scenic_id}/hotel-ledger`(parse/get/save/update/delete/export/detail)。迁移 `20260724_hotel_ledger.sql`。
+- **各平台核销口径**(核销=结算基数×核销率0.9):抖音结算基数=服务商到账(−Σ服务商服务费/佣金)−服务商佣金(默认订单实收×6%−达人−团长,可编辑);美团=Σ结算金额(毛额);携程=Σ结算价(毛额)。**服务费=间夜×44/间夜**;**结算金额=核销+服务费**(沿用门票锦盈结算逻辑,更名结算金额)。
+- **付款金额**手工录入(台账隐藏、DB留存);**景区待核销**按**平台各自滚动**递推(首期=付款−核销;续期=上期余额+付款−核销)。台账按**核对日期升序**,每期末插入**本期合计行**(前端 displayRows 生成)。
+- ⚠️ 抖音明细列名跨期漂移(早期:服务商佣金/达人佣金/撮合经纪服务费;近期:服务商服务费/达人服务费/团长服务费),解析按别名匹配。前端 `HotelLedger.vue`+`api/hotelLedger.js`。
+- ⚠️ 生产上线跑 `20260724_hotel_ledger.sql`(或 init_db create_all)。
+
 ## 操作审计(2026-07-23)
 - **表** `sys_audit_log`(models/audit.py):操作者快照(user_id/username/full_name/role)+ action/module/target_desc + method/path/ip + status/http_status/detail。迁移 `20260723_audit_log.sql`。
 - **采集(core/audit.py)**:①`AuditMiddleware`(main.py 挂载)自动记录**所有写操作 POST/PUT/DELETE/PATCH** + 白名单导出/下载类 GET(export/print/legal-doc/attachment);从 Bearer token 解析操作者、查用户快照;**独立会话写库、异常全吞、绝不影响主请求**;不记请求体(天然不泄密)。②`auth.py` 显式埋点登录成功/失败(含原因)/锁定/退出(`POST /auth/logout`,前端登出时best-effort调用)。IP 优先 `X-Forwarded-For`/`X-Real-IP`。
@@ -98,7 +106,7 @@
 
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

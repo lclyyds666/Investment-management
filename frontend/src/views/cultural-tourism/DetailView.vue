@@ -89,7 +89,7 @@
             </el-tab-pane>
 
             <el-tab-pane label="景区平台核销台账" name="scenic">
-              <el-empty description="景区平台核销台账开发中,敬请期待" :image-size="90" />
+              <HotelLedger :scenic-id="scenicId" />
             </el-tab-pane>
           </el-tabs>
         </el-collapse-item>
@@ -112,6 +112,7 @@ import {
 import { getScenicById } from '@/constants/scenic'
 import TicketLedger from '@/components/TicketLedger.vue'
 import TicketDetailFiles from '@/components/TicketDetailFiles.vue'
+import HotelLedger from '@/components/HotelLedger.vue'
 
 // 核销台账选项卡：门票平台（本期实现）/ 景区平台（占位待开发）
 const ledgerTab = ref('ticket')

@@ -21,6 +21,7 @@ from app.models.channel import Channel, ChannelData
 from app.models.contract import Contract  # noqa: F401
 from app.models.customer import Customer
 from app.models.financial import FinanceConfig, FinancialMetrics  # noqa: F401
+from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 建表
 from app.models.invoice import Invoice
 from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
 from app.models.operation import OperationData

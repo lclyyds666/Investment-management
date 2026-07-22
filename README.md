@@ -61,7 +61,8 @@
 | 2026-07-20 | 门票台账非阻塞解析 + 并发闸 + 服务器扩容方案文档 | 生产 ✅ |
 | 2026-07-21 | 景区详情页重构(经营数据卡 + 平台入口放大改名 + 台账折叠)+ **明暗双主题切换** | 生产 ✅ |
 | 2026-07-22 | 核销台账期次递推(出版应得=到账−佣金、景区待核销滚动余额)+ 对账明细单文件流(源文件预览/下载、待确认仅展示本期、去覆盖按钮、费率移入编辑弹窗、列改名/隐藏付款日期)+ **审批导航角标**(/approval/pending-count,合同/业务审批按角色显示待办数) | 生产 ✅ |
-| 2026-07-23 | **操作审计**(登录日志 + 写操作中间件自动留痕 + 查询筛选 + CSV 导出,仅超管);导航新增「系统管理」组(用户管理 + 操作审计) | 待部署 🟡 |
+| 2026-07-23 | **操作审计**(登录日志 + 写操作中间件自动留痕 + 查询筛选 + CSV 导出,仅超管);导航新增「系统管理」组(用户管理 + 操作审计) | 生产 ✅ |
+| 2026-07-24 | **景区酒店平台核销台账**(抖音/美团/携程多平台;一文件=一期多平台行;核销=基数×90%、服务费=间夜×44、结算=核销+服务费;付款金额隐藏留存、待核销按平台滚动、本期合计行;真实台账 6 期反推验证) | 待部署 🟡 |
 
 ---
 
@@ -208,6 +209,7 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260718_info_maintainer_ro
 mysql -u root -p sd_publish_scm < backend/migrations/20260720_ticket_ledger.sql        # 门票平台核销业务台账(biz_ticket_ledger)
 mysql -u root -p sd_publish_scm < backend/migrations/20260722_ticket_ledger_recurrence.sql # 门票台账期次递推(佣金/付款金额/待核销滚动余额/明细源文件列)
 mysql -u root -p sd_publish_scm < backend/migrations/20260723_audit_log.sql             # 操作审计日志表 sys_audit_log
+mysql -u root -p sd_publish_scm < backend/migrations/20260724_hotel_ledger.sql          # 景区酒店平台核销台账 biz_hotel_ledger
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。
