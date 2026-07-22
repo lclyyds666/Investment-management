@@ -262,7 +262,8 @@ def save_ledger(
             publisher_due=calc["publisher_due"],
             hexiao_amount=calc["hexiao_amount"],
             payment_amount=r.payment_amount or Decimal("0"),
-            jinying_amount=calc["jinying_amount"],
+            # 结算金额：优先用前端传入的可编辑值，否则用公式默认值
+            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else calc["jinying_amount"]),
             service_fee=calc["service_fee"],
             rate_hexiao=r.rate_hexiao,
             rate_fee=r.rate_fee,
@@ -345,8 +346,11 @@ def update_row(
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]
         row.hexiao_amount = calc["hexiao_amount"]
-        row.jinying_amount = calc["jinying_amount"]
+        row.jinying_amount = calc["jinying_amount"]   # 先按公式重算默认
         row.service_fee = calc["service_fee"]
+    # 结算金额可编辑：显式传入则覆盖公式默认
+    if payload.jinying_amount is not None:
+        row.jinying_amount = payload.jinying_amount
 
     # 付款金额变化，或核销金额变化 → 影响滚动余额，全景区重算
     balance_dirty = calc_dirty

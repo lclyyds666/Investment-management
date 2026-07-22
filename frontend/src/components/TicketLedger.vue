@@ -93,9 +93,12 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="结算金额" width="130" align="right">
+        <el-table-column label="结算金额（默认可改）" width="160" align="right">
           <template #default="{ row }">
-            <span class="calc">{{ fmtMoney(calcJinying(draftPublisherDue(row))) }}</span>
+            <el-input-number
+              v-model="row.jinying_amount" :min="0" :precision="2" :step="1000"
+              size="small" controls-position="right" style="width: 140px"
+            />
           </template>
         </el-table-column>
         <el-table-column label="服务费" width="120" align="right">
@@ -177,6 +180,10 @@
         <el-form-item label="服务费率">
           <el-input-number v-model="editForm.ratePctFee" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
           <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="结算金额">
+          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
+          <div class="edit-hint">默认 = 景区核销 + 服务费（可手工修改）</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
@@ -289,6 +296,11 @@ async function onFileChange(file) {
       supplier_received: f.supplier_received,
       // 服务商佣金 = 订单实收×6% − 达人 − 团长（后端算出的建议值，可手工修改）
       supplier_commission: Number(f.suggested_commission) || 0,
+      // 结算金额默认 = 出版应得×0.94（核销+服务费），可手工改
+      jinying_amount: round2(
+        (round2((Number(f.supplier_received) || 0) - (Number(f.suggested_commission) || 0)))
+        * (DEFAULT_RATE_HEXIAO + DEFAULT_RATE_FEE)
+      ),
       payment_amount: 0,
       order_count: f.order_count,
       repay_date: null,
@@ -320,6 +332,7 @@ async function onSave() {
     payment_amount: r.payment_amount || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO,
     rate_fee: DEFAULT_RATE_FEE,
+    jinying_amount: r.jinying_amount,
     order_count: r.order_count,
     repay_date: r.repay_date,
     repay_amount: r.repay_amount,
@@ -347,7 +360,7 @@ const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
   pay_date: null, platform: '', supplier_commission: 0,
-  ratePctHexiao: 90, ratePctFee: 4, payment_amount: 0,
+  ratePctHexiao: 90, ratePctFee: 4, jinying_amount: 0, payment_amount: 0,
   repay_date: null, repay_amount: null
 })
 
@@ -363,6 +376,7 @@ function openEdit(row) {
   editForm.supplier_commission = Number(row.supplier_commission) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
   editForm.ratePctFee = round2((Number(row.rate_fee) || DEFAULT_RATE_FEE) * 100)
+  editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.payment_amount = Number(row.payment_amount) || 0
   editForm.repay_date = row.repay_date
   editForm.repay_amount = row.repay_amount != null ? Number(row.repay_amount) : null
@@ -379,6 +393,7 @@ async function onSaveEdit() {
       supplier_commission: editForm.supplier_commission,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
       rate_fee: round2(Number(editForm.ratePctFee) / 100),
+      jinying_amount: editForm.jinying_amount,
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
@@ -474,6 +489,12 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   > div { display: flex; align-items: center; gap: 8px; }
 }
 .draft-table :deep(.el-table__cell) { padding: 4px 0; }
+/* 统一所有单元格 + 表头居中对齐 */
+.draft-table :deep(.el-table__cell .cell),
+.saved-table :deep(.el-table__cell .cell) {
+  text-align: center !important;
+  justify-content: center;
+}
 .calc { color: var(--el-color-primary); font-weight: 600; }
 .pending { color: #f59e0b; font-weight: 700; }
 .saved-table { margin-top: 4px; }

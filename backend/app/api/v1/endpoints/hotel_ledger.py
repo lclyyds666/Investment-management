@@ -218,7 +218,8 @@ def save_ledger(
             hexiao_amount=calc["hexiao_amount"],
             fee_per_night=r.fee_per_night,
             service_fee=calc["service_fee"],
-            jinying_amount=calc["jinying_amount"],
+            # 结算金额：优先前端可编辑值，否则公式默认
+            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else calc["jinying_amount"]),
             payment_amount=r.payment_amount or Decimal("0"),
             repay_date=r.repay_date, repay_amount=r.repay_amount,
             order_count=r.order_count or 0,
@@ -279,7 +280,10 @@ def update_row(
         row.settle_base = calc["settle_base"]
         row.hexiao_amount = calc["hexiao_amount"]
         row.service_fee = calc["service_fee"]
-        row.jinying_amount = calc["jinying_amount"]
+        row.jinying_amount = calc["jinying_amount"]   # 先按公式重算默认
+    # 结算金额可编辑：显式传入则覆盖
+    if payload.jinying_amount is not None:
+        row.jinying_amount = payload.jinying_amount
 
     balance_dirty = calc_dirty
     if payload.payment_amount is not None:

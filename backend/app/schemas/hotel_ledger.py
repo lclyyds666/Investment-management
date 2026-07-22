@@ -41,6 +41,7 @@ class HotelSaveRow(BaseModel):
     supplier_commission: Decimal = Decimal("0")
     rate_hexiao: Decimal = Field(default=Decimal("0.90"))
     fee_per_night: Decimal = Field(default=Decimal("44.00"))
+    jinying_amount: Optional[Decimal] = None        # 结算金额：默认公式算,可编辑覆盖
     payment_amount: Decimal = Decimal("0")          # 付款金额(隐藏,参与递推)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
@@ -64,6 +65,7 @@ class HotelUpdateIn(BaseModel):
     supplier_commission: Optional[Decimal] = None
     rate_hexiao: Optional[Decimal] = None
     fee_per_night: Optional[Decimal] = None
+    jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
     payment_amount: Optional[Decimal] = None
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None

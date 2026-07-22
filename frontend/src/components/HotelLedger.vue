@@ -57,8 +57,10 @@
         <el-table-column label="付款金额" width="140" align="right">
           <template #default="{ row }"><el-input-number v-model="row.payment_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" /></template>
         </el-table-column>
-        <el-table-column label="结算金额" width="130" align="right">
-          <template #default="{ row }"><span class="calc">{{ fmtMoney(calcJinying(row)) }}</span></template>
+        <el-table-column label="结算金额（默认可改）" width="160" align="right">
+          <template #default="{ row }">
+            <el-input-number v-model="row.jinying_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:140px" />
+          </template>
         </el-table-column>
         <el-table-column label="服务费" width="110" align="right">
           <template #default="{ row }"><span class="calc">{{ fmtMoney(calcFee(row)) }}</span></template>
@@ -139,6 +141,10 @@
         </el-form-item>
         <el-form-item label="每间夜服务费">
           <el-input-number v-model="editForm.fee_per_night" :min="0" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">元</span>
+        </el-form-item>
+        <el-form-item label="结算金额">
+          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
+          <div class="edit-hint">默认 = 景区核销 + 服务费（可手工修改）</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
@@ -272,6 +278,11 @@ async function onFileChange(file) {
       room_nights: p.room_nights,
       base_received: p.base_received,
       supplier_commission: Number(p.suggested_commission) || 0,
+      // 结算金额默认 = 结算基数×0.9 + 间夜×44（核销+服务费），可手工改
+      jinying_amount: round2(
+        (round2((Number(p.base_received) || 0) - (p.platform === '抖音' ? (Number(p.suggested_commission) || 0) : 0)))
+        * DEFAULT_RATE_HEXIAO + (Number(p.room_nights) || 0) * DEFAULT_FEE_PER_NIGHT
+      ),
       payment_amount: 0,
       repay_date: null,
       repay_amount: null,
@@ -297,6 +308,7 @@ async function onSave() {
     room_nights: r.room_nights, base_received: r.base_received,
     supplier_commission: r.supplier_commission || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO, fee_per_night: DEFAULT_FEE_PER_NIGHT,
+    jinying_amount: r.jinying_amount,
     payment_amount: r.payment_amount || 0,
     repay_date: r.repay_date, repay_amount: r.repay_amount,
     order_count: r.order_count, source_file: r.source_file,
@@ -321,7 +333,7 @@ const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
   hotel_name: '', supplier_commission: 0, room_nights: 0,
-  ratePctHexiao: 90, fee_per_night: 44, payment_amount: 0, repay_date: null, repay_amount: null
+  ratePctHexiao: 90, fee_per_night: 44, jinying_amount: 0, payment_amount: 0, repay_date: null, repay_amount: null
 })
 function openEdit(row) {
   editRow.value = row
@@ -330,6 +342,7 @@ function openEdit(row) {
   editForm.room_nights = Number(row.room_nights) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
   editForm.fee_per_night = Number(row.fee_per_night) || DEFAULT_FEE_PER_NIGHT
+  editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.payment_amount = Number(row.payment_amount) || 0
   editForm.repay_date = row.repay_date
   editForm.repay_amount = row.repay_amount != null ? Number(row.repay_amount) : null
@@ -345,6 +358,7 @@ async function onSaveEdit() {
       room_nights: editForm.room_nights,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
       fee_per_night: editForm.fee_per_night,
+      jinying_amount: editForm.jinying_amount,
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
@@ -395,7 +409,14 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .hl-draft { margin-bottom: 16px; border: 1px solid var(--el-color-primary-light-5); }
 .draft-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-weight: 600; > div { display: flex; align-items: center; gap: 8px; } }
 .draft-table :deep(.el-table__cell) { padding: 4px 0; }
+/* 统一所有单元格 + 表头居中对齐 */
+.draft-table :deep(.el-table__cell .cell),
+.saved-table :deep(.el-table__cell .cell) {
+  text-align: center !important;
+  justify-content: center;
+}
 .draft-note { margin-top: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
+.edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
 .calc { color: var(--el-color-primary); font-weight: 600; }
 .pending { color: #f59e0b; font-weight: 700; }
 .muted { color: var(--el-text-color-secondary); }

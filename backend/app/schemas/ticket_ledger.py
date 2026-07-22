@@ -49,6 +49,8 @@ class TicketLedgerSaveRow(BaseModel):
     payment_amount: Decimal = Decimal("0")          # 付款金额（手工，期次递推输入）
     rate_hexiao: Decimal = Field(default=Decimal("0.90"))
     rate_fee: Decimal = Field(default=Decimal("0.04"))
+    # 结算金额：默认=景区核销+服务费(后端算)；前端可传覆盖值(可编辑默认值)
+    jinying_amount: Optional[Decimal] = None
     order_count: int = 0
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
@@ -74,6 +76,7 @@ class TicketLedgerUpdateIn(BaseModel):
     payment_amount: Optional[Decimal] = None
     rate_hexiao: Optional[Decimal] = None
     rate_fee: Optional[Decimal] = None
+    jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
 
