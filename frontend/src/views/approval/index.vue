@@ -69,7 +69,7 @@
           <template #default="{ row }">
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
-              <el-button size="small" color="#626aef" :icon="MagicStick" @click="openProofread(row)">AI 合同校对</el-button>
+              <el-button size="small" class="btn-ai" :icon="MagicStick" @click="openProofread(row)">AI 合同校对</el-button>
               <template v-if="row.attachment_name">
                 <el-button size="small" type="primary" plain :icon="View" @click="previewFormAttachment(row)">预览附件</el-button>
                 <el-button size="small" type="primary" plain :icon="Download" @click="downloadFormAttachment(row)">下载附件</el-button>

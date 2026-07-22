@@ -69,6 +69,10 @@ body {
   --btn-primary-shadow: 0 4px 12px rgba(28, 131, 201, 0.22);
   --btn-primary-shadow-hover: 0 6px 18px rgba(14, 165, 196, 0.35);
 
+  /* AI 类按钮强调色(紫,与蓝主色区分;白字) */
+  --ai-accent: #6d5ae6;
+  --ai-accent-hover: #5a48d6;
+
   /* 滚动条 */
   --scrollbar-thumb: linear-gradient(180deg, #9fc4e4, #6ea9d6);
   --scrollbar-track: #e4ecf4;
@@ -157,6 +161,10 @@ html.dark {
   --btn-primary-shadow: 0 4px 12px rgba(28, 155, 230, 0.3);
   --btn-primary-shadow-hover: 0 6px 18px rgba(34, 211, 238, 0.45);
 
+  /* AI 类按钮强调色(暗色下略提亮,保证白字对比度) */
+  --ai-accent: #7c6cf0;
+  --ai-accent-hover: #6a5ae6;
+
   /* 滚动条 */
   --scrollbar-thumb: linear-gradient(180deg, #22d3ee, #1c9be6);
   --scrollbar-track: #0a1a35;
@@ -241,15 +249,34 @@ html.dark {
   }
 }
 
-/* 主按钮:渐变 + 发光 */
-.el-button--primary {
+/* 主按钮:渐变 + 发光 + 高亮白字。
+   ⚠️ 仅作用于「实心」主按钮:排除 plain/text/link/disabled——否则会给
+   幽灵/文字/链接型主按钮也铺上渐变实底,却仍是主色蓝字 → "蓝底蓝字"看不清。
+   plain/text/link/disabled 保留 Element Plus 主题默认样式(随明暗主题的文本色)。 */
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link):not(.is-disabled) {
   background: var(--btn-primary-bg) !important;
   border-color: var(--el-color-primary) !important;
+  color: var(--el-color-white) !important;   /* 恒为高亮白,保证对比度 */
   box-shadow: var(--btn-primary-shadow);
 }
-.el-button--primary:hover {
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link):not(.is-disabled):hover,
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link):not(.is-disabled):focus {
   background: var(--btn-primary-bg-hover) !important;
+  color: var(--el-color-white) !important;
   box-shadow: var(--btn-primary-shadow-hover);
+}
+
+/* AI 类按钮统一强调色(替代硬编码 #626aef,随主题走且恒白字) */
+.el-button.btn-ai,
+.el-button.btn-ai:focus {
+  background: var(--ai-accent) !important;
+  border-color: var(--ai-accent) !important;
+  color: #fff !important;
+}
+.el-button.btn-ai:hover {
+  background: var(--ai-accent-hover) !important;
+  border-color: var(--ai-accent-hover) !important;
+  color: #fff !important;
 }
 
 /* 弹窗 / 抽屉 */

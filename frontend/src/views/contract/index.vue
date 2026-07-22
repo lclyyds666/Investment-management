@@ -37,7 +37,7 @@
           <template #default="{ row }">
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
-              <el-button size="small" color="#626aef" :icon="MagicStick" @click="openAiReview(row)">AI 审查</el-button>
+              <el-button size="small" class="btn-ai" :icon="MagicStick" @click="openAiReview(row)">AI 审查</el-button>
               <template v-if="row.attachment_name">
                 <el-button size="small" type="primary" plain :icon="View" @click="previewContractAttachment(row)">预览附件</el-button>
                 <el-button size="small" type="primary" plain :icon="Download" @click="downloadContractAttachment(row)">下载附件</el-button>
