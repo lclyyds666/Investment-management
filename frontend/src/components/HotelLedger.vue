@@ -217,21 +217,42 @@ function fmtMoney(n) {
   return v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-const periodCount = computed(() => new Set(savedRows.value.map((r) => r.check_date_text || r.period_text)).size)
+const periodCount = computed(() => new Set(savedRows.value.map((r) => r.source_file || r.detail_name || r.check_date_text)).size)
 
-// 展示行：按后端已排序(核对日期升序)分组，每期末尾插入合计行
+// 平台展示顺序
+const PLAT_ORDER = { '抖音': 0, '美团': 1, '携程': 2 }
+// 期合计行的核对日期文案：取本期内各平台的最早起~最晚止
+function periodSpan(rows) {
+  const starts = rows.map((r) => r.period_start).filter(Boolean).sort()
+  const ends = rows.map((r) => r.period_end).filter(Boolean).sort()
+  const fmt = (d) => (d ? String(d).slice(0, 10) : '')
+  if (!starts.length && !ends.length) return rows[0]?.check_date_text || ''
+  return `${fmt(starts[0])} ~ ${fmt(ends[ends.length - 1])}`
+}
+// 展示行：**按「一份对账明细=一期」分组**（同一 source_file 为一期，含其全部平台行 + 1 本期合计行）；
+// 期按核对日期(最早起)升序。修复：此前按各平台不同的核对日期分组导致同一期被拆散。
 const displayRows = computed(() => {
+  const groups = new Map()
+  for (const r of savedRows.value) {
+    const key = r.source_file || r.detail_name || r.check_date_text || r.period_text || '未分组'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(r)
+  }
+  // 每期排序键 = 期内最早 period_start
+  const buckets = [...groups.values()].map((rows) => {
+    const rowsSorted = [...rows].sort((a, b) => (PLAT_ORDER[a.platform] ?? 9) - (PLAT_ORDER[b.platform] ?? 9))
+    const minStart = rows.map((r) => r.period_start).filter(Boolean).sort()[0] || ''
+    return { rows: rowsSorted, minStart }
+  })
+  buckets.sort((a, b) => String(a.minStart).localeCompare(String(b.minStart)))
+
   const out = []
-  let curKey = null
-  let bucket = []
-  const flush = () => {
-    if (!bucket.length) return
+  for (const b of buckets) {
     const t = {
-      isTotal: true,
-      check_date_text: bucket[0].check_date_text,
+      isTotal: true, platform: '本期合计', check_date_text: periodSpan(b.rows),
       hexiao_amount: 0, pending_writeoff: 0, jinying_amount: 0, service_fee: 0, room_nights: 0, repay_amount: 0
     }
-    for (const r of bucket) {
+    for (const r of b.rows) {
       t.hexiao_amount += Number(r.hexiao_amount) || 0
       t.pending_writeoff += Number(r.pending_writeoff) || 0
       t.jinying_amount += Number(r.jinying_amount) || 0
@@ -239,16 +260,8 @@ const displayRows = computed(() => {
       t.room_nights += Number(r.room_nights) || 0
       t.repay_amount += Number(r.repay_amount) || 0
     }
-    out.push(...bucket, t)
-    bucket = []
+    out.push(...b.rows, t)
   }
-  for (const r of savedRows.value) {
-    const key = r.check_date_text || r.period_text
-    if (curKey !== null && key !== curKey) flush()
-    curKey = key
-    bucket.push(r)
-  }
-  flush()
   return out
 })
 function rowClass({ row }) { return row.isTotal ? 'total-row' : '' }
