@@ -39,7 +39,7 @@
         <el-table-column label="间夜" width="90" align="right">
           <template #default="{ row }"><el-input-number v-model="row.room_nights" :min="0" :precision="0" size="small" controls-position="right" style="width:78px" /></template>
         </el-table-column>
-        <el-table-column label="结算基数原值" width="130" align="right">
+        <el-table-column label="服务商到账" width="130" align="right">
           <template #default="{ row }">{{ fmtMoney(row.base_received) }}</template>
         </el-table-column>
         <el-table-column label="服务商佣金" width="140" align="right">
