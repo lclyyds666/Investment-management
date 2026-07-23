@@ -313,4 +313,43 @@ git push
 
 ---
 
-## 十、最新迭代(2026-07)
+## 十、安全增强实施方案(规划):RSA+AES 传输加密 + Docker Compose
+
+> 状态:**规划/待实施**(P2)。本节为具体实现方案,开工前需确认下方「待决策项」。
+
+### ⚠️ 两个前提(决定方案能否真正生效)
+1. **RSA+AES 应用层加密不能替代 HTTPS/TLS,只能叠加其上。** 它只加密请求/响应**体**,URL、Header、JWT 仍明文;且公钥要发给前端,**无 TLS 时中间人可在 `/public-key` 响应里掉包公钥**,整套被瓦解。故它属「纵深防御 / 密评应用层加密」,**HTTPS 是地基**(见 `安全加固方案.md` 第一步,生产当前仍 `listen 80`)。
+2. **浏览器 `window.crypto.subtle`(Web Crypto)仅在 HTTPS/localhost 可用。** 当前生产为 HTTP,原生加密 API 不可用 → 要么先上 HTTPS(推荐),要么退回纯 JS 库(jsencrypt/crypto-js,强度更弱)。
+
+**建议顺序:先 HTTPS → 再叠加 RSA+AES → 用 Docker Compose 收口部署。**
+
+### 1. RSA + AES 混合传输加密
+**信封与流程(每请求一次性 AES 密钥)**:
+```
+前端: ① 随机 AES-256 密钥 K + 12B IV  ② C=AES-256-GCM(K,IV,明文JSON)
+     ③ EK=RSA-OAEP(SHA-256,后端公钥,K)  ④ 发送 {k:EK, iv, d:C} + Header X-Encrypted:1
+后端: ⑤ RSA 私钥解出 K → ⑥ AES-GCM 解出明文 → 业务处理 → ⑦ 响应用同一 K+新IV 加密回传
+前端: ⑧ 用本地 K 解出响应明文
+```
+- **算法**:RSA-2048 **OAEP(SHA-256)** + **AES-256-GCM**(带认证 tag,保完整性);一次一密,无长期对称密钥。
+- **防重放(等保建议)**:明文体加 `_ts`+`_nonce`,后端校验时间窗(±300s)+ nonce 未用过(存 Redis,复用 `core/store.py`)。
+- **后端改动**:`requirements.txt` 加 `cryptography`;`core/config.py` 加 `CRYPTO_ENABLED`/`RSA_PRIVATE_KEY_*`(沿用 `CAPTCHA_ENABLED` 开关范式);新增 `core/crypto.py`(密钥载入/解密信封/加密响应/防重放)、`endpoints/crypto.py`(`GET /crypto/public-key`);`main.py` 挂 `CryptoMiddleware`(入站解密重写 body、出站 JSON 加密,置于 AuditMiddleware 外层)。私钥 PEM 放 `secrets/`(chmod 600、gitignore、属主 www-data),提供 `scripts/gen_rsa.py`,支持轮换。
+- **前端改动**:`utils/crypto.js`(优先 Web Crypto,启动拉公钥缓存);`api/request.js` 请求/响应拦截器加解密。
+- **豁免透传**(不加密):`multipart` 上传、二进制下载(export/print/legal-doc/attachment/detail)、验证码图片、health、`/crypto/public-key`。按 Content-Type + 路径后缀跳过。
+- **HTTP 兜底**(暂不上 HTTPS 时):jsencrypt(RSA)+crypto-js(AES-CBC+HMAC),明确弱于 GCM/OAEP,仅过渡。
+- **灰度/验收**:`CRYPTO_ENABLED` 开关;开后 Network 确认请求体为密文信封、响应可解、登录/上传/下载全链路正常;`core/crypto.py` 往返 + 防重放单测。
+
+### 2. Docker Compose 容器化与加固
+**架构(仅 nginx 对外)**:`nginx(alpine)` → `backend(uvicorn 2workers,非root)` → `mysql:8.0` + `redis:7`;后三者仅在 `backend_net`(internal),不映射宿主端口。
+- **文件**:`backend/Dockerfile`(python:3.13-slim)、`frontend/Dockerfile`(多阶段 node build → nginx:alpine)、`docker-compose.yml`、`deploy/nginx.docker.conf`(TLS+安全响应头/HSTS)、`.env.docker`(gitignore)、`.dockerignore`。
+- **加固**:端口收敛(仅 nginx 80/443);`user`/`no-new-privileges`/`cap_drop:[ALL]`/`read_only`+`tmpfs`;密钥用 `env_file`/`secrets` 不进镜像;持久卷 `mysql_data`/`redis_data`/`uploads`/`certs`;健康检查 + `restart: unless-stopped` + `depends_on: service_healthy`;`mem_limit` 资源上限。
+- **⚠️ 内存约束**:生产 ECS ~1.6GB(门票台账曾 OOM),全容器化偏紧。三选一:①升配 ≥4GB(推荐);②MySQL 留宿主机只容器化应用;③加 2GB swap + 调小 `innodb_buffer_pool_size`。
+- **迁移**:现网 systemd + 宿主 nginx/mysql/redis → 容器需 `mysqldump` 导出导入卷、停 systemd 避端口冲突、先 staging 跑通再切、保留回滚。
+
+### 待决策项(开工前确认)
+1. 是否**先上 HTTPS** 再做 RSA+AES(推荐;否则原生加密不可用且公钥分发不可信)。
+2. 加密范围:**全部 JSON 接口**(推荐,合密评)/ 仅敏感接口。
+3. Docker 的 **MySQL 摆放**:升配全容器化(推荐)/ MySQL 留宿主 / 维持 1.6GB+swap+调优。
+
+### 里程碑
+HTTPS(前置)→ RSA+AES(后端 crypto+中间件+公钥接口 → 前端 utils+拦截器 → 开关灰度)→ Docker Compose(staging 跑通 → 内存方案定夺 → 数据迁移 → 切换)→ 回填 `安全加固方案.md` 与本 README 进度。
