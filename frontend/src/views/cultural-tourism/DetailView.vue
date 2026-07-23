@@ -74,7 +74,7 @@
           </template>
 
           <el-tabs v-model="ledgerTab" class="ledger-tabs">
-            <el-tab-pane label="门票平台核销台账" name="ticket">
+            <el-tab-pane label="景区门票核销台账" name="ticket">
               <TicketLedger :scenic-id="scenicId" />
               <!-- 原始核销明细预览（对照/校验用）：仅展示已保存的对账明细源文件，点击查看/下载 -->
               <el-collapse class="raw-collapse">
@@ -88,7 +88,7 @@
               </el-collapse>
             </el-tab-pane>
 
-            <el-tab-pane label="景区平台核销台账" name="scenic">
+            <el-tab-pane label="景区酒店核销台账" name="scenic">
               <HotelLedger :scenic-id="scenicId" />
               <!-- 原始核销明细预览（对照/校验用）：仅列源文件，可查看/下载 -->
               <el-collapse class="raw-collapse">

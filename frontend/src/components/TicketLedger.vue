@@ -4,7 +4,7 @@
     <div class="tl-head">
       <div class="tl-title">
         <el-icon><Tickets /></el-icon>
-        <span>门票平台核销业务台账</span>
+        <span>景区门票核销台账</span>
         <el-tag size="small" effect="plain">共 {{ savedRows.length }} 期</el-tag>
       </div>
       <div class="tl-ops">

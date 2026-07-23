@@ -3,7 +3,7 @@
     <div class="hl-head">
       <div class="hl-title">
         <el-icon><House /></el-icon>
-        <span>景区酒店平台核销业务台账</span>
+        <span>景区酒店核销台账</span>
         <el-tag size="small" effect="plain">{{ periodCount }} 期 · {{ savedRows.length }} 行</el-tag>
       </div>
       <div class="hl-ops">
@@ -98,9 +98,7 @@
       <el-table-column label="服务费" width="110" align="right">
         <template #default="{ row }">{{ fmtMoney(row.service_fee) }}</template>
       </el-table-column>
-      <el-table-column label="间夜" width="80" align="right">
-        <template #default="{ row }">{{ row.room_nights }}</template>
-      </el-table-column>
+      <!-- 间夜列已隐藏（数据库仍保存 room_nights 字段，参与服务费计算与编辑） -->
       <el-table-column label="回款日期" width="110">
         <template #default="{ row }">{{ row.isTotal ? '' : (row.repay_date || '') }}</template>
       </el-table-column>
@@ -127,7 +125,7 @@
         <el-form-item label="酒店名称">
           <el-input v-model="editForm.hotel_name" style="width:100%" />
         </el-form-item>
-        <el-form-item label="结算基数原值">
+        <el-form-item label="服务商到账">
           <el-input :model-value="fmtMoney(editRow.base_received)" disabled style="width:100%" />
         </el-form-item>
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金">
