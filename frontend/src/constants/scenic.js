@@ -111,7 +111,7 @@ const SCENIC_DEFS = [
     ]
   },
   {
-    id: 'guanquelou', name: '鹳雀楼', ext: 'jpg',
+    id: 'guanquelou', name: '鹳雀楼', ext: 'png',
     scenic: [],
     ticket: [
       { key: 'douyin', url: 'https://life.douyin.com' },
