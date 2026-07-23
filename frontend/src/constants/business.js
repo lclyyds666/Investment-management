@@ -7,7 +7,7 @@ export const ROLES = {
   FINANCE_HANDLER: 'finance_handler',     // 财务经办
   FINANCE_REVIEWER: 'finance_reviewer',   // 投资公司财务复核（原财务复核，值不变）
   SCM_DIRECTOR: 'scm_director',           // 供管公司负责人
-  INVEST_DIRECTOR: 'invest_director',     // 投资公司分管领导（原投资公司负责人，值不变）
+  INVEST_DIRECTOR: 'invest_director',     // 投资公司总经理（原投资公司分管领导/负责人，值不变）
   LEGAL_COUNSEL: 'legal_counsel',         // 法律顾问：仅看合同管理 + 审批中心给意见
   INFO_MAINTAINER: 'info_maintainer'      // 信息维护：超管账号身份，不在 7 级审批链，权限来自超管
 }
@@ -19,7 +19,7 @@ export const ROLE_LABELS = {
   finance_handler: '财务经办',
   finance_reviewer: '投资公司财务复核',
   scm_director: '供管公司负责人',
-  invest_director: '投资公司分管领导',
+  invest_director: '投资公司总经理',
   legal_counsel: '法律顾问',
   info_maintainer: '信息维护'
 }
@@ -27,7 +27,7 @@ export const ROLE_LABELS = {
 export const roleLabel = (v) => ROLE_LABELS[v] || v || '—'
 
 // 合同审批链，顺序即流转顺序（index === step）
-//   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司分管领导
+//   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司总经理
 export const APPROVAL_CHAIN = [
   ROLES.BUSINESS_HANDLER,
   ROLES.SCM_DIRECTOR,
@@ -63,14 +63,14 @@ export const PAYMENT_APPROVAL_CHAIN = [
   ROLES.SCM_DIRECTOR,       // 供管公司负责人
   ROLES.RISK_AUDITOR,       // 投资公司法务风控部
   ROLES.FINANCE_REVIEWER,   // 投资公司财务负责人（财务复核）
-  ROLES.INVEST_DIRECTOR     // 投资公司分管领导
+  ROLES.INVEST_DIRECTOR     // 投资公司总经理
 ]
 export const BUSINESS_APPROVAL_CHAIN = [
   ROLES.BUSINESS_HANDLER,   // 业务经办
   ROLES.BUSINESS_REVIEWER,  // 业务复核
   ROLES.SCM_DIRECTOR,       // 供管公司负责人
   ROLES.RISK_AUDITOR,       // 投资公司法务风控部
-  ROLES.INVEST_DIRECTOR     // 投资公司分管领导
+  ROLES.INVEST_DIRECTOR     // 投资公司总经理
 ]
 export const FORM_CHAINS = {
   payment: PAYMENT_APPROVAL_CHAIN,

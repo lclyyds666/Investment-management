@@ -6,7 +6,7 @@ class Role(str, Enum):
     """系统角色。
 
     合同审批流的逐级流转顺序见 :data:`APPROVAL_CHAIN`（业务经办→供管公司负责人→
-    法律顾问→投资公司法务风控→投资公司分管领导）。其余角色（业务复核/财务经办/
+    法律顾问→投资公司法务风控→投资公司总经理）。其余角色（业务复核/财务经办/
     财务复核）保留用于模块级页面权限，不在合同审批链上。
     """
 
@@ -16,7 +16,7 @@ class Role(str, Enum):
     FINANCE_HANDLER = "finance_handler"        # 财务经办
     FINANCE_REVIEWER = "finance_reviewer"      # 投资公司财务复核（原“财务复核”，值不变）
     SCM_DIRECTOR = "scm_director"              # 供管公司负责人
-    INVEST_DIRECTOR = "invest_director"        # 投资公司分管领导（原“投资公司负责人”，值不变）
+    INVEST_DIRECTOR = "invest_director"        # 投资公司总经理（原“投资公司分管领导/负责人”，值不变）
     LEGAL_COUNSEL = "legal_counsel"            # 法律顾问：仅看合同管理 + 审批中心给意见
     INFO_MAINTAINER = "info_maintainer"        # 信息维护：超管账号身份，不在 7 级审批链，权限来自 is_superuser
 
@@ -33,13 +33,13 @@ ROLE_LABELS: dict[Role, str] = {
     Role.FINANCE_HANDLER: "财务经办",
     Role.FINANCE_REVIEWER: "投资公司财务复核",
     Role.SCM_DIRECTOR: "供管公司负责人",
-    Role.INVEST_DIRECTOR: "投资公司分管领导",
+    Role.INVEST_DIRECTOR: "投资公司总经理",
     Role.LEGAL_COUNSEL: "法律顾问",
     Role.INFO_MAINTAINER: "信息维护",
 }
 
 # 合同审批链：列表顺序 == 逐级流转顺序（index 即 step）
-#   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司分管领导
+#   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司总经理
 APPROVAL_CHAIN: list[Role] = [
     Role.BUSINESS_HANDLER,
     Role.SCM_DIRECTOR,
@@ -64,7 +64,7 @@ PAYMENT_APPROVAL_CHAIN: list[Role] = [
     Role.SCM_DIRECTOR,       # 供管公司负责人
     Role.RISK_AUDITOR,       # 投资公司法务风控部
     Role.FINANCE_REVIEWER,   # 投资公司财务负责人（财务复核）
-    Role.INVEST_DIRECTOR,    # 投资公司分管领导
+    Role.INVEST_DIRECTOR,    # 投资公司总经理
 ]
 
 # Type B 业务审批单（5 节点）
@@ -73,7 +73,7 @@ BUSINESS_APPROVAL_CHAIN: list[Role] = [
     Role.BUSINESS_REVIEWER,  # 业务复核
     Role.SCM_DIRECTOR,       # 供管公司负责人
     Role.RISK_AUDITOR,       # 投资公司法务风控部
-    Role.INVEST_DIRECTOR,    # 投资公司分管领导
+    Role.INVEST_DIRECTOR,    # 投资公司总经理
 ]
 
 

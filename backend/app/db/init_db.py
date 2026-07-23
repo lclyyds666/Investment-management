@@ -202,7 +202,7 @@ def init() -> None:
         print("数据库初始化完成：已建表并写入种子数据。")
         print("默认账号(密码均为 123456)：")
         print("  admin(超管) / op(业务经办) / scm(供管公司负责人) / legal(法律顾问)")
-        print("  risk(投资公司法务风控) / inv(投资公司分管领导) / review / fin / finr")
+        print("  risk(投资公司法务风控) / inv(投资公司总经理) / review / fin / finr")
     finally:
         db.close()
 

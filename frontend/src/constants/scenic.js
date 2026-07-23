@@ -109,6 +109,16 @@ const SCENIC_DEFS = [
       { key: 'meituan', url: 'https://mpc.meituan.com/#/ticket/product/new' },
       { key: 'tongcheng', url: 'http://ebk.17u.cn/jingqu/' }
     ]
+  },
+  {
+    id: 'guanquelou', name: '鹳雀楼', ext: 'jpg',
+    scenic: [],
+    ticket: [
+      { key: 'douyin', url: 'https://life.douyin.com' },
+      { key: 'ctrip', url: 'https://vbooking.ctrip.com/micro/ivbk/accountV2/dashboard' },
+      { key: 'meituan', url: 'https://mpc.meituan.com/#/ticket/product/new' },
+      { key: 'tongcheng', url: 'http://ebk.17u.cn/jingqu/' }
+    ]
   }
 ]
 

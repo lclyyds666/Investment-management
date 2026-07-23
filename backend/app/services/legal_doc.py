@@ -26,7 +26,7 @@ OPINION_ROLES = [
     ("scm_director", "供管公司负责人意见"),
     ("legal_counsel", "法律顾问意见"),
     ("risk_auditor", "投资公司法务风控部意见"),
-    ("invest_director", "投资公司分管领导意见"),
+    ("invest_director", "投资公司总经理意见"),
 ]
 
 

@@ -104,6 +104,12 @@
 - **前端**:`views/system/audit.vue`(筛选栏+表格+分页+导出),`api/audit.js`;导航新增**「系统管理」分组** = 用户管理 + 操作审计(均 `requiresSuperuser`,路由 `/audit`)。
 - ⚠️ 生产上线跑 `20260723_audit_log.sql`(或 `init_db` create_all);确认 Nginx 传 `X-Real-IP`/`X-Forwarded-For` 否则 IP 记为 127.0.0.1。
 
+## 文旅新增景区「鹳雀楼」+ 角色显示名调整(2026-07-24)
+1. **新增景区鹳雀楼**:`frontend/src/constants/scenic.js` 的 `SCENIC_DEFS` 增 `{ id: 'guanquelou', name: '鹳雀楼' }`,平台入口配置**完全对齐南阳森林野生动物世界**(scenic 空、ticket = 抖音/携程/美团/同程)。文旅业务全流程(卡片列表 `MainView`、详情 `DetailView`、门票/景区台账 `Ticket/HotelLedger`)均由 `scenic.js` + `scenic_id` **数据驱动**,新增一条即自动开放全部端口与功能,**无需改后端**(台账按 `WHERE scenic_id='guanquelou'` 天然隔离)。
+   - 封面图缺省:未放 `frontend/public/scenic/guanquelou.jpg` 时 UI 自动降级渐变占位卡;运营补图后即显示。
+   - 地图:`services/geo_gazetteer.py` 补 `运城/永济`(鹳雀楼所在地,山西省)坐标,供大屏项目点位解析。
+2. **角色重命名**:`invest_director` 显示名「投资公司分管领导」→**「投资公司总经理」**(**角色值不变**,零数据迁移)。改动点:`core/enums.py::ROLE_LABELS`、`frontend/src/constants/business.js::ROLE_LABELS`、`services/legal_doc.py` 意见栏(「投资公司总经理意见」)、README 角色表/审批链/默认账号。三条审批链末级显示名随之更新。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
 `20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)。
