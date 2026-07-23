@@ -16,14 +16,14 @@
     </div>
 
     <el-alert type="info" :closable="false" show-icon class="hl-tip"
-      title="流程：每次上传 1 个对账明细（=1 期，内含抖音/美团/携程等多平台）→ 按平台自动算结算基数（抖音=服务商到账−佣金；美团/携程=平台结算毛额）与间夜 → 录入付款金额（可选）→ 系统算 景区核销=基数×核销率、服务费=间夜×44、结算金额=核销+服务费，并按平台递推景区待核销 → 保存生成台账（按核对日期升序，含本期合计行）。"
+      title="流程：每次上传 1 个对账明细（=1 期，内含抖音/美团/携程等多平台）→ 按平台自动算结算基数（抖音=服务商到账−佣金；美团/携程=平台结算毛额）与间夜 → 录入付款金额/回款（本期各平台共享）→ 系统算 景区核销=基数×核销率、结算金额与服务费（默认算法1：服务费=间夜×44、结算=核销+服务费；可在「编辑台账行」切换算法2：结算=基数×结算费率、服务费=结算−核销），并按整期递推景区待核销 → 保存生成台账（按核对日期升序，含本期合计行）。"
     />
 
     <!-- 待确认区：本期各平台草稿 -->
     <el-card v-if="draftRows.length" shadow="never" class="hl-draft">
       <template #header>
         <div class="draft-header">
-          <span><el-icon><EditPen /></el-icon> 待确认台账（本期 {{ draftRows.length }} 平台）—— 抖音可改佣金；各平台可录付款金额/回款</span>
+          <span><el-icon><EditPen /></el-icon> 待确认台账（本期 {{ draftRows.length }} 平台）—— 抖音可改佣金；付款金额/回款为本期共享</span>
           <div>
             <el-button type="primary" size="small" :icon="Check" :loading="saving" @click="onSave">保存生成台账</el-button>
             <el-button size="small" text @click="draftRows = []">清空草稿</el-button>
@@ -54,8 +54,8 @@
         <el-table-column label="景区待核销金额" width="140" align="right">
           <template #default="{ row }"><span class="calc pending">{{ fmtMoney(draftPending(row)) }}</span></template>
         </el-table-column>
-        <el-table-column label="付款金额" width="140" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.payment_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" /></template>
+        <el-table-column label="付款金额（本期共享）" width="150" align="right">
+          <template #default="{ row }"><el-input-number v-model="row.payment_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" @change="syncPayment(row.payment_amount)" /></template>
         </el-table-column>
         <el-table-column label="结算金额（默认可改）" width="160" align="right">
           <template #default="{ row }">
@@ -65,14 +65,14 @@
         <el-table-column label="服务费" width="110" align="right">
           <template #default="{ row }"><span class="calc">{{ fmtMoney(calcFee(row)) }}</span></template>
         </el-table-column>
-        <el-table-column label="回款日期" width="150">
-          <template #default="{ row }"><el-date-picker v-model="row.repay_date" type="date" value-format="YYYY-MM-DD" size="small" placeholder="手工" style="width:130px" /></template>
+        <el-table-column label="回款日期（本期共享）" width="160">
+          <template #default="{ row }"><el-date-picker v-model="row.repay_date" type="date" value-format="YYYY-MM-DD" size="small" placeholder="手工" style="width:130px" @change="syncRepayDate(row.repay_date)" /></template>
         </el-table-column>
-        <el-table-column label="回款金额" width="140" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.repay_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" /></template>
+        <el-table-column label="回款金额（本期共享）" width="150" align="right">
+          <template #default="{ row }"><el-input-number v-model="row.repay_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" @change="syncRepayAmount(row.repay_amount)" /></template>
         </el-table-column>
       </el-table>
-      <div class="draft-note">提示：付款金额仅在此录入（台账中隐藏、数据库留存，参与「景区待核销」按平台递推）。</div>
+      <div class="draft-note">提示：付款金额/回款为「本期各平台共享」，任填一行自动同步全平台；付款金额台账中隐藏、数据库留存，参与「景区待核销」整期递推。</div>
     </el-card>
 
     <!-- 已保存台账（按核对日期升序，隐藏付款金额，含本期合计行） -->
@@ -90,7 +90,8 @@
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
       <el-table-column label="景区待核销金额" width="140" align="right">
-        <template #default="{ row }"><span class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
+        <!-- 整期滚动余额：仅在「本期合计」行显示，平台行留空 -->
+        <template #default="{ row }"><span v-if="row.isTotal" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
       </el-table-column>
       <el-table-column label="结算金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
@@ -100,10 +101,11 @@
       </el-table-column>
       <!-- 间夜列已隐藏（数据库仍保存 room_nights 字段，参与服务费计算与编辑） -->
       <el-table-column label="回款日期" width="110">
-        <template #default="{ row }">{{ row.isTotal ? '' : (row.repay_date || '') }}</template>
+        <!-- 回款每期共享：仅在「本期合计」行显示，平台行留空 -->
+        <template #default="{ row }">{{ row.isTotal ? (row.repay_date || '') : '' }}</template>
       </el-table-column>
       <el-table-column label="回款金额" width="130" align="right">
-        <template #default="{ row }">{{ row.isTotal ? fmtMoney(row.repay_amount) : (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') }}</template>
+        <template #default="{ row }">{{ row.isTotal ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="130" fixed="right">
         <template #default="{ row }">
@@ -125,24 +127,33 @@
         <el-form-item label="酒店名称">
           <el-input v-model="editForm.hotel_name" style="width:100%" />
         </el-form-item>
+        <el-form-item label="服务费算法">
+          <el-radio-group v-model="editForm.fee_algo">
+            <el-radio :value="1">算法1（间夜×每间夜服务费）</el-radio>
+            <el-radio :value="2">算法2（结算基数×结算费率）</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="服务商到账">
           <el-input :model-value="fmtMoney(editRow.base_received)" disabled style="width:100%" />
         </el-form-item>
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金">
           <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width:100%" />
         </el-form-item>
-        <el-form-item label="间夜">
-          <el-input-number v-model="editForm.room_nights" :min="0" :precision="0" controls-position="right" style="width:100%" />
-        </el-form-item>
         <el-form-item label="核销率">
           <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
         </el-form-item>
-        <el-form-item label="每间夜服务费">
+        <el-form-item v-if="editForm.fee_algo === 1" label="间夜">
+          <el-input-number v-model="editForm.room_nights" :min="0" :precision="0" controls-position="right" style="width:100%" />
+        </el-form-item>
+        <el-form-item v-if="editForm.fee_algo === 1" label="每间夜服务费">
           <el-input-number v-model="editForm.fee_per_night" :min="0" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">元</span>
+        </el-form-item>
+        <el-form-item v-if="editForm.fee_algo === 2" label="结算费率">
+          <el-input-number v-model="editForm.ratePctSettle" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="结算金额">
           <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
-          <div class="edit-hint">默认 = 景区核销 + 服务费（可手工修改）</div>
+          <div class="edit-hint">{{ editForm.fee_algo === 2 ? '默认 = 结算基数 × 结算费率；服务费 = 结算金额 − 景区核销' : '默认 = 景区核销 + 服务费（服务费 = 间夜 × 每间夜服务费）' }}（可手工改结算金额）</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
@@ -176,6 +187,7 @@ const props = defineProps({ scenicId: { type: String, required: true } })
 
 const DEFAULT_RATE_HEXIAO = 0.9
 const DEFAULT_FEE_PER_NIGHT = 44
+const DEFAULT_RATE_SETTLE = 0.94   // 算法2 结算费率默认（结算金额=结算基数×结算费率）
 const DEFAULT_HOTEL_NAME = '郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店'
 
 const loading = ref(false)
@@ -198,16 +210,22 @@ function isDefaultComm(row) {
 }
 function rowHexiao(row) { return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(row) }
 
-// 各平台已保存末期待核销余额（草稿递推起点）
-const lastPendingByPlatform = computed(() => {
-  const m = {}
-  for (const r of savedRows.value) m[r.platform] = Number(r.pending_writeoff) || 0
-  return m
+// 上一期末待核销（整期滚动起点）：savedRows 按 period_start 升序 → 末行所属期的 pending（同期同值）
+const lastPeriodPending = computed(() => {
+  const rows = savedRows.value
+  return rows.length ? (Number(rows[rows.length - 1].pending_writeoff) || 0) : 0
 })
-function draftPending(row) {
-  const base = lastPendingByPlatform.value[row.platform] || 0
-  return round2(base + (Number(row.payment_amount) || 0) - rowHexiao(row))
-}
+// 本期（草稿）整期滚动待核销 = 上期待核销 + 本期共享付款 − 本期各平台核销合计（每行显示同一值）
+const draftPeriodPending = computed(() => {
+  const pay = Number(draftRows.value[0]?.payment_amount) || 0
+  const hexiaoSum = draftRows.value.reduce((a, r) => a + rowHexiao(r), 0)
+  return round2(lastPeriodPending.value + pay - hexiaoSum)
+})
+function draftPending() { return draftPeriodPending.value }
+// 付款金额/回款日期/回款金额 每期各平台共享：任一行修改即同步到本期所有平台行
+function syncPayment(val) { draftRows.value.forEach((r) => { r.payment_amount = val }) }
+function syncRepayDate(val) { draftRows.value.forEach((r) => { r.repay_date = val }) }
+function syncRepayAmount(val) { draftRows.value.forEach((r) => { r.repay_amount = val }) }
 
 function fmtMoney(n) {
   const v = Number(n)
@@ -248,16 +266,20 @@ const displayRows = computed(() => {
   for (const b of buckets) {
     const t = {
       isTotal: true, platform: '本期合计', check_date_text: periodSpan(b.rows),
-      hexiao_amount: 0, pending_writeoff: 0, jinying_amount: 0, service_fee: 0, room_nights: 0, repay_amount: 0
+      hexiao_amount: 0, pending_writeoff: 0, jinying_amount: 0, service_fee: 0, room_nights: 0,
+      repay_date: '', repay_amount: null
     }
     for (const r of b.rows) {
       t.hexiao_amount += Number(r.hexiao_amount) || 0
-      t.pending_writeoff += Number(r.pending_writeoff) || 0
       t.jinying_amount += Number(r.jinying_amount) || 0
       t.service_fee += Number(r.service_fee) || 0
       t.room_nights += Number(r.room_nights) || 0
-      t.repay_amount += Number(r.repay_amount) || 0
     }
+    // 待核销为整期滚动余额（同期各行同值）→ 取一次；回款每期共享 → 取代表值，均不累加
+    t.pending_writeoff = Number(b.rows[0]?.pending_writeoff) || 0
+    const rep = b.rows.find((r) => r.repay_amount != null)
+    t.repay_amount = rep ? Number(rep.repay_amount) : null
+    t.repay_date = (b.rows.find((r) => r.repay_date) || {}).repay_date || ''
     out.push(...b.rows, t)
   }
   return out
@@ -355,7 +377,8 @@ const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
   hotel_name: '', supplier_commission: 0, room_nights: 0,
-  ratePctHexiao: 90, fee_per_night: 44, jinying_amount: 0, payment_amount: 0, repay_date: null, repay_amount: null
+  ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
+  jinying_amount: 0, payment_amount: 0, repay_date: null, repay_amount: null
 })
 function openEdit(row) {
   editRow.value = row
@@ -363,7 +386,9 @@ function openEdit(row) {
   editForm.supplier_commission = Number(row.supplier_commission) || 0
   editForm.room_nights = Number(row.room_nights) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
+  editForm.fee_algo = Number(row.fee_algo) || 1
   editForm.fee_per_night = Number(row.fee_per_night) || DEFAULT_FEE_PER_NIGHT
+  editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
   editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.payment_amount = Number(row.payment_amount) || 0
   editForm.repay_date = row.repay_date
@@ -379,7 +404,9 @@ async function onSaveEdit() {
       supplier_commission: editForm.supplier_commission,
       room_nights: editForm.room_nights,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
+      fee_algo: editForm.fee_algo,
       fee_per_night: editForm.fee_per_night,
+      rate_settle: round2(Number(editForm.ratePctSettle) / 100),
       jinying_amount: editForm.jinying_amount,
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,

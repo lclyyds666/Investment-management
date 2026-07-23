@@ -24,7 +24,7 @@
 
     <el-alert
       type="info" :closable="false" show-icon class="tl-tip"
-      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账」与「服务商佣金(=订单实收×6%−达人−团长，可改)」→ 出版应得到账=服务商到账−服务商佣金 → 录入「付款金额」→ 系统按核销率/服务费率算景区核销(=出版应得×90%)、服务费(=出版应得×4%)、结算金额(=核销+服务费)，并按期次递推「景区待核销金额」→ 保存生成台账。"
+      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账」与「服务商佣金(=订单实收×6%−达人−团长，可改)」→ 出版应得到账=服务商到账−服务商佣金 → 录入「付款金额」→ 系统按核销率/结算费率算景区核销(=出版应得×90%)、结算金额(=出版应得×结算费率94%)、服务费(=结算−核销)，并按期次递推「景区待核销金额」→ 保存生成台账。"
     />
 
     <!-- 待确认区：本期上传解析后的可编辑草稿表（仅展示本次上传，不含历史已确认记录） -->
@@ -177,13 +177,13 @@
           <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
           <span class="pct-suffix">%</span>
         </el-form-item>
-        <el-form-item label="服务费率">
-          <el-input-number v-model="editForm.ratePctFee" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
+        <el-form-item label="结算费率">
+          <el-input-number v-model="editForm.ratePctSettle" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
           <span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="结算金额">
           <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
-          <div class="edit-hint">默认 = 景区核销 + 服务费（可手工修改）</div>
+          <div class="edit-hint">默认 = 出版应得 × 结算费率；服务费 = 结算金额 − 景区核销（可手工修改结算金额）</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
@@ -218,9 +218,10 @@ const props = defineProps({
 })
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
-// 默认拆分比例（核销率/服务费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
+// 默认比例（核销率/结算费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
+// 结算费率默认 0.94（= 旧核销率0.90 + 旧服务费率0.04）：结算金额=出版应得×结算费率，服务费=结算−核销。
 const DEFAULT_RATE_HEXIAO = 0.9
-const DEFAULT_RATE_FEE = 0.04
+const DEFAULT_RATE_SETTLE = 0.94
 
 const loading = ref(false)
 const parsing = ref(false)
@@ -236,8 +237,8 @@ function draftPublisherDue(row) {
   return round2((Number(row.supplier_received) || 0) - (Number(row.supplier_commission) || 0))
 }
 function calcHexiao(b) { return round2((Number(b) || 0) * DEFAULT_RATE_HEXIAO) }
-function calcFee(b) { return round2((Number(b) || 0) * DEFAULT_RATE_FEE) }
-function calcJinying(b) { return round2(calcHexiao(b) + calcFee(b)) }
+function calcJinying(b) { return round2((Number(b) || 0) * DEFAULT_RATE_SETTLE) }
+function calcFee(b) { return round2(calcJinying(b) - calcHexiao(b)) }
 // 佣金未改动 → 展示后端「按日期粒度」算出的精准默认值；改动了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
   return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
@@ -246,7 +247,8 @@ function rowHexiao(row) {
   return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(draftPublisherDue(row))
 }
 function rowFee(row) {
-  return isDefaultComm(row) ? (Number(row.def_service_fee) || 0) : calcFee(draftPublisherDue(row))
+  // 服务费 = 结算金额 − 景区核销金额（结算金额可在草稿手工改）
+  return round2((Number(row.jinying_amount) || 0) - rowHexiao(row))
 }
 
 // 已保存台账末期滚动余额（新一期递推起点）
@@ -343,7 +345,7 @@ async function onSave() {
     supplier_commission: r.supplier_commission || 0,
     payment_amount: r.payment_amount || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO,
-    rate_fee: DEFAULT_RATE_FEE,
+    rate_settle: DEFAULT_RATE_SETTLE,
     jinying_amount: r.jinying_amount,
     def_commission: r.def_commission,
     def_hexiao: r.def_hexiao,
@@ -376,7 +378,7 @@ const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
   pay_date: null, platform: '', supplier_commission: 0,
-  ratePctHexiao: 90, ratePctFee: 4, jinying_amount: 0, payment_amount: 0,
+  ratePctHexiao: 90, ratePctSettle: 94, jinying_amount: 0, payment_amount: 0,
   repay_date: null, repay_amount: null
 })
 
@@ -391,7 +393,7 @@ function openEdit(row) {
   editForm.platform = row.platform
   editForm.supplier_commission = Number(row.supplier_commission) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
-  editForm.ratePctFee = round2((Number(row.rate_fee) || DEFAULT_RATE_FEE) * 100)
+  editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
   editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.payment_amount = Number(row.payment_amount) || 0
   editForm.repay_date = row.repay_date
@@ -408,7 +410,7 @@ async function onSaveEdit() {
       platform: editForm.platform,
       supplier_commission: editForm.supplier_commission,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
-      rate_fee: round2(Number(editForm.ratePctFee) / 100),
+      rate_settle: round2(Number(editForm.ratePctSettle) / 100),
       jinying_amount: editForm.jinying_amount,
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,

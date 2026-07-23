@@ -8,11 +8,12 @@
     · 美团：base_received = Σ结算金额(毛额)；commission=0；settle_base=结算金额。
     · 携程：base_received = Σ结算价(毛额)；commission=0；settle_base=结算价。
 - 景区核销金额 hexiao = settle_base × 核销率(默认0.90)
-- 服务费 service_fee = 间夜 × 每间夜服务费(默认44)
-- 结算金额 jinying = 景区核销 + 服务费  （沿用门票台账「锦盈结算」逻辑，更名为结算金额）
-- 景区待核销金额 pending_writeoff：按平台滚动余额（沿用门票台账）
-    首期 = 付款金额 − 景区核销；续期 = 上期余额 + 本期付款 − 本期核销。
-付款金额 payment_amount 手工录入（台账中隐藏、数据库留存，参与递推）。
+- 服务费/结算金额 两种算法（fee_algo）：
+    算法1(默认)：服务费 = 间夜 × 每间夜服务费(44)；结算金额 = 核销 + 服务费。
+    算法2       ：结算金额 = 结算基数 × 结算费率(rate_settle,默认0.94)；服务费 = 结算金额 − 核销。
+- 景区待核销金额 pending_writeoff：**按整期滚动**（每期一个余额，存于该期各平台行）
+    首期 = 本期付款 − 本期各平台核销合计；续期 = 上期余额 + 本期付款 − 本期各平台核销合计。
+付款金额/回款日期/回款金额 **每期各平台共享**（同期各行同值，手工录入；付款隐藏、留存，参与递推）。
 """
 from datetime import date
 from decimal import Decimal
@@ -57,14 +58,20 @@ class HotelLedger(Base):
     hexiao_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="景区核销金额 = 结算基数 × 核销率"
     )
+    fee_algo: Mapped[int] = mapped_column(
+        Integer, default=1, comment="服务费算法(1=间夜×每间夜服务费;2=结算金额−核销)"
+    )
     fee_per_night: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), default=Decimal("44.00"), comment="每间夜服务费(默认44元)"
+        Numeric(10, 2), default=Decimal("44.00"), comment="每间夜服务费(默认44元,算法1)"
+    )
+    rate_settle: Mapped[Decimal] = mapped_column(
+        Numeric(6, 4), default=Decimal("0.9400"), comment="结算费率(默认0.94,算法2:结算=结算基数×结算费率)"
     )
     service_fee: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="服务费 = 间夜 × 每间夜服务费"
+        Numeric(18, 2), default=0, comment="服务费(算法1=间夜×每间夜服务费;算法2=结算金额−核销)"
     )
     jinying_amount: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="结算金额 = 景区核销 + 服务费(原锦盈结算)"
+        Numeric(18, 2), default=0, comment="结算金额(算法1=核销+服务费;算法2=结算基数×结算费率)"
     )
 
     # —— 付款/待核销（付款隐藏但留存；待核销按平台滚动余额）——

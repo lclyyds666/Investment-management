@@ -248,13 +248,13 @@ def save_ledger(
 
     for i, r in enumerate(payload.rows, start=1):
         calc = tl_svc.compute_row(
-            r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_fee
+            r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_settle
         )
         # 未改佣金/费率时，采用「按日期粒度」算出的精准默认值；否则退回期级公式重算
         use_daily = (
             r.def_hexiao is not None
             and r.rate_hexiao == tl_svc.DEFAULT_RATE_HEXIAO
-            and r.rate_fee == tl_svc.DEFAULT_RATE_FEE
+            and r.rate_settle == tl_svc.DEFAULT_RATE_SETTLE
             and r.def_commission is not None
             and abs((r.supplier_commission or Decimal("0")) - r.def_commission) < Decimal("0.005")
         )
@@ -280,6 +280,7 @@ def save_ledger(
             jinying_amount=(r.jinying_amount if r.jinying_amount is not None else default_jinying),
             service_fee=service_fee,
             rate_hexiao=r.rate_hexiao,
+            rate_settle=r.rate_settle,
             rate_fee=r.rate_fee,
             order_count=r.order_count or 0,
             repay_date=r.repay_date,
@@ -350,12 +351,14 @@ def update_row(
     if payload.rate_hexiao is not None:
         row.rate_hexiao = payload.rate_hexiao
         calc_dirty = True
+    if payload.rate_settle is not None:
+        row.rate_settle = payload.rate_settle
+        calc_dirty = True
     if payload.rate_fee is not None:
         row.rate_fee = payload.rate_fee
-        calc_dirty = True
     if calc_dirty:
         calc = tl_svc.compute_row(
-            row.supplier_received, row.supplier_commission, row.rate_hexiao, row.rate_fee
+            row.supplier_received, row.supplier_commission, row.rate_hexiao, row.rate_settle
         )
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]

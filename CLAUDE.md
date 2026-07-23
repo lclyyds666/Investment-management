@@ -110,9 +110,19 @@
    - 地图:`services/geo_gazetteer.py` 补 `运城/永济`(鹳雀楼所在地,山西省)坐标,供大屏项目点位解析。
 2. **角色重命名**:`invest_director` 显示名「投资公司分管领导」→**「投资公司总经理」**(**角色值不变**,零数据迁移)。改动点:`core/enums.py::ROLE_LABELS`、`frontend/src/constants/business.js::ROLE_LABELS`、`services/legal_doc.py` 意见栏(「投资公司总经理意见」)、README 角色表/审批链/默认账号。三条审批链末级显示名随之更新。
 
+## 台账算法重构(2026-07-27)
+1. **门票(景区门票核销台账)**:结算金额 = 出版应得B × **结算费率**(默认94%);**服务费 = 结算金额 − 景区核销金额**(派生,不再单独按服务费率)。编辑台账行「服务费率」→**「结算费率」可编辑**。默认 94% = 旧核销率90%+服务费率4%,历史/现有数字不变。新增列 `biz_ticket_ledger.rate_settle`(旧 `rate_fee` 保留不用)。服务/schema/端点见 `services/ticket_ledger.py::compute_row/daily_defaults`。
+2. **酒店(景区酒店核销台账)双算法**(`biz_hotel_ledger.fee_algo`,编辑台账行单选切换):
+   - 算法1(默认,现有):服务费 = 间夜 × 每间夜服务费(44);结算金额 = 核销 + 服务费。
+   - 算法2:结算金额 = 结算基数(服务商到账−佣金,美团/携程佣金0) × **结算费率**(`rate_settle`,默认94%);服务费 = 结算 − 核销。编辑框与门票一致。
+   - `compute_row(...,fee_algo,rate_settle)` 分派;算法2 走公式重算(不用按日 def_*)。
+3. **酒店 付款金额/回款日期/回款金额 每期各平台共享**:编辑任一平台行即同步本期全平台(后端 `update_row` 按 `_period_key` 传播);本期合计付款=单值(不×平台数)。
+4. **酒店「景区待核销」整期滚动**(原按平台各自滚动):本期待核销 = 上期 + 本期共享付款 − 本期各平台核销合计;`_recompute_running_balance` 按期分组滚动,同期各行存同值;前端仅在**本期合计行**显示待核销/回款,平台行留空。⚠️ 存量酒店台账升级后建议**重新保存一次**回填(口径变了)。
+5. 迁移 `20260726_ledger_settle_rate.sql`(幂等):ticket 加 `rate_settle`、hotel 加 `fee_algo/rate_settle`;ADD COLUMN DEFAULT 已使存量行=0.94(=旧默认),无需回填。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)、`20260726_ledger_settle_rate.sql`(门票/酒店台账结算费率 rate_settle + 酒店服务费算法 fee_algo,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

@@ -45,6 +45,8 @@ class HotelSaveRow(BaseModel):
     supplier_commission: Decimal = Decimal("0")
     rate_hexiao: Decimal = Field(default=Decimal("0.90"))
     fee_per_night: Decimal = Field(default=Decimal("44.00"))
+    fee_algo: int = 1                                # 服务费算法(1=间夜×每间夜服务费;2=结算−核销)
+    rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率(算法2)
     jinying_amount: Optional[Decimal] = None        # 结算金额：默认公式算,可编辑覆盖
     # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用）
     def_commission: Optional[Decimal] = None
@@ -74,6 +76,8 @@ class HotelUpdateIn(BaseModel):
     supplier_commission: Optional[Decimal] = None
     rate_hexiao: Optional[Decimal] = None
     fee_per_night: Optional[Decimal] = None
+    fee_algo: Optional[int] = None             # 服务费算法(1/2)
+    rate_settle: Optional[Decimal] = None      # 结算费率(算法2)
     jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
     payment_amount: Optional[Decimal] = None
     repay_date: Optional[date] = None
@@ -98,7 +102,9 @@ class HotelLedgerRow(BaseModel):
     settle_base: Decimal = Decimal("0")
     rate_hexiao: Decimal = Decimal("0.90")
     hexiao_amount: Decimal = Decimal("0")
+    fee_algo: int = 1
     fee_per_night: Decimal = Decimal("44.00")
+    rate_settle: Decimal = Decimal("0.94")
     service_fee: Decimal = Decimal("0")
     jinying_amount: Decimal = Decimal("0")
     payment_amount: Decimal = Decimal("0")

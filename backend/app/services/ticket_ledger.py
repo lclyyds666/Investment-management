@@ -4,10 +4,10 @@
 1. 解析平台对账明细 xlsx（多个「周」明细 Sheet），逐单累加
    订单实收 − 软件服务费 − 达人服务费 − 团长服务费 − 服务商服务费
    得到「服务商到账金额」，并解析对账周期跨度 / 核对日期文本。
-2. 出版应得到账金额 B = 服务商到账 − 服务商佣金(手工录入)；再按固定拆分比例计算：
+2. 出版应得到账金额 B = 服务商到账 − 服务商佣金(手工录入)；再按比例计算：
      景区核销金额 = B × 核销率(默认 90%)
-     服务费       = B × 服务费率(默认 4%)
-     结算金额     = 景区核销金额 + 服务费   (= B × 94%)
+     结算金额     = B × 结算费率(默认 94%)
+     服务费       = 结算金额 − 景区核销金额   (默认口径 = B × 4%)
    另按期次递推出景区待核销金额(滚动余额，见 running_pending)。
 3. 用 openpyxl 生成标准格式业务台账 xlsx（含合计行）供导出。
 
@@ -25,7 +25,10 @@ import openpyxl
 # 台账固定字段（泉州欧乐堡门票平台）
 DEFAULT_TICKET_PRODUCT = "水上世界/童话世界/海洋王国"
 DEFAULT_RATE_HEXIAO = Decimal("0.90")  # 景区核销率
-DEFAULT_RATE_FEE = Decimal("0.04")     # 服务费率
+# 结算费率：结算金额 = 出版应得B × 结算费率。默认 0.94（= 旧核销率0.90 + 旧服务费率0.04），
+# 保证历史/现有台账数值完全不变；服务费改为派生 = 结算金额 − 景区核销金额。
+DEFAULT_RATE_SETTLE = Decimal("0.94")
+DEFAULT_RATE_FEE = Decimal("0.04")     # 旧服务费率（保留常量，仅历史/迁移回填参考）
 # 服务商佣金默认率(对订单实收金额)：服务商佣金 = 订单实收×6% − 达人服务费 − 团长服务费
 DEFAULT_COMMISSION_RATE = Decimal("0.06")
 _CENT = Decimal("0.01")
@@ -230,20 +233,21 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
 
 def daily_defaults(daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-                   rate_fee: Decimal = DEFAULT_RATE_FEE) -> dict:
+                   rate_settle: Decimal = DEFAULT_RATE_SETTLE) -> dict:
     """按日逐日计算（含逐日舍入到分）再累加：
        当日佣金=订单实收×6%−达人−团长；当日出版应得=到账−佣金；
-       当日核销=出版应得×核销率；当日服务费=出版应得×服务费率；当日结算=核销+服务费。"""
+       当日核销=出版应得×核销率；当日结算=出版应得×结算费率；当日服务费=结算−核销。"""
     commission = hexiao = service_fee = jinying = Decimal("0")
     for dd in daily.values():
         comm_day = _q(dd["shishou"] * DEFAULT_COMMISSION_RATE + dd["daren"] + dd["tuanzhang"])
         b_day = dd["received"] - comm_day
         hx = _q(b_day * rate_hexiao)
-        fe = _q(b_day * rate_fee)
+        jy = _q(b_day * rate_settle)
+        fe = _q(jy - hx)
         commission += comm_day
         hexiao += hx
         service_fee += fe
-        jinying += _q(hx + fe)
+        jinying += jy
     return {
         "commission": _q(commission), "hexiao": _q(hexiao),
         "service_fee": _q(service_fee), "jinying": _q(jinying),
@@ -254,27 +258,27 @@ def compute_row(
     supplier_received: Decimal,
     supplier_commission: Decimal = Decimal("0"),
     rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-    rate_fee: Decimal = DEFAULT_RATE_FEE,
+    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
 ) -> dict:
     """由服务商到账、服务商佣金与比例计算台账计算列。
 
       出版应得到账金额 B = 服务商到账 - 服务商佣金
       景区核销金额 = B × 核销率
-      服务费       = B × 服务费率
-      结算金额     = 景区核销金额 + 服务费
+      结算金额     = B × 结算费率
+      服务费       = 结算金额 − 景区核销金额
     """
     received = supplier_received or Decimal("0")
     commission = supplier_commission or Decimal("0")
     b = received - commission
     hexiao = _q(b * rate_hexiao)
-    fee = _q(b * rate_fee)
-    jinying = _q(hexiao + fee)
+    jinying = _q(b * rate_settle)
+    fee = _q(jinying - hexiao)
     return {
         "supplier_commission": _q(commission),
         "publisher_due": _q(b),        # 出版应得到账金额 = 服务商到账 - 服务商佣金
         "hexiao_amount": hexiao,       # 景区核销金额
-        "service_fee": fee,            # 服务费
-        "jinying_amount": jinying,     # 结算金额
+        "service_fee": fee,            # 服务费 = 结算金额 − 景区核销金额
+        "jinying_amount": jinying,     # 结算金额 = B × 结算费率
     }
 
 

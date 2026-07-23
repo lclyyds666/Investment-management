@@ -73,35 +73,66 @@ def _load_rows(db: Session, sid: str) -> list[HotelLedger]:
     ).all()
 
 
+def _period_key(r: HotelLedger) -> str:
+    """一期标识（一份对账明细=一期）；与前端 displayRows 分组键一致。"""
+    return r.source_file or r.detail_name or r.period_text or r.check_date_text or "NA"
+
+
+def _group_periods(rows: list[HotelLedger]) -> tuple[dict[str, list[HotelLedger]], list[str]]:
+    """按期分组，保持传入顺序（rows 须已按 period_start 升序 → order 即期次先后）。"""
+    groups: dict[str, list[HotelLedger]] = {}
+    order: list[str] = []
+    for r in rows:
+        k = _period_key(r)
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(r)
+    return groups, order
+
+
 def _totals(rows: list[HotelLedger]) -> HotelTotals:
     def s(attr):
         return sum((getattr(x, attr) or Decimal("0") for x in rows), Decimal("0"))
 
-    # 待核销为各平台滚动余额 → 合计取每个平台的末期余额之和
-    last_by_platform: dict[str, HotelLedger] = {}
-    for r in rows:  # rows 已按 period_start 升序 → 后者覆盖即末期
-        last_by_platform[r.platform] = r
-    pending = sum((r.pending_writeoff or Decimal("0") for r in last_by_platform.values()), Decimal("0"))
+    # 付款/回款每期各平台共享 → 每期只取一次；待核销为整期滚动余额 → 合计取末期余额
+    groups, order = _group_periods(rows)
+    payment = Decimal("0")
+    repay = Decimal("0")
+    for k in order:
+        grp = groups[k]
+        payment += max((g.payment_amount or Decimal("0") for g in grp), default=Decimal("0"))
+        reps = [g.repay_amount for g in grp if g.repay_amount is not None]
+        if reps:
+            repay += reps[0]
+    pending = (groups[order[-1]][0].pending_writeoff or Decimal("0")) if order else Decimal("0")
 
     return HotelTotals(
         hexiao_amount=s("hexiao_amount"),
         jinying_amount=s("jinying_amount"),
         service_fee=s("service_fee"),
-        payment_amount=s("payment_amount"),
+        payment_amount=payment,
         pending_writeoff=pending,
         room_nights=sum((r.room_nights or 0 for r in rows), 0),
-        repay_amount=s("repay_amount"),
+        repay_amount=repay,
     )
 
 
 def _recompute_running_balance(rows: list[HotelLedger]) -> None:
-    """按平台各自滚动重算待核销余额。rows 须按 period_start 升序。"""
-    prev: dict[str, Decimal] = {}
-    for r in rows:
-        base = prev.get(r.platform, Decimal("0"))
-        cur = hl_svc.running_pending(base, r.payment_amount, r.hexiao_amount)
-        r.pending_writeoff = cur
-        prev[r.platform] = cur
+    """按**整期**滚动重算待核销余额。rows 须按 period_start 升序。
+
+    本期待核销 = 上期待核销 + 本期付款(每期共享) − 本期各平台核销合计；写回该期各行。
+    """
+    groups, order = _group_periods(rows)
+    prev = Decimal("0")
+    for k in order:
+        grp = groups[k]
+        pay = max((g.payment_amount or Decimal("0") for g in grp), default=Decimal("0"))
+        hexiao_sum = sum((g.hexiao_amount or Decimal("0") for g in grp), Decimal("0"))
+        cur = hl_svc.running_pending(prev, pay, hexiao_sum)
+        for g in grp:
+            g.pending_writeoff = cur
+        prev = cur
 
 
 # --------------------------------------------------------------------------- #
@@ -204,11 +235,13 @@ def save_ledger(
         calc = hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
             r.room_nights, r.rate_hexiao, r.fee_per_night,
+            r.fee_algo, r.rate_settle,
         )
-        # 未改佣金/费率时采用「按日期粒度」精准默认值，否则退回期级公式重算
+        # 仅算法1、且未改佣金/费率时采用「按日期粒度」精准默认值，否则退回期级公式重算
         comm_ref = r.def_commission if r.def_commission is not None else Decimal("0")
         use_daily = (
-            r.def_hexiao is not None
+            (r.fee_algo or 1) == 1
+            and r.def_hexiao is not None
             and r.rate_hexiao == hl_svc.DEFAULT_RATE_HEXIAO
             and r.fee_per_night == hl_svc.DEFAULT_FEE_PER_NIGHT
             and abs((r.supplier_commission or Decimal("0")) - comm_ref) < Decimal("0.005")
@@ -227,7 +260,9 @@ def save_ledger(
             settle_base=calc["settle_base"],
             rate_hexiao=r.rate_hexiao,
             hexiao_amount=hexiao,
+            fee_algo=r.fee_algo or 1,
             fee_per_night=r.fee_per_night,
+            rate_settle=r.rate_settle,
             service_fee=service_fee,
             # 结算金额：优先前端可编辑值，否则(按日/期级)默认
             jinying_amount=(r.jinying_amount if r.jinying_amount is not None else default_jinying),
@@ -268,24 +303,25 @@ def update_row(
 
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
-    if payload.repay_date is not None:
-        row.repay_date = payload.repay_date
-    if payload.repay_amount is not None:
-        row.repay_amount = payload.repay_amount
 
     calc_dirty = False
     if payload.supplier_commission is not None:
         row.supplier_commission = payload.supplier_commission; calc_dirty = True
     if payload.rate_hexiao is not None:
         row.rate_hexiao = payload.rate_hexiao; calc_dirty = True
+    if payload.fee_algo is not None:
+        row.fee_algo = payload.fee_algo; calc_dirty = True
     if payload.fee_per_night is not None:
         row.fee_per_night = payload.fee_per_night; calc_dirty = True
+    if payload.rate_settle is not None:
+        row.rate_settle = payload.rate_settle; calc_dirty = True
     if payload.room_nights is not None:
         row.room_nights = payload.room_nights; calc_dirty = True
     if calc_dirty:
         calc = hl_svc.compute_row(
             row.platform, row.base_received, row.supplier_commission,
             row.room_nights, row.rate_hexiao, row.fee_per_night,
+            row.fee_algo, row.rate_settle,
         )
         row.supplier_commission = calc["supplier_commission"]
         row.settle_base = calc["settle_base"]
@@ -296,9 +332,20 @@ def update_row(
     if payload.jinying_amount is not None:
         row.jinying_amount = payload.jinying_amount
 
+    # 付款金额 / 回款日期 / 回款金额：每期各平台共享 → 同步到本期所有平台行
     balance_dirty = calc_dirty
-    if payload.payment_amount is not None:
-        row.payment_amount = payload.payment_amount; balance_dirty = True
+    if payload.payment_amount is not None or payload.repay_date is not None or payload.repay_amount is not None:
+        for sib in _load_rows(db, sid):
+            if _period_key(sib) != _period_key(row):
+                continue
+            if payload.payment_amount is not None:
+                sib.payment_amount = payload.payment_amount
+            if payload.repay_date is not None:
+                sib.repay_date = payload.repay_date
+            if payload.repay_amount is not None:
+                sib.repay_amount = payload.repay_amount
+        if payload.payment_amount is not None:
+            balance_dirty = True
 
     db.flush()
     if balance_dirty:
@@ -361,6 +408,7 @@ def export_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depen
         "hexiao_amount": r.hexiao_amount, "pending_writeoff": r.pending_writeoff,
         "jinying_amount": r.jinying_amount, "service_fee": r.service_fee,
         "room_nights": r.room_nights, "repay_date": r.repay_date, "repay_amount": r.repay_amount,
+        "period_key": r.source_file or r.detail_name or r.period_text or r.check_date_text or "",
     } for r in rows]
     data = hl_svc.build_export_workbook(export_rows, title=f"酒店平台业务台账-{sid}")
     fname = quote(f"酒店平台业务台账-{sid}.xlsx")

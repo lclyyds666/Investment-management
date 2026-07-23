@@ -56,16 +56,19 @@ class TicketLedger(Base):
         comment="景区待核销金额(滚动余额)=上期余额+本期付款金额-本期景区核销金额",
     )
     jinying_amount: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="结算金额 = 景区核销 + 服务费"
+        Numeric(18, 2), default=0, comment="结算金额 = B × 结算费率"
     )
     service_fee: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="服务费 = B × 服务费率"
+        Numeric(18, 2), default=0, comment="服务费 = 结算金额 − 景区核销金额"
     )
     rate_hexiao: Mapped[Decimal] = mapped_column(
         Numeric(6, 4), default=Decimal("0.9000"), comment="景区核销率(默认0.90)"
     )
+    rate_settle: Mapped[Decimal] = mapped_column(
+        Numeric(6, 4), default=Decimal("0.9400"), comment="结算费率(默认0.94,结算金额=B×结算费率)"
+    )
     rate_fee: Mapped[Decimal] = mapped_column(
-        Numeric(6, 4), default=Decimal("0.0400"), comment="服务费率(默认0.04)"
+        Numeric(6, 4), default=Decimal("0.0400"), comment="旧服务费率(已弃用,保留历史列)"
     )
     order_count: Mapped[int] = mapped_column(Integer, default=0, comment="核销订单数(明细统计)")
 
