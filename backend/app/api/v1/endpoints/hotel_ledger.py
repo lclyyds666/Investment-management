@@ -205,6 +205,17 @@ def save_ledger(
             r.platform, r.base_received, r.supplier_commission,
             r.room_nights, r.rate_hexiao, r.fee_per_night,
         )
+        # 未改佣金/费率时采用「按日期粒度」精准默认值，否则退回期级公式重算
+        comm_ref = r.def_commission if r.def_commission is not None else Decimal("0")
+        use_daily = (
+            r.def_hexiao is not None
+            and r.rate_hexiao == hl_svc.DEFAULT_RATE_HEXIAO
+            and r.fee_per_night == hl_svc.DEFAULT_FEE_PER_NIGHT
+            and abs((r.supplier_commission or Decimal("0")) - comm_ref) < Decimal("0.005")
+        )
+        hexiao = r.def_hexiao if use_daily else calc["hexiao_amount"]
+        service_fee = r.def_service_fee if use_daily else calc["service_fee"]
+        default_jinying = r.def_jinying if use_daily else calc["jinying_amount"]
         db.add(HotelLedger(
             scenic_id=sid, row_no=base_no + i,
             platform=r.platform or "", hotel_name=r.hotel_name or "",
@@ -215,11 +226,11 @@ def save_ledger(
             supplier_commission=calc["supplier_commission"],
             settle_base=calc["settle_base"],
             rate_hexiao=r.rate_hexiao,
-            hexiao_amount=calc["hexiao_amount"],
+            hexiao_amount=hexiao,
             fee_per_night=r.fee_per_night,
-            service_fee=calc["service_fee"],
-            # 结算金额：优先前端可编辑值，否则公式默认
-            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else calc["jinying_amount"]),
+            service_fee=service_fee,
+            # 结算金额：优先前端可编辑值，否则(按日/期级)默认
+            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else default_jinying),
             payment_amount=r.payment_amount or Decimal("0"),
             repay_date=r.repay_date, repay_amount=r.repay_amount,
             order_count=r.order_count or 0,

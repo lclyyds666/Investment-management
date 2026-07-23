@@ -49,7 +49,7 @@
           </template>
         </el-table-column>
         <el-table-column label="景区核销金额" width="130" align="right">
-          <template #default="{ row }"><span class="calc">{{ fmtMoney(calcHexiao(row)) }}</span></template>
+          <template #default="{ row }"><span class="calc">{{ fmtMoney(rowHexiao(row)) }}</span></template>
         </el-table-column>
         <el-table-column label="景区待核销金额" width="140" align="right">
           <template #default="{ row }"><span class="calc pending">{{ fmtMoney(draftPending(row)) }}</span></template>
@@ -194,6 +194,11 @@ function settleBase(row) {
 function calcHexiao(row) { return round2(settleBase(row) * DEFAULT_RATE_HEXIAO) }
 function calcFee(row) { return round2((Number(row.room_nights) || 0) * DEFAULT_FEE_PER_NIGHT) }
 function calcJinying(row) { return round2(calcHexiao(row) + calcFee(row)) }
+// 佣金未改 → 展示后端「按日期粒度」精准默认核销；改了 → JS 期级预览(保存时后端按期重算)
+function isDefaultComm(row) {
+  return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
+}
+function rowHexiao(row) { return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(row) }
 
 // 各平台已保存末期待核销余额（草稿递推起点）
 const lastPendingByPlatform = computed(() => {
@@ -203,7 +208,7 @@ const lastPendingByPlatform = computed(() => {
 })
 function draftPending(row) {
   const base = lastPendingByPlatform.value[row.platform] || 0
-  return round2(base + (Number(row.payment_amount) || 0) - calcHexiao(row))
+  return round2(base + (Number(row.payment_amount) || 0) - rowHexiao(row))
 }
 
 function fmtMoney(n) {
@@ -278,11 +283,13 @@ async function onFileChange(file) {
       room_nights: p.room_nights,
       base_received: p.base_received,
       supplier_commission: Number(p.suggested_commission) || 0,
-      // 结算金额默认 = 结算基数×0.9 + 间夜×44（核销+服务费），可手工改
-      jinying_amount: round2(
-        (round2((Number(p.base_received) || 0) - (p.platform === '抖音' ? (Number(p.suggested_commission) || 0) : 0)))
-        * DEFAULT_RATE_HEXIAO + (Number(p.room_nights) || 0) * DEFAULT_FEE_PER_NIGHT
-      ),
+      // 后端「按日期粒度」算出的精准默认值
+      def_commission: Number(p.suggested_commission) || 0,
+      def_hexiao: Number(p.def_hexiao) || 0,
+      def_service_fee: Number(p.def_service_fee) || 0,
+      def_jinying: Number(p.def_jinying) || 0,
+      // 结算金额默认 = 按日累加精准值，可手工改
+      jinying_amount: Number(p.def_jinying) || 0,
       payment_amount: 0,
       repay_date: null,
       repay_amount: null,
@@ -309,6 +316,10 @@ async function onSave() {
     supplier_commission: r.supplier_commission || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO, fee_per_night: DEFAULT_FEE_PER_NIGHT,
     jinying_amount: r.jinying_amount,
+    def_commission: r.def_commission,
+    def_hexiao: r.def_hexiao,
+    def_service_fee: r.def_service_fee,
+    def_jinying: r.def_jinying,
     payment_amount: r.payment_amount || 0,
     repay_date: r.repay_date, repay_amount: r.repay_amount,
     order_count: r.order_count, source_file: r.source_file,

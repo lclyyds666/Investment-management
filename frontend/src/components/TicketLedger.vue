@@ -76,7 +76,7 @@
         </el-table-column>
         <el-table-column label="景区核销金额" width="130" align="right">
           <template #default="{ row }">
-            <span class="calc">{{ fmtMoney(calcHexiao(draftPublisherDue(row))) }}</span>
+            <span class="calc">{{ fmtMoney(rowHexiao(row)) }}</span>
           </template>
         </el-table-column>
         <!-- 景区待核销金额：紧邻景区核销金额右侧；按期次递推预览 -->
@@ -103,7 +103,7 @@
         </el-table-column>
         <el-table-column label="服务费" width="120" align="right">
           <template #default="{ row }">
-            <span class="calc">{{ fmtMoney(calcFee(draftPublisherDue(row))) }}</span>
+            <span class="calc">{{ fmtMoney(rowFee(row)) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="回款日期" width="150">
@@ -238,6 +238,16 @@ function draftPublisherDue(row) {
 function calcHexiao(b) { return round2((Number(b) || 0) * DEFAULT_RATE_HEXIAO) }
 function calcFee(b) { return round2((Number(b) || 0) * DEFAULT_RATE_FEE) }
 function calcJinying(b) { return round2(calcHexiao(b) + calcFee(b)) }
+// 佣金未改动 → 展示后端「按日期粒度」算出的精准默认值；改动了 → JS 期级预览(保存时后端按期重算)
+function isDefaultComm(row) {
+  return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
+}
+function rowHexiao(row) {
+  return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(draftPublisherDue(row))
+}
+function rowFee(row) {
+  return isDefaultComm(row) ? (Number(row.def_service_fee) || 0) : calcFee(draftPublisherDue(row))
+}
 
 // 已保存台账末期滚动余额（新一期递推起点）
 const lastSavedPending = computed(() => {
@@ -246,7 +256,7 @@ const lastSavedPending = computed(() => {
 })
 // 草稿期景区待核销金额预览：上期余额 + 本期付款 − 本期核销
 function draftPending(row) {
-  const hexiao = calcHexiao(draftPublisherDue(row))
+  const hexiao = rowHexiao(row)
   return round2(lastSavedPending.value + (Number(row.payment_amount) || 0) - hexiao)
 }
 
@@ -294,13 +304,15 @@ async function onFileChange(file) {
       period_start: f.period_start,
       period_end: f.period_end,
       supplier_received: f.supplier_received,
-      // 服务商佣金 = 订单实收×6% − 达人 − 团长（后端算出的建议值，可手工修改）
+      // 服务商佣金 = 订单实收×6% − 达人 − 团长（后端按日算出的建议值，可手工修改）
       supplier_commission: Number(f.suggested_commission) || 0,
-      // 结算金额默认 = 出版应得×0.94（核销+服务费），可手工改
-      jinying_amount: round2(
-        (round2((Number(f.supplier_received) || 0) - (Number(f.suggested_commission) || 0)))
-        * (DEFAULT_RATE_HEXIAO + DEFAULT_RATE_FEE)
-      ),
+      // 后端「按日期粒度」算出的精准默认值（未改佣金时直接展示/采用）
+      def_commission: Number(f.suggested_commission) || 0,
+      def_hexiao: Number(f.def_hexiao) || 0,
+      def_service_fee: Number(f.def_service_fee) || 0,
+      def_jinying: Number(f.def_jinying) || 0,
+      // 结算金额默认 = 按日累加的精准值，可手工改
+      jinying_amount: Number(f.def_jinying) || 0,
       payment_amount: 0,
       order_count: f.order_count,
       repay_date: null,
@@ -333,6 +345,10 @@ async function onSave() {
     rate_hexiao: DEFAULT_RATE_HEXIAO,
     rate_fee: DEFAULT_RATE_FEE,
     jinying_amount: r.jinying_amount,
+    def_commission: r.def_commission,
+    def_hexiao: r.def_hexiao,
+    def_service_fee: r.def_service_fee,
+    def_jinying: r.def_jinying,
     order_count: r.order_count,
     repay_date: r.repay_date,
     repay_amount: r.repay_amount,

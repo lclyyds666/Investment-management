@@ -16,6 +16,10 @@ class ParsedFile(BaseModel):
     supplier_received: Decimal = Decimal("0")   # 服务商到账金额（明细算）
     # 服务商佣金建议值 = 订单实收×6% − 达人 − 团长（前端预填，可手工修改）
     suggested_commission: Decimal = Decimal("0")
+    # 按日期粒度逐日计算后累加的精准默认值（核销/服务费/结算）
+    def_hexiao: Decimal = Decimal("0")
+    def_service_fee: Decimal = Decimal("0")
+    def_jinying: Decimal = Decimal("0")
     order_count: int = 0
     period_text: str = ""                        # 对账周期文本
     check_date_text: str = ""                    # 核对日期（=周期）
@@ -51,6 +55,11 @@ class TicketLedgerSaveRow(BaseModel):
     rate_fee: Decimal = Field(default=Decimal("0.04"))
     # 结算金额：默认=景区核销+服务费(后端算)；前端可传覆盖值(可编辑默认值)
     jinying_amount: Optional[Decimal] = None
+    # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用，避免全量汇总误差）
+    def_commission: Optional[Decimal] = None
+    def_hexiao: Optional[Decimal] = None
+    def_service_fee: Optional[Decimal] = None
+    def_jinying: Optional[Decimal] = None
     order_count: int = 0
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None

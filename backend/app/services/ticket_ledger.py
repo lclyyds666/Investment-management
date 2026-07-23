@@ -140,14 +140,12 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
 
     supplier_received = Decimal("0")
-    # 服务商佣金计算所需分项累计（订单实收 / 达人服务费 / 团长服务费）
-    shishou_total = Decimal("0")
-    daren_total = Decimal("0")
-    tuanzhang_total = Decimal("0")
     order_count = 0
     min_dt: date | None = None
     max_dt: date | None = None
     used_sheets: list[str] = []
+    # 按日期分组：核销时间 → 当日 {received, shishou, daren, tuanzhang}
+    daily: dict[str, dict] = {}
 
     try:
         for ws in wb.worksheets:
@@ -184,17 +182,22 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                 for f in fee_vals:
                     base += (f or Decimal("0"))  # 费用在明细中为负数，直接相加
                 supplier_received += base
-                # 分项累计：fee_vals 顺序 = (软件, 达人, 团长)
-                shishou_total += (shishou or Decimal("0"))
-                daren_total += (fee_vals[1] or Decimal("0"))       # 达人服务费(负)
-                tuanzhang_total += (fee_vals[2] or Decimal("0"))   # 团长服务费(负)
                 order_count += 1
 
-                if 0 <= i_time < len(raw):
-                    d = _to_date(raw[i_time])
-                    if d:
-                        min_dt = d if (min_dt is None or d < min_dt) else min_dt
-                        max_dt = d if (max_dt is None or d > max_dt) else max_dt
+                d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
+                if d:
+                    min_dt = d if (min_dt is None or d < min_dt) else min_dt
+                    max_dt = d if (max_dt is None or d > max_dt) else max_dt
+                # 按日归集（fee_vals 顺序 = 软件/达人/团长）
+                key = d.isoformat() if d else "NA"
+                dd = daily.setdefault(key, {
+                    "received": Decimal("0"), "shishou": Decimal("0"),
+                    "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                })
+                dd["received"] += base
+                dd["shishou"] += (shishou or Decimal("0"))
+                dd["daren"] += (fee_vals[1] or Decimal("0"))       # 达人(负)
+                dd["tuanzhang"] += (fee_vals[2] or Decimal("0"))   # 团长(负)
     finally:
         wb.close()
 
@@ -207,21 +210,43 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     if p_start and p_end:
         period_text = f"{p_start.year}/{p_start.month}/{p_start.day}-{p_end.year}/{p_end.month}/{p_end.day}"
 
-    # 服务商佣金(建议值) = 订单实收×6% − 达人服务费 − 团长服务费
-    #   明细中达人/团长为负数，直接相加即等价于「减去费用」；结果供前端预填、可手工修改。
-    suggested_commission = _q(
-        shishou_total * DEFAULT_COMMISSION_RATE + daren_total + tuanzhang_total
-    )
+    # **按日期粒度**逐日计算并舍入,再累加为期合计（精准默认值,供前端预填/可改）
+    defs = daily_defaults(daily)
 
     return {
         "supplier_received": _q(supplier_received),
-        "suggested_commission": suggested_commission,
+        "suggested_commission": defs["commission"],
+        "def_hexiao": defs["hexiao"],
+        "def_service_fee": defs["service_fee"],
+        "def_jinying": defs["jinying"],
         "order_count": order_count,
         "period_start": p_start,
         "period_end": p_end,
         "period_text": period_text,
         "check_date_text": period_text,
         "sheets": used_sheets,
+    }
+
+
+def daily_defaults(daily: dict[str, dict],
+                   rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                   rate_fee: Decimal = DEFAULT_RATE_FEE) -> dict:
+    """按日逐日计算（含逐日舍入到分）再累加：
+       当日佣金=订单实收×6%−达人−团长；当日出版应得=到账−佣金；
+       当日核销=出版应得×核销率；当日服务费=出版应得×服务费率；当日结算=核销+服务费。"""
+    commission = hexiao = service_fee = jinying = Decimal("0")
+    for dd in daily.values():
+        comm_day = _q(dd["shishou"] * DEFAULT_COMMISSION_RATE + dd["daren"] + dd["tuanzhang"])
+        b_day = dd["received"] - comm_day
+        hx = _q(b_day * rate_hexiao)
+        fe = _q(b_day * rate_fee)
+        commission += comm_day
+        hexiao += hx
+        service_fee += fe
+        jinying += _q(hx + fe)
+    return {
+        "commission": _q(commission), "hexiao": _q(hexiao),
+        "service_fee": _q(service_fee), "jinying": _q(jinying),
     }
 
 

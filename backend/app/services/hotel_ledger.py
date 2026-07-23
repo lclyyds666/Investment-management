@@ -40,9 +40,11 @@ COL_DY_TIME = {"核销时间"}
 COL_MT_JIESUAN = {"结算金额"}
 COL_MT_NIGHTS = {"间夜"}
 COL_MT_CHECKIN = {"入住日期"}
+COL_MT_LEAVE = {"离店日期"}
 COL_XC_JIESUAN = {"结算价"}
 COL_XC_NIGHTS = {"间夜"}
 COL_XC_CHECKIN = {"入住日期"}
+COL_XC_LEAVE = {"离店日期"}
 
 
 def _num(v):
@@ -158,8 +160,37 @@ def _count_rows(rows: list, key_idx: int) -> int:
     return n
 
 
+def _new_day() -> dict:
+    return {"recv": Decimal("0"), "base": Decimal("0"), "shishou": Decimal("0"),
+            "daren": Decimal("0"), "tuanzhang": Decimal("0"), "nights": 0}
+
+
+def daily_defaults(platform: str, daily: dict[str, dict],
+                   rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                   fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT) -> dict:
+    """核心：**按日期粒度**逐日计算并逐日舍入到分，再累加为期合计（避免全量汇总后一次舍入的误差）。"""
+    commission = hexiao = service_fee = jinying = Decimal("0")
+    for dd in daily.values():
+        if platform == "抖音":
+            comm_day = _q(dd["shishou"] * DEFAULT_COMMISSION_RATE + dd["daren"] + dd["tuanzhang"])
+            base_day = dd["recv"] - comm_day          # 出版应得(当日)
+        else:
+            comm_day = Decimal("0")
+            base_day = dd["base"]                     # 平台结算毛额(当日)
+        hx = _q(base_day * rate_hexiao)               # 当日核销(舍入到分)
+        fee = _q(Decimal(int(dd["nights"] or 0)) * fee_per_night)  # 当日服务费
+        commission += comm_day
+        hexiao += hx
+        service_fee += fee
+        jinying += _q(hx + fee)                        # 当日结算(舍入到分)
+    return {
+        "commission": _q(commission), "hexiao": _q(hexiao),
+        "service_fee": _q(service_fee), "jinying": _q(jinying),
+    }
+
+
 def parse_hotel_file(content: bytes, filename: str = "") -> dict:
-    """解析一份酒店对账明细，按平台聚合。返回 {"platforms": [platform_info...], "warnings": [...]}。"""
+    """解析一份酒店对账明细，按平台聚合。**按日期分组 → 逐日计算舍入 → 累加**。"""
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
     year = _year_from_filename(filename)
     agg: dict[str, dict] = {}
@@ -173,12 +204,10 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             header, rows = _header_row(ws.iter_rows(values_only=True))
             d = agg.setdefault(plat, {
                 "platform": plat, "room_nights": 0, "order_count": 0,
-                "base_received": Decimal("0"), "shishou": Decimal("0"),
-                "daren": Decimal("0"), "tuanzhang": Decimal("0"),
-                "pstart": None, "pend": None,
+                "base_received": Decimal("0"), "daily": {}, "pstart": None, "pend": None,
             })
-            # 周期：优先 sheet 标题，回退明细日期列
             s0, e0 = _dates_from_title(ws.title, year)
+            daily: dict = d["daily"]
 
             if plat == "抖音":
                 i_fs = _idx(header, COL_DY_FUWUSHANG)
@@ -188,33 +217,61 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
                 i_tu = _idx(header, COL_DY_TUANZHANG)
                 i_night = _idx(header, COL_DY_NIGHTS)
                 i_time = _idx(header, COL_DY_TIME)
-                # 服务商到账 = −Σ服务商服务费；无该列则回退 实收−软件−达人−团长
-                if i_fs >= 0:
-                    d["base_received"] += -_col_sum(rows, i_fs)
+                for r in rows:
+                    shi = _num(r[i_shi]) if 0 <= i_shi < len(r) else None
+                    ruan = _num(r[i_ruan]) if 0 <= i_ruan < len(r) else None
+                    da = _num(r[i_da]) if 0 <= i_da < len(r) else None
+                    tu = _num(r[i_tu]) if 0 <= i_tu < len(r) else None
+                    fs = _num(r[i_fs]) if 0 <= i_fs < len(r) else None
+                    if shi is None and fs is None:
+                        continue
+                    dt = _to_date(r[i_time]) if 0 <= i_time < len(r) else None
+                    key = dt.isoformat() if dt else "NA"
+                    day = daily.setdefault(key, _new_day())
+                    # 当日到账 = −服务商服务费(若有) 否则 实收+软件+达人+团长(费用为负)
+                    if fs is not None:
+                        recv = -fs
+                    else:
+                        recv = (shi or Decimal("0")) + (ruan or Decimal("0")) + (da or Decimal("0")) + (tu or Decimal("0"))
+                    day["recv"] += recv
+                    day["shishou"] += (shi or Decimal("0"))
+                    day["daren"] += (da or Decimal("0"))
+                    day["tuanzhang"] += (tu or Decimal("0"))
+                    n = _num(r[i_night]) if 0 <= i_night < len(r) else None
+                    day["nights"] += int(n) if n is not None else 0
+                    d["base_received"] += recv
+                    d["order_count"] += 1
+                    d["room_nights"] += int(n) if n is not None else 0
+                    if dt:
+                        s0 = dt if s0 is None else min(s0, dt)
+                        e0 = dt if e0 is None else max(e0, dt)
+            else:  # 美团 / 携程
+                if plat == "美团":
+                    i_j = _idx(header, COL_MT_JIESUAN); i_night = _idx(header, COL_MT_NIGHTS)
+                    i_leave = _idx(header, COL_MT_LEAVE); i_in = _idx(header, COL_MT_CHECKIN)
                 else:
-                    d["base_received"] += (_col_sum(rows, i_shi) + _col_sum(rows, i_ruan)
-                                           + _col_sum(rows, i_da) + _col_sum(rows, i_tu))
-                d["shishou"] += _col_sum(rows, i_shi)
-                d["daren"] += _col_sum(rows, i_da)
-                d["tuanzhang"] += _col_sum(rows, i_tu)
-                d["room_nights"] += int(_col_sum(rows, i_night))
-                d["order_count"] += _count_rows(rows, i_shi)
-                if (s0 is None or e0 is None) and i_time >= 0:
-                    ds = [x for x in (_to_date(r[i_time]) for r in rows if i_time < len(r)) if x]
-                    if ds:
-                        s0 = s0 or min(ds); e0 = e0 or max(ds)
-            elif plat == "美团":
-                i_j = _idx(header, COL_MT_JIESUAN)
-                i_night = _idx(header, COL_MT_NIGHTS)
-                d["base_received"] += _col_sum(rows, i_j)
-                d["room_nights"] += int(_col_sum(rows, i_night))
-                d["order_count"] += _count_rows(rows, i_j)
-            elif plat == "携程":
-                i_j = _idx(header, COL_XC_JIESUAN)
-                i_night = _idx(header, COL_XC_NIGHTS)
-                d["base_received"] += _col_sum(rows, i_j)
-                d["room_nights"] += int(_col_sum(rows, i_night))
-                d["order_count"] += _count_rows(rows, i_j)
+                    i_j = _idx(header, COL_XC_JIESUAN); i_night = _idx(header, COL_XC_NIGHTS)
+                    i_leave = _idx(header, COL_XC_LEAVE); i_in = _idx(header, COL_XC_CHECKIN)
+                for r in rows:
+                    base = _num(r[i_j]) if 0 <= i_j < len(r) else None
+                    if base is None:
+                        continue
+                    dt = None
+                    if 0 <= i_leave < len(r):
+                        dt = _to_date(r[i_leave])
+                    if dt is None and 0 <= i_in < len(r):
+                        dt = _to_date(r[i_in])
+                    key = dt.isoformat() if dt else "NA"
+                    day = daily.setdefault(key, _new_day())
+                    day["base"] += base
+                    n = _num(r[i_night]) if 0 <= i_night < len(r) else None
+                    day["nights"] += int(n) if n is not None else 0
+                    d["base_received"] += base
+                    d["order_count"] += 1
+                    d["room_nights"] += int(n) if n is not None else 0
+                    if dt:
+                        s0 = dt if s0 is None else min(s0, dt)
+                        e0 = dt if e0 is None else max(e0, dt)
 
             if s0:
                 d["pstart"] = s0 if d["pstart"] is None else min(d["pstart"], s0)
@@ -229,10 +286,7 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             continue
         d = agg[plat]
         base_received = _q(d["base_received"])
-        # 抖音佣金默认值 = 订单实收×6% − 达人 − 团长（达人/团长为负,相加=减）
-        commission = Decimal("0")
-        if plat == "抖音":
-            commission = _q(d["shishou"] * DEFAULT_COMMISSION_RATE + d["daren"] + d["tuanzhang"])
+        defs = daily_defaults(plat, d["daily"])   # 按日计算的精准默认值
         p_text = ""
         if d["pstart"] and d["pend"]:
             s, e = d["pstart"], d["pend"]
@@ -244,7 +298,10 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             "room_nights": d["room_nights"],
             "order_count": d["order_count"],
             "base_received": base_received,
-            "suggested_commission": commission,
+            "suggested_commission": defs["commission"],
+            "def_hexiao": defs["hexiao"],
+            "def_service_fee": defs["service_fee"],
+            "def_jinying": defs["jinying"],
             "period_start": d["pstart"],
             "period_end": d["pend"],
             "period_text": p_text,

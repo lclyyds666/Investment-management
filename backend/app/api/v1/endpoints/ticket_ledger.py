@@ -173,6 +173,9 @@ async def parse_files(
         detail_name=fname,
         supplier_received=info["supplier_received"],
         suggested_commission=info["suggested_commission"],
+        def_hexiao=info["def_hexiao"],
+        def_service_fee=info["def_service_fee"],
+        def_jinying=info["def_jinying"],
         order_count=info["order_count"],
         period_text=info["period_text"],
         check_date_text=info["check_date_text"],
@@ -247,6 +250,17 @@ def save_ledger(
         calc = tl_svc.compute_row(
             r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_fee
         )
+        # 未改佣金/费率时，采用「按日期粒度」算出的精准默认值；否则退回期级公式重算
+        use_daily = (
+            r.def_hexiao is not None
+            and r.rate_hexiao == tl_svc.DEFAULT_RATE_HEXIAO
+            and r.rate_fee == tl_svc.DEFAULT_RATE_FEE
+            and r.def_commission is not None
+            and abs((r.supplier_commission or Decimal("0")) - r.def_commission) < Decimal("0.005")
+        )
+        hexiao = r.def_hexiao if use_daily else calc["hexiao_amount"]
+        service_fee = r.def_service_fee if use_daily else calc["service_fee"]
+        default_jinying = r.def_jinying if use_daily else calc["jinying_amount"]
         db.add(TicketLedger(
             scenic_id=sid,                       # ← 铁律：作用域键来自路径
             row_no=base_no + i,
@@ -260,11 +274,11 @@ def save_ledger(
             supplier_received=r.supplier_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
             publisher_due=calc["publisher_due"],
-            hexiao_amount=calc["hexiao_amount"],
+            hexiao_amount=hexiao,
             payment_amount=r.payment_amount or Decimal("0"),
-            # 结算金额：优先用前端传入的可编辑值，否则用公式默认值
-            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else calc["jinying_amount"]),
-            service_fee=calc["service_fee"],
+            # 结算金额：优先用前端传入的可编辑值，否则用(按日/期级)默认值
+            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else default_jinying),
+            service_fee=service_fee,
             rate_hexiao=r.rate_hexiao,
             rate_fee=r.rate_fee,
             order_count=r.order_count or 0,

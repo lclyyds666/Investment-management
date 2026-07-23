@@ -14,6 +14,10 @@ class ParsedPlatform(BaseModel):
     order_count: int = 0
     base_received: Decimal = Decimal("0")          # 抖音=服务商到账;美团/携程=平台结算毛额
     suggested_commission: Decimal = Decimal("0")   # 抖音佣金建议值(可改);其他=0
+    # 按日期粒度逐日计算后累加的精准默认值
+    def_hexiao: Decimal = Decimal("0")
+    def_service_fee: Decimal = Decimal("0")
+    def_jinying: Decimal = Decimal("0")
     period_start: Optional[date] = None
     period_end: Optional[date] = None
     period_text: str = ""
@@ -42,6 +46,11 @@ class HotelSaveRow(BaseModel):
     rate_hexiao: Decimal = Field(default=Decimal("0.90"))
     fee_per_night: Decimal = Field(default=Decimal("44.00"))
     jinying_amount: Optional[Decimal] = None        # 结算金额：默认公式算,可编辑覆盖
+    # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用）
+    def_commission: Optional[Decimal] = None
+    def_hexiao: Optional[Decimal] = None
+    def_service_fee: Optional[Decimal] = None
+    def_jinying: Optional[Decimal] = None
     payment_amount: Decimal = Decimal("0")          # 付款金额(隐藏,参与递推)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
