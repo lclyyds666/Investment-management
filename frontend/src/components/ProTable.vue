@@ -18,6 +18,9 @@
       </div>
     </template>
 
+    <!-- 表格上方自定义区(提示条 / 父控筛选栏等) -->
+    <slot name="prepend" :reload="reload" />
+
     <!-- 首屏加载：骨架屏(优于转圈遮罩的感知速度) -->
     <el-skeleton v-if="firstLoading" :rows="6" animated />
 
@@ -39,6 +42,7 @@
         <el-table-column
           v-for="col in columns"
           :key="col.prop || col.label"
+          :type="col.type"
           :prop="col.slot || col.formatter ? undefined : col.prop"
           :label="col.label"
           :width="col.width"

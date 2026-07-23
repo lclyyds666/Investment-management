@@ -1,91 +1,78 @@
 <template>
-  <div class="org" v-loading="loading">
-    <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>用户管理 / 组织架构</span>
-          <div class="ops">
-            <el-button v-if="isSuperuser" type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
-            <el-button :icon="Refresh" @click="load">刷新</el-button>
-          </div>
+  <div class="org">
+    <ProTable
+      ref="tableRef"
+      title="用户管理 / 组织架构"
+      :fetch="fetchUsers"
+      :columns="columns"
+      empty-text="暂无用户数据"
+      row-key="id"
+    >
+      <template #toolbar>
+        <el-button v-if="isSuperuser" type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
+        <el-button :icon="Refresh" @click="reload">刷新</el-button>
+      </template>
+
+      <template #prepend>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="系统共 8 个角色，角色决定可访问模块与所处审批链节点；超级管理员不受角色限制，可审批任意环节。"
+          class="mb"
+        />
+        <!-- 服务端筛选：改动即 reload()，参数随 fetch 闭包读取 -->
+        <div class="filters">
+          <el-input
+            v-model="filters.keyword"
+            placeholder="搜索账号 / 姓名 / 部门"
+            clearable
+            style="width: 220px"
+            :prefix-icon="Search"
+            @keyup.enter="reload"
+            @clear="reload"
+          />
+          <el-select v-model="filters.role" placeholder="角色" clearable style="width: 160px" @change="reload">
+            <el-option v-for="(label, val) in ROLE_LABELS" :key="val" :label="label" :value="val" />
+          </el-select>
+          <el-select v-model="filters.is_active" placeholder="状态" clearable style="width: 120px" @change="reload">
+            <el-option label="启用" :value="true" />
+            <el-option label="停用" :value="false" />
+          </el-select>
+          <el-button type="primary" :icon="Search" @click="reload">查询</el-button>
         </div>
       </template>
 
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="7 级角色权限体系：业务经办 → 业务复核 → 风控审核 → 财务经办 → 财务复核 → 供管公司负责人 → 投资公司负责人"
-        class="mb"
-      />
-
-      <!-- 搜索筛选 -->
-      <div class="filters">
-        <el-input
-          v-model="filters.keyword"
-          placeholder="搜索账号 / 姓名 / 部门"
-          clearable
-          style="width: 220px"
-          :prefix-icon="Search"
-          @keyup.enter="load"
-          @clear="load"
-        />
-        <el-select v-model="filters.role" placeholder="角色" clearable style="width: 160px" @change="load">
-          <el-option v-for="(label, val) in ROLE_LABELS" :key="val" :label="label" :value="val" />
-        </el-select>
-        <el-select v-model="filters.is_active" placeholder="状态" clearable style="width: 120px" @change="load">
-          <el-option label="启用" :value="true" />
-          <el-option label="停用" :value="false" />
-        </el-select>
-        <el-button type="primary" :icon="Search" @click="load">查询</el-button>
-      </div>
-
-      <el-table :data="users" border stripe>
-        <el-table-column type="index" label="#" width="56" align="center" />
-        <el-table-column prop="full_name" label="姓名" width="110" />
-        <el-table-column prop="username" label="登录账号" width="120" />
-        <el-table-column label="角色" min-width="140">
-          <template #default="{ row }">
-            <el-tag size="small">{{ row.role_label }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="department" label="部门" min-width="120" />
-        <el-table-column label="电子签名" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.has_signature ? 'success' : 'info'" size="small" effect="plain">
-              {{ row.has_signature ? '已设置' : '未设置' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="超管" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.is_superuser" type="success" size="small">超管</el-tag>
-            <span v-else>—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'danger'" size="small" effect="plain">
-              {{ row.is_active ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="isSuperuser" label="操作" width="320" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button
-              size="small"
-              :type="row.is_active ? 'warning' : 'success'"
-              @click="toggleActive(row)"
-            >
-              {{ row.is_active ? '停用' : '启用' }}
-            </el-button>
-            <el-button size="small" @click="onResetPassword(row)">重置密码</el-button>
-            <el-button size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+      <template #role="{ row }">
+        <el-tag size="small">{{ row.role_label }}</el-tag>
+      </template>
+      <template #signature="{ row }">
+        <el-tag :type="row.has_signature ? 'success' : 'info'" size="small" effect="plain">
+          {{ row.has_signature ? '已设置' : '未设置' }}
+        </el-tag>
+      </template>
+      <template #superuser="{ row }">
+        <el-tag v-if="row.is_superuser" type="success" size="small">超管</el-tag>
+        <span v-else>—</span>
+      </template>
+      <template #active="{ row }">
+        <el-tag :type="row.is_active ? 'success' : 'danger'" size="small" effect="plain">
+          {{ row.is_active ? '启用' : '停用' }}
+        </el-tag>
+      </template>
+      <template #actions="{ row }">
+        <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+        <el-button
+          size="small"
+          :type="row.is_active ? 'warning' : 'success'"
+          @click="toggleActive(row)"
+        >
+          {{ row.is_active ? '停用' : '启用' }}
+        </el-button>
+        <el-button size="small" @click="onResetPassword(row)">重置密码</el-button>
+        <el-button size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
+      </template>
+    </ProTable>
 
     <!-- 新建 / 编辑弹窗 -->
     <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? '编辑用户' : '新建用户'" width="480px">
@@ -124,7 +111,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Edit, Delete, Search } from '@element-plus/icons-vue'
 import { ROLE_LABELS, ROLES } from '@/constants/business'
@@ -132,13 +119,42 @@ import { useUserStore } from '@/store/user'
 import {
   listUsers, createUser, updateUser, setUserActive, resetUserPassword, deleteUser
 } from '@/api/user'
+import ProTable from '@/components/ProTable.vue'
 
 const userStore = useUserStore()
 const isSuperuser = ref(userStore.isSuperuser)
 
-const loading = ref(false)
-const users = ref([])
 const filters = reactive({ keyword: '', role: null, is_active: null })
+
+const tableRef = ref()
+const reload = () => tableRef.value?.reload()
+
+// fetch 闭包读取当前筛选值 → 服务端过滤;ProTable 负责分页/骨架/失败重试/空态
+function fetchUsers() {
+  const params = {}
+  if (filters.keyword) params.keyword = filters.keyword
+  if (filters.role) params.role = filters.role
+  if (filters.is_active !== null) params.is_active = filters.is_active
+  return listUsers(params)
+}
+
+// 操作列仅超管可见 → 用 computed 动态拼列
+const columns = computed(() => {
+  const base = [
+    { type: 'index', label: '#', width: 56, align: 'center' },
+    { prop: 'full_name', label: '姓名', width: 110 },
+    { prop: 'username', label: '登录账号', width: 120 },
+    { label: '角色', minWidth: 140, slot: 'role' },
+    { prop: 'department', label: '部门', minWidth: 120 },
+    { label: '电子签名', width: 100, align: 'center', slot: 'signature' },
+    { label: '超管', width: 80, align: 'center', slot: 'superuser' },
+    { label: '状态', width: 80, align: 'center', slot: 'active' }
+  ]
+  if (isSuperuser.value) {
+    base.push({ label: '操作', width: 320, fixed: 'right', slot: 'actions' })
+  }
+  return base
+})
 
 const formRef = ref()
 const dialog = reactive({
@@ -165,19 +181,6 @@ function emptyForm() {
     department: '',
     is_superuser: false,
     is_active: true
-  }
-}
-
-async function load() {
-  loading.value = true
-  try {
-    const params = {}
-    if (filters.keyword) params.keyword = filters.keyword
-    if (filters.role) params.role = filters.role
-    if (filters.is_active !== null) params.is_active = filters.is_active
-    users.value = await listUsers(params)
-  } finally {
-    loading.value = false
   }
 }
 
@@ -216,7 +219,7 @@ async function onSave() {
         is_superuser: dialog.form.is_superuser,
         is_active: dialog.form.is_active
       })
-      ElMessage.success('用户已更新')
+      ElMessage.success('修改成功')
     } else {
       await createUser({
         username: dialog.form.username,
@@ -226,10 +229,10 @@ async function onSave() {
         department: dialog.form.department,
         is_superuser: dialog.form.is_superuser
       })
-      ElMessage.success('用户创建成功')
+      ElMessage.success('创建成功')
     }
     dialog.visible = false
-    load()
+    reload()
   } finally {
     dialog.saving = false
   }
@@ -239,7 +242,7 @@ async function toggleActive(row) {
   const next = !row.is_active
   await setUserActive(row.id, next)
   ElMessage.success(next ? '已启用' : '已停用')
-  load()
+  reload()
 }
 
 async function onResetPassword(row) {
@@ -264,19 +267,15 @@ async function onDelete(row) {
       { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
     )
     await deleteUser(row.id)
-    ElMessage.success('用户已删除')
-    load()
+    ElMessage.success('删除成功')
+    reload()
   } catch (e) {
     // 取消
   }
 }
-
-onMounted(load)
 </script>
 
 <style scoped lang="scss">
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.ops { display: flex; gap: 8px; }
 .mb { margin-bottom: 14px; }
 .filters { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .hint { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }

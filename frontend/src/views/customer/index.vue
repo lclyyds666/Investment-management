@@ -1,43 +1,33 @@
 <template>
-  <div class="customer" v-loading="loading">
-    <el-card shadow="never">
-      <template #header><div class="card-header"><span>客户档案管理</span></div></template>
+  <div class="customer">
+    <ProTable
+      ref="tableRef"
+      title="客户档案管理"
+      :fetch="listCustomers"
+      :columns="columns"
+      :search-keys="['name', 'customer_code', 'contact']"
+      search-placeholder="搜索客户名称 / ID / 联系人"
+      empty-text="暂无客户数据"
+    >
+      <template #toolbar>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建客户</el-button>
+        <el-button :icon="Refresh" @click="reload">刷新</el-button>
+      </template>
 
-      <div class="toolbar">
-        <el-input v-model="keyword" placeholder="搜索客户名称 / ID / 联系人" clearable class="search-input">
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-        <div>
-          <el-button type="primary" :icon="Plus" @click="openCreate">新建客户</el-button>
-          <el-button :icon="Refresh" @click="load">刷新</el-button>
-        </div>
-      </div>
+      <template #material="{ row }">
+        <el-tag v-if="row.material_count" type="success" size="small" effect="plain">
+          {{ row.material_count }} 个附件
+        </el-tag>
+        <span v-else class="muted">—</span>
+      </template>
 
-      <el-table :data="filtered" border stripe>
-        <el-table-column prop="customer_code" label="客户ID" width="120" />
-        <el-table-column prop="name" label="客户名称" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="contact" label="联系人" width="110" />
-        <el-table-column prop="phone" label="电话" width="150" />
-        <el-table-column prop="address" label="地址" min-width="180" show-overflow-tooltip />
-        <el-table-column label="资料" width="120" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.material_count" type="success" size="small" effect="plain">
-              {{ row.material_count }} 个附件
-            </el-tag>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="270" align="center">
-          <template #default="{ row }">
-            <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
-            <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
-            <el-button size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-        <template #empty>暂无客户数据</template>
-      </el-table>
-    </el-card>
+      <template #actions="{ row }">
+        <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
+        <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
+        <el-button size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+        <el-button size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
+      </template>
+    </ProTable>
 
     <!-- 新建/编辑 -->
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑客户' : '新建客户'" width="560px">
@@ -46,10 +36,10 @@
           <el-input v-model="form.customer_code" :disabled="isEdit" placeholder="如 KH-010" />
         </el-form-item>
         <el-form-item label="客户名称" prop="name"><el-input v-model="form.name" /></el-form-item>
-        <el-form-item label="社会信用代码"><el-input v-model="form.social_credit_code" placeholder="统一社会信用代码(18 位)" /></el-form-item>
+        <el-form-item label="社会信用代码" prop="social_credit_code"><el-input v-model="form.social_credit_code" placeholder="统一社会信用代码(18 位大写字母/数字)" /></el-form-item>
         <el-row :gutter="12">
           <el-col :span="12"><el-form-item label="联系人"><el-input v-model="form.contact" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="电话"><el-input v-model="form.phone" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="电话" prop="phone"><el-input v-model="form.phone" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
         <el-form-item label="资料">
@@ -122,27 +112,25 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Refresh, View, Edit, Delete, Document, UploadFilled, MagicStick } from '@element-plus/icons-vue'
+import { Plus, Refresh, View, Edit, Delete, Document, UploadFilled, MagicStick } from '@element-plus/icons-vue'
 import { listCustomers, createCustomer, updateCustomer, deleteCustomer, listMaterials, uploadMaterials, deleteMaterial, fetchMaterialBlob } from '@/api/customer'
 import CustomerResearchDialog from '@/components/CustomerResearchDialog.vue'
+import ProTable from '@/components/ProTable.vue'
 
-const loading = ref(false)
-const list = ref([])
-const keyword = ref('')
-const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return list.value
-  return list.value.filter((c) =>
-    [c.name, c.customer_code, c.contact].filter(Boolean).some((v) => String(v).toLowerCase().includes(kw))
-  )
-})
+const columns = [
+  { prop: 'customer_code', label: '客户ID', width: 120 },
+  { prop: 'name', label: '客户名称', minWidth: 200, showOverflowTooltip: true },
+  { prop: 'contact', label: '联系人', width: 110 },
+  { prop: 'phone', label: '电话', width: 150 },
+  { prop: 'address', label: '地址', minWidth: 180, showOverflowTooltip: true },
+  { label: '资料', width: 120, align: 'center', slot: 'material' },
+  { label: '操作', width: 270, align: 'center', fixed: 'right', slot: 'actions' }
+]
 
-async function load() {
-  loading.value = true
-  try { list.value = await listCustomers() } finally { loading.value = false }
-}
+const tableRef = ref()
+const reload = () => tableRef.value?.reload()
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -155,9 +143,16 @@ const form = reactive(emptyForm())
 const dialogMaterials = ref([])
 const pendingFiles = ref([])
 const ALLOW_EXT = ['.pdf', '.docx', '.xlsx']
+// 选填字段仅在非空时校验格式(避免空值被 pattern 拦截)
+const optional = (re, message) => ({
+  validator: (_r, v, cb) => (!v || re.test(v) ? cb() : cb(new Error(message))),
+  trigger: 'blur'
+})
 const rules = {
   customer_code: [{ required: true, message: '请输入客户ID', trigger: 'blur' }],
-  name: [{ required: true, message: '请输入客户名称', trigger: 'blur' }]
+  name: [{ required: true, message: '请输入客户名称', trigger: 'blur' }],
+  social_credit_code: [optional(/^[0-9A-Z]{18}$/, '统一社会信用代码应为 18 位大写字母或数字')],
+  phone: [optional(/^(1[3-9]\d{9}|0\d{2,3}-?\d{7,8})$/, '请输入有效的手机号或座机号')]
 }
 function openCreate() {
   isEdit.value = false; editingId.value = null
@@ -220,14 +215,14 @@ async function onSave() {
       }
     }
     ElMessage.success(isEdit.value ? '修改成功' : '创建成功')
-    dialogVisible.value = false; load()
+    dialogVisible.value = false; reload()
   } finally { saving.value = false }
 }
 async function onDelete(row) {
   try {
     await ElMessageBox.confirm(`确定删除客户「${row.name}」吗？`, '删除确认', { type: 'warning' })
   } catch { return }
-  await deleteCustomer(row.id); ElMessage.success('删除成功'); load()
+  await deleteCustomer(row.id); ElMessage.success('删除成功'); reload()
 }
 
 const viewVisible = ref(false)
@@ -262,16 +257,11 @@ async function downloadFile(m) {
 const researchVisible = ref(false)
 const researchCustomer = ref({})
 function openResearch(row) { researchCustomer.value = row; researchVisible.value = true }
-
-onMounted(load)
 </script>
 
 <style scoped lang="scss">
-.card-header { display: flex; justify-content: space-between; align-items: center; }
 /* 表单标签不换行，避免「社会信用代码」等长标签跨行 */
 .customer-form :deep(.el-form-item__label) { white-space: nowrap; }
-.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
-.search-input { max-width: 320px; }
 .muted { color: var(--el-text-color-placeholder); }
 .files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; width: 100%; }
 .file-tag { display: inline-flex; align-items: center; gap: 4px; }
