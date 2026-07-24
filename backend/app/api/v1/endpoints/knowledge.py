@@ -11,8 +11,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_superuser
+from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
+from app.core.enums import Role
 from app.db.session import get_db
 from app.models.knowledge import KnowledgeDoc
 from app.models.user import User
@@ -35,13 +36,13 @@ def list_docs(db: Session = Depends(get_db), _: User = Depends(get_current_user)
     return Response.ok([KnowledgeDocOut.model_validate(r) for r in rows])
 
 
-@router.post("", response_model=Response[KnowledgeDocOut], summary="上传法规文件(超管)")
+@router.post("", response_model=Response[KnowledgeDocOut], summary="上传法规文件(业务经办/超管)")
 async def upload_doc(
     file: UploadFile = File(..., description="参考文件 .pdf / .docx / .xlsx"),
     title: str = Form(""),
     category: str = Form("法律规范"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_superuser),
+    current_user: User = Depends(require_roles(Role.BUSINESS_HANDLER)),
 ):
     fname = file.filename or "未命名"
     content = await file.read()
@@ -77,8 +78,8 @@ async def upload_doc(
     return Response.ok(KnowledgeDocOut.model_validate(doc), message="已加入法规知识库")
 
 
-@router.delete("/{doc_id}", response_model=Response[dict], summary="删除法规文件(超管)")
-def delete_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(require_superuser)):
+@router.delete("/{doc_id}", response_model=Response[dict], summary="删除法规文件(业务经办/超管)")
+def delete_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles(Role.BUSINESS_HANDLER))):
     doc = db.get(KnowledgeDoc, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文件不存在")

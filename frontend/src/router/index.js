@@ -32,11 +32,11 @@ const routes = [
         path: 'operation',
         name: 'Operation',
         component: () => import('@/views/operation/index.vue'),
-        // 经营数据中心：风控/财务/负责人可查看
+        // 经营数据中心：业务经办/业务复核/财务/负责人/总经理可查看（法务风控、法律顾问不可见）
         meta: {
           title: '经营数据中心',
           icon: 'TrendCharts',
-          roles: [ROLES.RISK_AUDITOR, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
         }
       },
       {
@@ -44,7 +44,11 @@ const routes = [
         path: 'cultural-tourism',
         name: 'CulturalTourism',
         component: () => import('@/views/cultural-tourism/MainView.vue'),
-        meta: { title: '文旅业务', icon: 'Sunny', group: '渠道业务', groupIcon: 'Connection' }
+        // 渠道业务·文旅：业务经办/业务复核/财务经办/供管负责人/总经理可见（财务复核、法务风控、法律顾问不可见）
+        meta: {
+          title: '文旅业务', icon: 'Sunny', group: '渠道业务', groupIcon: 'Connection',
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ROLES.FINANCE_HANDLER, ...DIRECTOR_ROLES]
+        }
       },
       {
         // 景区详情页（DetailView，动态路由）：与 MainView 共用全局外壳，不进侧边菜单(无 title)
@@ -74,7 +78,7 @@ const routes = [
         meta: {
           title: '资金管理',
           icon: 'Coin',
-          roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES],
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES],
           group: '智慧财务',
           groupIcon: 'Wallet'
         }
@@ -87,7 +91,7 @@ const routes = [
         meta: {
           title: '发票管理',
           icon: 'Tickets',
-          roles: [...FINANCE_ROLES, ...DIRECTOR_ROLES],
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES],
           group: '智慧财务',
           groupIcon: 'Wallet'
         }
@@ -96,8 +100,11 @@ const routes = [
         path: 'contract',
         name: 'Contract',
         component: () => import('@/views/contract/index.vue'),
-        // 合同管理：归入「经营合规」一级菜单；全部角色可进入，页面内按角色控制操作
-        meta: { title: '合同管理', icon: 'Document', group: '经营合规', groupIcon: 'DocumentChecked' }
+        // 合同管理（经营合规）：业务经办/业务复核/法务风控/供管负责人/总经理/法律顾问可见（财务经办、财务复核不可见）
+        meta: {
+          title: '合同管理', icon: 'Document', group: '经营合规', groupIcon: 'DocumentChecked',
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ROLES.RISK_AUDITOR, ...DIRECTOR_ROLES, ROLES.LEGAL_COUNSEL]
+        }
       },
       {
         path: 'approval',

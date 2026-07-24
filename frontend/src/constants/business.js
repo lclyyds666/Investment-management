@@ -41,9 +41,9 @@ export const APPROVER_ROLES = APPROVAL_CHAIN.slice(1)
 export const DIRECTOR_ROLES = [ROLES.SCM_DIRECTOR, ROLES.INVEST_DIRECTOR]
 export const FINANCE_ROLES = [ROLES.FINANCE_HANDLER, ROLES.FINANCE_REVIEWER]
 
-// 法律顾问：仅可访问「合同管理」+「个人设置」（合同法律审批内嵌在合同管理页）；
-// 不再放行「业务审批」/approval —— 法律顾问不参与业务审批流程。
-export const LEGAL_COUNSEL_PATHS = ['/contract', '/profile']
+// 法律顾问：仅可访问「合同管理」+「客户档案库」+「个人设置」（合同法律审批内嵌在合同管理页）；
+// 不放行「业务审批」/approval —— 法律顾问不参与业务审批流程。
+export const LEGAL_COUNSEL_PATHS = ['/contract', '/customer', '/profile']
 
 // 合同/审批单类型
 export const CONTRACT_TYPES = {
