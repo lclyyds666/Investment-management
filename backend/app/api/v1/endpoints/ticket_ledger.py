@@ -23,8 +23,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
+from app.core.enums import Role
 from app.db.session import get_db
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
@@ -49,6 +50,9 @@ _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # 解析并发闸：小内存机(1.6GB)上，大文件解析(万行明细)峰值资源高。
 # 限制同一时刻只跑 1 个解析，重叠上传排队而非叠加 → 防 OOM 僵死。
 _PARSE_SEMAPHORE = asyncio.Semaphore(1)
+
+# 台账变更(上传/保存/编辑/删除)角色：业务经办 + 信息维护(超管始终放行)
+_edit_guard = require_roles(Role.BUSINESS_HANDLER)
 
 
 def _valid_scenic_id(scenic_id: str) -> str:
@@ -123,7 +127,7 @@ async def parse_files(
     scenic_id: str,
     files: list[UploadFile] = File(..., description="对账明细 Excel(.xlsx/.xls)，每次仅限 1 个"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     # 单期逻辑：每次上传只允许 1 个文件，1 文件即计为一期
@@ -231,7 +235,7 @@ def save_ledger(
     scenic_id: str,
     payload: TicketLedgerSaveIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
 
@@ -320,7 +324,7 @@ def update_row(
     row_id: int,
     payload: TicketLedgerUpdateIn,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(
@@ -401,7 +405,7 @@ def delete_row(
     scenic_id: str,
     row_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(
@@ -435,7 +439,7 @@ def delete_row(
 def clear_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     result = db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))

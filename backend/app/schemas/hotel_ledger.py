@@ -114,6 +114,8 @@ class HotelLedgerRow(BaseModel):
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
     order_count: int = 0
+    confirm_stored: str = ""
+    confirm_name: str = ""
     source_file: str = ""
     detail_stored: str = ""
     detail_name: str = ""

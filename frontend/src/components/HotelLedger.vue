@@ -7,7 +7,7 @@
         <el-tag size="small" effect="plain">{{ periodCount }} 期 · {{ savedRows.length }} 行</el-tag>
       </div>
       <div class="hl-ops">
-        <el-upload :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls" :on-change="onFileChange">
+        <el-upload v-if="canEdit" :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls" :on-change="onFileChange">
           <el-button type="primary" :icon="UploadFilled" :loading="parsing">上传对账明细</el-button>
         </el-upload>
         <el-button :icon="Refresh" @click="loadSaved">刷新</el-button>
@@ -75,6 +75,9 @@
 
     <!-- 已保存台账（按核对日期升序，隐藏付款金额，含本期合计行） -->
     <el-table :data="displayRows" border stripe size="small" class="saved-table" :row-class-name="rowClass">
+      <el-table-column label="景区ID" width="150" fixed="left">
+        <template #default="{ row }">{{ row.isTotal ? '' : scenicName }}</template>
+      </el-table-column>
       <el-table-column label="平台" width="90">
         <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isTotal ? '本期合计' : row.platform }}</span></template>
       </el-table-column>
@@ -107,9 +110,35 @@
       </el-table-column>
       <el-table-column label="操作" width="130" fixed="right">
         <template #default="{ row }">
-          <template v-if="!row.isTotal">
+          <template v-if="!row.isTotal && canEdit">
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
+          </template>
+        </template>
+      </el-table-column>
+      <!-- 状态：仅本期合计行有内容；确认函上传/查看/下载/删除仅业务复核+信息维护 -->
+      <el-table-column label="状态" width="250" fixed="right">
+        <template #default="{ row }">
+          <template v-if="row.isTotal">
+            <template v-if="row.confirm_stored">
+              <el-tag type="success" size="small" effect="plain">已确认</el-tag>
+              <template v-if="canConfirm">
+                <el-button size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
+                <el-button size="small" text @click="onConfirmDownload(row)">下载</el-button>
+                <el-button size="small" text type="danger" @click="onConfirmDelete(row)">删除</el-button>
+              </template>
+            </template>
+            <template v-else>
+              <el-tag type="info" size="small" effect="plain">未确认</el-tag>
+              <el-upload
+                v-if="canConfirm" :auto-upload="false" :show-file-list="false"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
+                :on-change="(f) => onConfirmPick(row, f)"
+                style="display:inline-block; margin-left:8px"
+              >
+                <el-button size="small" text type="primary">上传确认函</el-button>
+              </el-upload>
+            </template>
           </template>
         </template>
       </el-table-column>
@@ -177,11 +206,23 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Refresh, Download, House, EditPen, Check } from '@element-plus/icons-vue'
 import {
   parseHotelFile, getHotelLedger, saveHotelLedger,
-  updateHotelRow, deleteHotelRow, fetchHotelLedgerExportBlob
+  updateHotelRow, deleteHotelRow, fetchHotelLedgerExportBlob,
+  uploadHotelConfirm, deleteHotelConfirm, fetchHotelConfirmBlob
 } from '@/api/hotelLedger'
 import { downloadBlob } from '@/utils/file'
+import { getScenicById } from '@/constants/scenic'
+import { ROLES } from '@/constants/business'
+import { useUserStore } from '@/store/user'
 
 const props = defineProps({ scenicId: { type: String, required: true } })
+
+const userStore = useUserStore()
+// 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
+const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
+// 上传/编辑/删除台账：业务经办 + 信息维护(超管)
+const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
+// 确认函上传/查看/下载/删除：业务复核 + 信息维护(超管)
+const canConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
 const DEFAULT_RATE_HEXIAO = 0.9
 const DEFAULT_FEE_PER_NIGHT = 44
@@ -285,6 +326,10 @@ const displayRows = computed(() => {
     const rep = b.rows.find((r) => r.repay_amount != null)
     t.repay_amount = rep ? Number(rep.repay_amount) : null
     t.repay_date = (b.rows.find((r) => r.repay_date) || {}).repay_date || ''
+    // 本期确认函（同期共享）：任一行 id 作操作句柄
+    t.period_row_id = b.rows[0]?.id
+    t.confirm_stored = b.rows[0]?.confirm_stored || ''
+    t.confirm_name = b.rows[0]?.confirm_name || ''
     out.push(...b.rows, t)
   }
   return out
@@ -483,6 +528,51 @@ async function onExport() {
     downloadBlob(blob, `酒店平台业务台账-${props.scenicId}.xlsx`)
   } catch {
     ElMessage.error('导出失败')
+  }
+}
+
+// —— 本期确认函（业务复核/信息维护）——
+async function onConfirmPick(row, file) {
+  const raw = file?.raw
+  if (!raw) return
+  try {
+    await uploadHotelConfirm(props.scenicId, row.period_row_id, raw)
+    ElMessage.success('确认函已上传，本期状态：已确认')
+    await loadSaved()
+  } catch {
+    ElMessage.error('确认函上传失败')
+  }
+}
+async function onConfirmView(row) {
+  try {
+    const blob = await fetchHotelConfirmBlob(props.scenicId, row.confirm_stored, row.confirm_name)
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch {
+    ElMessage.error('查看失败')
+  }
+}
+async function onConfirmDownload(row) {
+  try {
+    const blob = await fetchHotelConfirmBlob(props.scenicId, row.confirm_stored, row.confirm_name)
+    downloadBlob(blob, row.confirm_name || '确认函')
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+async function onConfirmDelete(row) {
+  try {
+    await ElMessageBox.confirm('确定删除本期确认函吗？删除后本期状态变为「未确认」。', '删除确认', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
+    })
+  } catch { return }
+  try {
+    await deleteHotelConfirm(props.scenicId, row.period_row_id)
+    ElMessage.success('确认函已删除，本期状态：未确认')
+    await loadSaved()
+  } catch {
+    ElMessage.error('删除失败')
   }
 }
 

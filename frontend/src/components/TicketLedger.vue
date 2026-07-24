@@ -9,7 +9,7 @@
       </div>
       <div class="tl-ops">
         <el-upload
-          :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls"
+          v-if="canEdit" :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls"
           :on-change="onFileChange"
         >
           <el-button type="primary" :icon="UploadFilled" :loading="parsing">上传对账明细</el-button>
@@ -125,6 +125,9 @@
     <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库） -->
     <el-table :data="savedRows" border stripe size="small" class="saved-table" :show-summary="savedRows.length > 0" :summary-method="summary">
       <el-table-column type="index" label="#" width="46" align="center" />
+      <el-table-column label="景区ID" width="150" prop="platform">
+        <template #default>{{ scenicName }}</template>
+      </el-table-column>
       <el-table-column label="平台" width="80" prop="platform" />
       <el-table-column label="景区门票" min-width="160" prop="ticket_product" show-overflow-tooltip />
       <el-table-column label="核对日期" width="160" prop="check_date_text" />
@@ -147,8 +150,10 @@
       </el-table-column>
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
+          <template v-if="canEdit">
+            <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
+          </template>
         </template>
       </el-table-column>
       <template #empty>暂无台账，请上传对账明细并保存生成</template>
@@ -214,10 +219,19 @@ import {
   updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob
 } from '@/api/ticketLedger'
 import { downloadBlob } from '@/utils/file'
+import { getScenicById } from '@/constants/scenic'
+import { ROLES } from '@/constants/business'
+import { useUserStore } from '@/store/user'
 
 const props = defineProps({
   scenicId: { type: String, required: true }
 })
+
+const userStore = useUserStore()
+// 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
+const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
+// 上传/编辑/删除台账：业务经办 + 信息维护(超管)
+const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
 // 默认比例（核销率/结算费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
@@ -483,26 +497,25 @@ async function onExport() {
   }
 }
 
-// el-table 合计行（列序：# 平台 景区门票 核对日期 景区核销 景区待核销 结算金额 服务费 回款日期 回款金额 操作）
+// el-table 合计行（按列「标题」匹配，避免新增列导致下标错位）
 function summary({ columns, data }) {
-  const sums = []
-  const sumCols = { 4: 'hexiao_amount', 6: 'jinying_amount', 7: 'service_fee', 9: 'repay_amount' }
-  columns.forEach((col, idx) => {
-    if (idx === 0) { sums[idx] = '合计'; return }
+  const sumByLabel = {
+    景区核销金额: 'hexiao_amount', 结算金额: 'jinying_amount',
+    服务费: 'service_fee', 回款金额: 'repay_amount'
+  }
+  return columns.map((col, idx) => {
+    if (idx === 0) return '合计'
     // 景区待核销为滚动余额 → 取末期值
-    if (idx === 5) {
-      sums[idx] = data.length ? fmtMoney(data[data.length - 1].pending_writeoff) : ''
-      return
+    if (col.label === '景区待核销金额') {
+      return data.length ? fmtMoney(data[data.length - 1].pending_writeoff) : ''
     }
-    const key = sumCols[idx]
+    const key = sumByLabel[col.label]
     if (key) {
       const total = data.reduce((acc, r) => acc + (Number(r[key]) || 0), 0)
-      sums[idx] = fmtMoney(total)
-    } else {
-      sums[idx] = ''
+      return fmtMoney(total)
     }
+    return ''
   })
-  return sums
 }
 
 watch(() => props.scenicId, loadSaved, { immediate: true })

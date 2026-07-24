@@ -43,6 +43,33 @@ export async function fetchHotelLedgerExportBlob(scenicId) {
   return await resp.blob()
 }
 
+/** 上传本期确认函（业务复核/信息维护）——rowId 为本期任一行 id */
+export function uploadHotelConfirm(scenicId, rowId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return request.post(
+    `/scenic-spots/${encodeURIComponent(scenicId)}/hotel-ledger/${rowId}/confirm`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  )
+}
+
+/** 删除本期确认函（业务复核/信息维护） */
+export function deleteHotelConfirm(scenicId, rowId) {
+  return request.delete(`/scenic-spots/${encodeURIComponent(scenicId)}/hotel-ledger/${rowId}/confirm`)
+}
+
+/** 查看/下载本期确认函为 Blob（业务复核/信息维护） */
+export async function fetchHotelConfirmBlob(scenicId, stored, name = '') {
+  const q = new URLSearchParams({ stored, name }).toString()
+  const resp = await fetch(
+    `/api/v1/scenic-spots/${encodeURIComponent(scenicId)}/hotel-ledger/confirm?${q}`,
+    { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+  )
+  if (!resp.ok) throw new Error('确认函获取失败')
+  return await resp.blob()
+}
+
 /** 拉取对账明细源文件为 Blob（预览/下载） */
 export async function fetchHotelDetailBlob(scenicId, stored, name = '') {
   const q = new URLSearchParams({ stored, name }).toString()
