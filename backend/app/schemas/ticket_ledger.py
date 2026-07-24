@@ -20,6 +20,7 @@ class ParsedFile(BaseModel):
     def_hexiao: Decimal = Decimal("0")
     def_service_fee: Decimal = Decimal("0")
     def_jinying: Decimal = Decimal("0")
+    daily_json: str = ""                          # 逐日明细(供逐日重算)
     order_count: int = 0
     period_text: str = ""                        # 对账周期文本
     check_date_text: str = ""                    # 核对日期（=周期）
@@ -61,6 +62,7 @@ class TicketLedgerSaveRow(BaseModel):
     def_hexiao: Optional[Decimal] = None
     def_service_fee: Optional[Decimal] = None
     def_jinying: Optional[Decimal] = None
+    daily_json: str = ""                             # 逐日明细(透传持久化，供编辑逐日重算)
     order_count: int = 0
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None

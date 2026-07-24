@@ -247,20 +247,12 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
-        calc = tl_svc.compute_row(
+        # 逐日重算：有逐日明细则按天累加(核销/结算/服务费逐日舍入再相加)，否则回退期级公式
+        calc = tl_svc.recompute_from_json(
+            r.daily_json, r.rate_hexiao, r.rate_settle, r.supplier_commission
+        ) or tl_svc.compute_row(
             r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_settle
         )
-        # 未改佣金/费率时，采用「按日期粒度」算出的精准默认值；否则退回期级公式重算
-        use_daily = (
-            r.def_hexiao is not None
-            and r.rate_hexiao == tl_svc.DEFAULT_RATE_HEXIAO
-            and r.rate_settle == tl_svc.DEFAULT_RATE_SETTLE
-            and r.def_commission is not None
-            and abs((r.supplier_commission or Decimal("0")) - r.def_commission) < Decimal("0.005")
-        )
-        hexiao = r.def_hexiao if use_daily else calc["hexiao_amount"]
-        service_fee = r.def_service_fee if use_daily else calc["service_fee"]
-        default_jinying = r.def_jinying if use_daily else calc["jinying_amount"]
         db.add(TicketLedger(
             scenic_id=sid,                       # ← 铁律：作用域键来自路径
             row_no=base_no + i,
@@ -274,14 +266,14 @@ def save_ledger(
             supplier_received=r.supplier_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
             publisher_due=calc["publisher_due"],
-            hexiao_amount=hexiao,
+            hexiao_amount=calc["hexiao_amount"],
             payment_amount=r.payment_amount or Decimal("0"),
-            # 结算金额：优先用前端传入的可编辑值，否则用(按日/期级)默认值
-            jinying_amount=(r.jinying_amount if r.jinying_amount is not None else default_jinying),
-            service_fee=service_fee,
+            jinying_amount=calc["jinying_amount"],   # 结算金额=逐日累加(派生,不手工覆盖)
+            service_fee=calc["service_fee"],
             rate_hexiao=r.rate_hexiao,
             rate_settle=r.rate_settle,
             rate_fee=r.rate_fee,
+            daily_json=r.daily_json or "",
             order_count=r.order_count or 0,
             repay_date=r.repay_date,
             repay_amount=r.repay_amount,
@@ -357,17 +349,17 @@ def update_row(
     if payload.rate_fee is not None:
         row.rate_fee = payload.rate_fee
     if calc_dirty:
-        calc = tl_svc.compute_row(
+        # 逐日重算：改费率/佣金也按天累加(有逐日明细时)，否则回退期级公式
+        calc = tl_svc.recompute_from_json(
+            row.daily_json, row.rate_hexiao, row.rate_settle, row.supplier_commission
+        ) or tl_svc.compute_row(
             row.supplier_received, row.supplier_commission, row.rate_hexiao, row.rate_settle
         )
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]
         row.hexiao_amount = calc["hexiao_amount"]
-        row.jinying_amount = calc["jinying_amount"]   # 先按公式重算默认
+        row.jinying_amount = calc["jinying_amount"]   # 结算金额=逐日累加(派生,不手工覆盖)
         row.service_fee = calc["service_fee"]
-    # 结算金额可编辑：显式传入则覆盖公式默认
-    if payload.jinying_amount is not None:
-        row.jinying_amount = payload.jinying_amount
 
     # 付款金额变化，或核销金额变化 → 影响滚动余额，全景区重算
     balance_dirty = calc_dirty

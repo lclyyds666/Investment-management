@@ -18,6 +18,7 @@ class ParsedPlatform(BaseModel):
     def_hexiao: Decimal = Decimal("0")
     def_service_fee: Decimal = Decimal("0")
     def_jinying: Decimal = Decimal("0")
+    daily_json: str = ""                            # 逐日明细(供逐日重算)
     period_start: Optional[date] = None
     period_end: Optional[date] = None
     period_text: str = ""
@@ -53,6 +54,7 @@ class HotelSaveRow(BaseModel):
     def_hexiao: Optional[Decimal] = None
     def_service_fee: Optional[Decimal] = None
     def_jinying: Optional[Decimal] = None
+    daily_json: str = ""                            # 逐日明细(透传持久化，供编辑逐日重算)
     payment_amount: Decimal = Decimal("0")          # 付款金额(隐藏,参与递推)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None

@@ -120,9 +120,16 @@
 4. **酒店「景区待核销」整期滚动**(原按平台各自滚动):本期待核销 = 上期 + 本期共享付款 − 本期各平台核销合计;`_recompute_running_balance` 按期分组滚动,同期各行存同值;前端仅在**本期合计行**显示待核销/回款,平台行留空。⚠️ 存量酒店台账升级后建议**重新保存一次**回填(口径变了)。
 5. 迁移 `20260726_ledger_settle_rate.sql`(幂等):ticket 加 `rate_settle`、hotel 加 `fee_algo/rate_settle`;ADD COLUMN DEFAULT 已使存量行=0.94(=旧默认),无需回填。
 
+## 台账逐日累加贯穿编辑(2026-07-27b)
+- **口径**:核销/结算/服务费一律「逐日算→逐日舍入到分→累加」。不仅解析(parse)时,**编辑台账行改费率/佣金/算法后也按天重算**(不再退回「出版应得总额×费率」)。
+- **实现**:持久化逐日明细列 `daily_json`(门票+酒店,存每天到账/实收/达人/团长/毛额/间夜),`services/*_ledger.py::serialize_daily / recompute_from_days / recompute_from_json`;save/update 全部走 `recompute_from_json`(无明细回退 `compute_row` 期级)。迁移 `20260727_ledger_daily.sql`(幂等)。
+- **结算金额改为派生只读**(不再手工可改):算法1=核销+服务费;门票/算法2=结算基数×结算费率。修复「改服务商佣金→核销变而结算不变、≠核销+服务费」的 bug。前端草稿/编辑弹窗结算金额均只读展示(编辑弹窗为 JS 预览,保存后 reload 显示后端逐日精确值)。
+- **佣金手工改**:逐日自动佣金=实收×6%−达人−团长;手工改总额时按**各天订单实收占比**分摊差额到各天(未改动则结果不变)。美团/携程无佣金层。
+- ⚠️ 存量台账行 `daily_json` 为空 → 编辑时回退期级重算;需精确逐日的存量期**重新上传/保存一次**回填逐日明细。
+
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)、`20260726_ledger_settle_rate.sql`(门票/酒店台账结算费率 rate_settle + 酒店服务费算法 fee_algo,幂等)。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)、`20260726_ledger_settle_rate.sql`(门票/酒店台账结算费率 rate_settle + 酒店服务费算法 fee_algo,幂等)、`20260727_ledger_daily.sql`(门票/酒店台账逐日明细 daily_json,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

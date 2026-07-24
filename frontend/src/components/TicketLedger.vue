@@ -93,12 +93,9 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="结算金额（默认可改）" width="160" align="right">
+        <el-table-column label="结算金额（自动）" width="140" align="right">
           <template #default="{ row }">
-            <el-input-number
-              v-model="row.jinying_amount" :min="0" :precision="2" :step="1000"
-              size="small" controls-position="right" style="width: 140px"
-            />
+            <span class="calc">{{ fmtMoney(rowJinying(row)) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="服务费" width="120" align="right">
@@ -182,8 +179,8 @@
           <span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="结算金额">
-          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
-          <div class="edit-hint">默认 = 出版应得 × 结算费率；服务费 = 结算金额 − 景区核销（可手工修改结算金额）</div>
+          <el-input :model-value="fmtMoney(editJinying)" disabled style="width: 100%" />
+          <div class="edit-hint">结算金额 = 出版应得 × 结算费率（自动，保存后按逐日累加）；服务费 = 结算金额 − 景区核销</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
@@ -246,9 +243,13 @@ function isDefaultComm(row) {
 function rowHexiao(row) {
   return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(draftPublisherDue(row))
 }
+// 结算金额（派生，只读）：佣金未改用后端「逐日累加」默认值，改了用 JS 期级预览(保存后按逐日重算)
+function rowJinying(row) {
+  return isDefaultComm(row) ? (Number(row.def_jinying) || 0) : calcJinying(draftPublisherDue(row))
+}
+// 服务费 = 结算金额 − 景区核销金额（派生）
 function rowFee(row) {
-  // 服务费 = 结算金额 − 景区核销金额（结算金额可在草稿手工改）
-  return round2((Number(row.jinying_amount) || 0) - rowHexiao(row))
+  return round2(rowJinying(row) - rowHexiao(row))
 }
 
 // 已保存台账末期滚动余额（新一期递推起点）
@@ -313,7 +314,9 @@ async function onFileChange(file) {
       def_hexiao: Number(f.def_hexiao) || 0,
       def_service_fee: Number(f.def_service_fee) || 0,
       def_jinying: Number(f.def_jinying) || 0,
-      // 结算金额默认 = 按日累加的精准值，可手工改
+      // 逐日明细透传持久化（编辑改费率/佣金时后端按天重算）
+      daily_json: f.daily_json || '',
+      // 结算金额派生（只读展示 rowJinying），此处仅留占位
       jinying_amount: Number(f.def_jinying) || 0,
       payment_amount: 0,
       order_count: f.order_count,
@@ -346,7 +349,7 @@ async function onSave() {
     payment_amount: r.payment_amount || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO,
     rate_settle: DEFAULT_RATE_SETTLE,
-    jinying_amount: r.jinying_amount,
+    daily_json: r.daily_json,
     def_commission: r.def_commission,
     def_hexiao: r.def_hexiao,
     def_service_fee: r.def_service_fee,
@@ -386,6 +389,8 @@ const editPublisherDue = computed(() => {
   if (!editRow.value) return 0
   return round2((Number(editRow.value.supplier_received) || 0) - (Number(editForm.supplier_commission) || 0))
 })
+// 结算金额（派生只读预览）= 出版应得 × 结算费率；保存后由后端按逐日累加得精确值
+const editJinying = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctSettle) || 0) / 100))
 
 function openEdit(row) {
   editRow.value = row
@@ -411,7 +416,6 @@ async function onSaveEdit() {
       supplier_commission: editForm.supplier_commission,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
       rate_settle: round2(Number(editForm.ratePctSettle) / 100),
-      jinying_amount: editForm.jinying_amount,
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount

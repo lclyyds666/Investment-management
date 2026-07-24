@@ -7,7 +7,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Date, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -77,6 +77,9 @@ class TicketLedger(Base):
     repay_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(18, 2), nullable=True, comment="回款金额(手工)"
     )
+
+    # 逐日明细(JSON)：每天聚合后的到账/实收/达人/团长，供编辑改费率/佣金时逐日重算累加
+    daily_json: Mapped[str] = mapped_column(Text, nullable=True, comment="逐日明细JSON(供逐日重算)")
 
     source_file: Mapped[str] = mapped_column(String(255), default="", comment="来源Excel文件名")
     # 明细源文件落盘(供预览/下载)：detail_stored=磁盘uuid文件名, detail_name=原始文件名

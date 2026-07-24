@@ -66,6 +66,7 @@
 | 2026-07-25 | **前端体验优化 · 通用列表组件 `ProTable`**(配置化列 + 关键词搜索 + 客户端分页 + **首屏骨架屏** + **加载失败重试态** + 空态 + `#prepend` 父控筛选插槽,`defineExpose(reload)`);铺开 3 页:`invoice`(统计卡 `:xs/:sm` 响应式 + 税号校验)、`customer`(社会信用代码/电话格式校验)、`users`(保留服务端角色/状态筛选 + 补分页/骨架/空态、成功提示文案统一);contract/approval 待评估(多表/多 Tab,拟接服务端分页) | 生产 ✅ |
 | 2026-07-26 | 文旅新增景区**鹳雀楼**(对齐南阳野生动物世界端口/功能 + 真实封面图);角色 `invest_director` 显示名「投资公司分管领导」→**「投资公司总经理」**(值不变);台账更名(**门票平台核销台账→景区门票核销台账**、**景区平台/酒店平台核销台账→景区酒店核销台账**);景区酒店核销台账**隐藏「间夜」列**(DB 字段 room_nights 留存,仍参与服务费计算/编辑);编辑台账行「结算基数原值」→**「服务商到账」** | 生产 ✅ |
 | 2026-07-27 | 台账算法重构:①门票**结算金额=出版应得×结算费率(默认94%)、服务费=结算−核销**,编辑行「服务费率」→**「结算费率」**(可编辑);②酒店**双算法**(编辑台账行单选:算法1=间夜×每间夜服务费(现有)/算法2=结算基数×结算费率、服务费=结算−核销,与门票编辑一致);③酒店**付款金额/回款日期/回款金额每期各平台共享**,「景区待核销」改**整期滚动**(每期一个余额,显示于本期合计行);新增列 `biz_ticket_ledger.rate_settle`、`biz_hotel_ledger.fee_algo/rate_settle`(迁移 `20260726_ledger_settle_rate.sql`,幂等) | 生产 ✅ |
+| 2026-07-27b | 台账**逐日累加**贯穿始终:核销/结算/服务费一律「逐日算、逐日舍入、再累加」——不仅解析时,**编辑改费率/佣金/算法后也按天重算**(不再退回总额×费率)。为此持久化逐日明细 `daily_json`(门票+酒店,迁移 `20260727_ledger_daily.sql`)。**结算金额改为派生只读**(算法1=核销+服务费、门票/算法2=基数×结算费率),修复「改佣金→核销变而结算不变」bug。手工改佣金总额时按各天订单实收占比分摊差额 | 生产 ✅ |
 
 ---
 
@@ -214,6 +215,7 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260722_ticket_ledger_recu
 mysql -u root -p sd_publish_scm < backend/migrations/20260723_audit_log.sql             # 操作审计日志表 sys_audit_log
 mysql -u root -p sd_publish_scm < backend/migrations/20260724_hotel_ledger.sql          # 景区酒店平台核销台账 biz_hotel_ledger
 mysql -u root -p sd_publish_scm < backend/migrations/20260726_ledger_settle_rate.sql    # 台账结算费率 rate_settle + 酒店服务费算法 fee_algo
+mysql -u root -p sd_publish_scm < backend/migrations/20260727_ledger_daily.sql          # 台账逐日明细 daily_json(供编辑逐日重算)
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。

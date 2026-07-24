@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -222,6 +223,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
         "def_hexiao": defs["hexiao"],
         "def_service_fee": defs["service_fee"],
         "def_jinying": defs["jinying"],
+        "daily_json": serialize_daily(daily),
         "order_count": order_count,
         "period_start": p_start,
         "period_end": p_end,
@@ -231,27 +233,102 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# 逐日明细：序列化持久化 + 逐日重算（编辑改费率/佣金时仍按天累加，不退回总额×费率）
+# --------------------------------------------------------------------------- #
+def _days_from_daily(daily: dict[str, dict]) -> list[dict]:
+    """按日聚合 dict → 逐日列表（Decimal）。"""
+    return [{
+        "recv": dd["received"], "shishou": dd["shishou"],
+        "daren": dd["daren"], "tuanzhang": dd["tuanzhang"],
+    } for dd in daily.values()]
+
+
+def serialize_daily(daily: dict[str, dict]) -> str:
+    """逐日明细序列化为 JSON（Decimal→字符串），随台账行持久化，供编辑时逐日重算。"""
+    out = [{
+        "r": str(dd["received"]), "s": str(dd["shishou"]),
+        "d": str(dd["daren"]), "t": str(dd["tuanzhang"]),
+    } for dd in daily.values()]
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _days_from_json(daily_json: str) -> list[dict]:
+    if not daily_json:
+        return []
+    try:
+        raw = json.loads(daily_json)
+    except (ValueError, TypeError):
+        return []
+    days = []
+    for d in raw:
+        days.append({
+            "recv": _num(d.get("r")) or Decimal("0"),
+            "shishou": _num(d.get("s")) or Decimal("0"),
+            "daren": _num(d.get("d")) or Decimal("0"),
+            "tuanzhang": _num(d.get("t")) or Decimal("0"),
+        })
+    return days
+
+
+def _distribute_commission(days: list[dict], commission_override) -> tuple[list, Decimal]:
+    """逐日自动佣金 = 实收×6%−达人−团长；若传入总额 override 且≠自动总额，
+    则把差额按各天订单实收占比分摊到各天（微调场景，未改动时结果不变）。"""
+    comm_auto = [_q(d["shishou"] * DEFAULT_COMMISSION_RATE + d["daren"] + d["tuanzhang"]) for d in days]
+    c0 = _q(sum(comm_auto, Decimal("0")))
+    if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
+        return comm_auto, c0
+    delta = commission_override - c0
+    s_total = sum((d["shishou"] for d in days), Decimal("0"))
+    n = len(days) or 1
+    comm_day = []
+    for i, d in enumerate(days):
+        share = (d["shishou"] / s_total) if s_total > 0 else (Decimal("1") / n)
+        comm_day.append(_q(comm_auto[i] + delta * share))
+    return comm_day, _q(commission_override)
+
+
+def recompute_from_days(days: list[dict],
+                        rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                        rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                        commission_override=None) -> dict | None:
+    """门票逐日重算并累加（逐日舍入到分）：出版应得B_day=到账−佣金；
+    核销=B_day×核销率、结算=B_day×结算费率、服务费=结算−核销，各自逐日累加。"""
+    if not days:
+        return None
+    comm_day, c_total = _distribute_commission(days, commission_override)
+    hexiao = jinying = pub = Decimal("0")
+    for i, d in enumerate(days):
+        b = d["recv"] - comm_day[i]
+        pub += b
+        hexiao += _q(b * rate_hexiao)
+        jinying += _q(b * rate_settle)
+    return {
+        "supplier_commission": _q(c_total),
+        "publisher_due": _q(pub),
+        "hexiao_amount": _q(hexiao),
+        "service_fee": _q(jinying - hexiao),
+        "jinying_amount": _q(jinying),
+    }
+
+
+def recompute_from_json(daily_json: str,
+                        rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                        rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                        commission_override=None) -> dict | None:
+    return recompute_from_days(_days_from_json(daily_json), rate_hexiao, rate_settle, commission_override)
+
+
 def daily_defaults(daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
                    rate_settle: Decimal = DEFAULT_RATE_SETTLE) -> dict:
-    """按日逐日计算（含逐日舍入到分）再累加：
-       当日佣金=订单实收×6%−达人−团长；当日出版应得=到账−佣金；
-       当日核销=出版应得×核销率；当日结算=出版应得×结算费率；当日服务费=结算−核销。"""
-    commission = hexiao = service_fee = jinying = Decimal("0")
-    for dd in daily.values():
-        comm_day = _q(dd["shishou"] * DEFAULT_COMMISSION_RATE + dd["daren"] + dd["tuanzhang"])
-        b_day = dd["received"] - comm_day
-        hx = _q(b_day * rate_hexiao)
-        jy = _q(b_day * rate_settle)
-        fe = _q(jy - hx)
-        commission += comm_day
-        hexiao += hx
-        service_fee += fe
-        jinying += jy
-    return {
-        "commission": _q(commission), "hexiao": _q(hexiao),
-        "service_fee": _q(service_fee), "jinying": _q(jinying),
-    }
+    """解析时的按日精准默认值（佣金取逐日自动值）。"""
+    res = recompute_from_days(_days_from_daily(daily), rate_hexiao, rate_settle, None)
+    if res is None:
+        return {"commission": Decimal("0"), "hexiao": Decimal("0"),
+                "service_fee": Decimal("0"), "jinying": Decimal("0")}
+    return {"commission": res["supplier_commission"], "hexiao": res["hexiao_amount"],
+            "service_fee": res["service_fee"], "jinying": res["jinying_amount"]}
 
 
 def compute_row(

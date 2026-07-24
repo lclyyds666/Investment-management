@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -168,28 +169,120 @@ def _new_day() -> dict:
             "daren": Decimal("0"), "tuanzhang": Decimal("0"), "nights": 0}
 
 
+# --------------------------------------------------------------------------- #
+# 逐日明细：序列化持久化 + 逐日重算（编辑改费率/佣金/算法时仍按天累加）
+# --------------------------------------------------------------------------- #
+def _days_from_daily(daily: dict[str, dict]) -> list[dict]:
+    return [{
+        "recv": dd["recv"], "base": dd["base"], "shishou": dd["shishou"],
+        "daren": dd["daren"], "tuanzhang": dd["tuanzhang"], "nights": int(dd["nights"] or 0),
+    } for dd in daily.values()]
+
+
+def serialize_daily(daily: dict[str, dict]) -> str:
+    out = [{
+        "r": str(dd["recv"]), "b": str(dd["base"]), "s": str(dd["shishou"]),
+        "d": str(dd["daren"]), "t": str(dd["tuanzhang"]), "n": int(dd["nights"] or 0),
+    } for dd in daily.values()]
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _days_from_json(daily_json: str) -> list[dict]:
+    if not daily_json:
+        return []
+    try:
+        raw = json.loads(daily_json)
+    except (ValueError, TypeError):
+        return []
+    days = []
+    for d in raw:
+        days.append({
+            "recv": _num(d.get("r")) or Decimal("0"),
+            "base": _num(d.get("b")) or Decimal("0"),
+            "shishou": _num(d.get("s")) or Decimal("0"),
+            "daren": _num(d.get("d")) or Decimal("0"),
+            "tuanzhang": _num(d.get("t")) or Decimal("0"),
+            "nights": int(d.get("n") or 0),
+        })
+    return days
+
+
+def recompute_from_days(platform: str, days: list[dict],
+                        rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                        rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                        fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
+                        fee_algo: int = 1,
+                        commission_override=None) -> dict | None:
+    """酒店逐日重算并累加（逐日舍入到分）。结算基数=到账/毛额−佣金；核销=基数×核销率；
+    算法1：服务费=间夜×每间夜服务费、结算=核销+服务费；算法2：结算=基数×结算费率、服务费=结算−核销。
+    佣金（仅抖音）默认逐日自动=实收×6%−达人−团长；改总额时按各天实收占比分摊差额。"""
+    if not days:
+        return None
+    is_dy = platform == "抖音"
+    if is_dy:
+        comm_auto = [_q(d["shishou"] * DEFAULT_COMMISSION_RATE + d["daren"] + d["tuanzhang"]) for d in days]
+        c0 = _q(sum(comm_auto, Decimal("0")))
+        if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
+            comm_day, c_total = comm_auto, c0
+        else:
+            delta = commission_override - c0
+            s_total = sum((d["shishou"] for d in days), Decimal("0"))
+            n = len(days) or 1
+            comm_day = []
+            for i, d in enumerate(days):
+                share = (d["shishou"] / s_total) if s_total > 0 else (Decimal("1") / n)
+                comm_day.append(_q(comm_auto[i] + delta * share))
+            c_total = _q(commission_override)
+    else:
+        comm_day = [Decimal("0")] * len(days)
+        c_total = Decimal("0")
+
+    algo2 = int(fee_algo or 1) == 2
+    hexiao = jinying = fee_sum = sbase = Decimal("0")
+    for i, d in enumerate(days):
+        raw_base = d["recv"] if is_dy else d["base"]
+        b = raw_base - comm_day[i]
+        sbase += b
+        hx = _q(b * rate_hexiao)
+        if algo2:
+            jy = _q(b * (rate_settle or Decimal("0")))
+            fe = _q(jy - hx)
+        else:
+            fe = _q(Decimal(int(d["nights"] or 0)) * (fee_per_night or Decimal("0")))
+            jy = _q(hx + fe)
+        hexiao += hx
+        jinying += jy
+        fee_sum += fe
+    return {
+        "supplier_commission": _q(c_total),
+        "settle_base": _q(sbase),
+        "hexiao_amount": _q(hexiao),
+        "service_fee": _q(fee_sum),
+        "jinying_amount": _q(jinying),
+    }
+
+
+def recompute_from_json(platform: str, daily_json: str,
+                        rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                        rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                        fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
+                        fee_algo: int = 1,
+                        commission_override=None) -> dict | None:
+    return recompute_from_days(platform, _days_from_json(daily_json), rate_hexiao,
+                               rate_settle, fee_per_night, fee_algo, commission_override)
+
+
 def daily_defaults(platform: str, daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
                    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT) -> dict:
-    """核心：**按日期粒度**逐日计算并逐日舍入到分，再累加为期合计（避免全量汇总后一次舍入的误差）。"""
-    commission = hexiao = service_fee = jinying = Decimal("0")
-    for dd in daily.values():
-        if platform == "抖音":
-            comm_day = _q(dd["shishou"] * DEFAULT_COMMISSION_RATE + dd["daren"] + dd["tuanzhang"])
-            base_day = dd["recv"] - comm_day          # 出版应得(当日)
-        else:
-            comm_day = Decimal("0")
-            base_day = dd["base"]                     # 平台结算毛额(当日)
-        hx = _q(base_day * rate_hexiao)               # 当日核销(舍入到分)
-        fee = _q(Decimal(int(dd["nights"] or 0)) * fee_per_night)  # 当日服务费
-        commission += comm_day
-        hexiao += hx
-        service_fee += fee
-        jinying += _q(hx + fee)                        # 当日结算(舍入到分)
-    return {
-        "commission": _q(commission), "hexiao": _q(hexiao),
-        "service_fee": _q(service_fee), "jinying": _q(jinying),
-    }
+    """解析时的按日精准默认值（算法1；佣金取逐日自动值）。"""
+    res = recompute_from_days(platform, _days_from_daily(daily), rate_hexiao,
+                              DEFAULT_RATE_SETTLE, fee_per_night, 1, None)
+    if res is None:
+        return {"commission": Decimal("0"), "hexiao": Decimal("0"),
+                "service_fee": Decimal("0"), "jinying": Decimal("0")}
+    return {"commission": res["supplier_commission"], "hexiao": res["hexiao_amount"],
+            "service_fee": res["service_fee"], "jinying": res["jinying_amount"]}
 
 
 def parse_hotel_file(content: bytes, filename: str = "") -> dict:
@@ -305,6 +398,7 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             "def_hexiao": defs["hexiao"],
             "def_service_fee": defs["service_fee"],
             "def_jinying": defs["jinying"],
+            "daily_json": serialize_daily(d["daily"]),
             "period_start": d["pstart"],
             "period_end": d["pend"],
             "period_text": p_text,

@@ -57,10 +57,8 @@
         <el-table-column label="付款金额（本期共享）" width="150" align="right">
           <template #default="{ row }"><el-input-number v-model="row.payment_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" @change="syncPayment(row.payment_amount)" /></template>
         </el-table-column>
-        <el-table-column label="结算金额（默认可改）" width="160" align="right">
-          <template #default="{ row }">
-            <el-input-number v-model="row.jinying_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:140px" />
-          </template>
+        <el-table-column label="结算金额（自动）" width="140" align="right">
+          <template #default="{ row }"><span class="calc">{{ fmtMoney(rowJinying(row)) }}</span></template>
         </el-table-column>
         <el-table-column label="服务费" width="110" align="right">
           <template #default="{ row }"><span class="calc">{{ fmtMoney(calcFee(row)) }}</span></template>
@@ -152,8 +150,8 @@
           <el-input-number v-model="editForm.ratePctSettle" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="结算金额">
-          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
-          <div class="edit-hint">{{ editForm.fee_algo === 2 ? '默认 = 结算基数 × 结算费率；服务费 = 结算金额 − 景区核销' : '默认 = 景区核销 + 服务费（服务费 = 间夜 × 每间夜服务费）' }}（可手工改结算金额）</div>
+          <el-input :model-value="fmtMoney(editJinying)" disabled style="width:100%" />
+          <div class="edit-hint">{{ editForm.fee_algo === 2 ? '结算金额 = 结算基数 × 结算费率；服务费 = 结算金额 − 景区核销' : '结算金额 = 景区核销 + 服务费（间夜 × 每间夜服务费）' }}（自动，保存后按逐日累加）</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
@@ -209,6 +207,8 @@ function isDefaultComm(row) {
   return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
 }
 function rowHexiao(row) { return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(row) }
+// 结算金额（派生，只读；草稿=算法1）：佣金未改用后端逐日默认值，改了用 JS 预览
+function rowJinying(row) { return isDefaultComm(row) ? (Number(row.def_jinying) || 0) : calcJinying(row) }
 
 // 上一期末待核销（整期滚动起点）：savedRows 按 period_start 升序 → 末行所属期的 pending（同期同值）
 const lastPeriodPending = computed(() => {
@@ -321,7 +321,9 @@ async function onFileChange(file) {
       def_hexiao: Number(p.def_hexiao) || 0,
       def_service_fee: Number(p.def_service_fee) || 0,
       def_jinying: Number(p.def_jinying) || 0,
-      // 结算金额默认 = 按日累加精准值，可手工改
+      // 逐日明细透传持久化（编辑改费率/佣金/算法时后端按天重算）
+      daily_json: p.daily_json || '',
+      // 结算金额派生（只读展示 rowJinying），此处仅留占位
       jinying_amount: Number(p.def_jinying) || 0,
       payment_amount: 0,
       repay_date: null,
@@ -348,7 +350,7 @@ async function onSave() {
     room_nights: r.room_nights, base_received: r.base_received,
     supplier_commission: r.supplier_commission || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO, fee_per_night: DEFAULT_FEE_PER_NIGHT,
-    jinying_amount: r.jinying_amount,
+    daily_json: r.daily_json,
     def_commission: r.def_commission,
     def_hexiao: r.def_hexiao,
     def_service_fee: r.def_service_fee,
@@ -380,6 +382,20 @@ const editForm = reactive({
   ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
   jinying_amount: 0, payment_amount: 0, repay_date: null, repay_amount: null
 })
+// 编辑弹窗：结算基数/核销/结算金额（派生只读预览；保存后由后端按逐日累加得精确值）
+const editSettleBase = computed(() => {
+  if (!editRow.value) return 0
+  const comm = editRow.value.platform === '抖音' ? (Number(editForm.supplier_commission) || 0) : 0
+  return round2((Number(editRow.value.base_received) || 0) - comm)
+})
+const editHexiao = computed(() => round2(editSettleBase.value * (Number(editForm.ratePctHexiao) || 0) / 100))
+const editJinying = computed(() => {
+  if (Number(editForm.fee_algo) === 2) {
+    return round2(editSettleBase.value * (Number(editForm.ratePctSettle) || 0) / 100)
+  }
+  const fee = round2((Number(editForm.room_nights) || 0) * (Number(editForm.fee_per_night) || 0))
+  return round2(editHexiao.value + fee)
+})
 function openEdit(row) {
   editRow.value = row
   editForm.hotel_name = row.hotel_name
@@ -407,7 +423,6 @@ async function onSaveEdit() {
       fee_algo: editForm.fee_algo,
       fee_per_night: editForm.fee_per_night,
       rate_settle: round2(Number(editForm.ratePctSettle) / 100),
-      jinying_amount: editForm.jinying_amount,
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
