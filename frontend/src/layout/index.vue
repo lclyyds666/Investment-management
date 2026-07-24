@@ -104,9 +104,9 @@ const menus = computed(() => {
   const isLegalCounsel = !userStore.isSuperuser && userStore.role === ROLES.LEGAL_COUNSEL
   const visible = (root?.children || [])
     .filter((c) => c.meta?.title)
-    .filter((c) => userStore.hasRole(c.meta.roles))
-    .filter((c) => !c.meta.requiresSuperuser || userStore.isSuperuser)
-    // 法律顾问只保留「合同管理 / 审批中心」两个入口
+    // 除法律顾问外，导航展示全部菜单项（仅可见）：用户管理/操作日志等敏感页的实际访问
+    // 仍由路由守卫 permission.js 按 requiresSuperuser/roles 拦截，操作权限不变。
+    // 法律顾问仍只保留其允许入口（合同管理/审批中心/个人设置）。
     .filter((c) => !isLegalCounsel || LEGAL_COUNSEL_PATHS.includes('/' + c.path))
 
   const result = []

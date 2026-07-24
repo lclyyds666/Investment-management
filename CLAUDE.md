@@ -142,6 +142,8 @@
 - **发票管理**:删除左上「发票总数」卡(`views/invoice/index.vue`,余 3 卡改 `:md=8`)。
 - **操作审计→操作日志**:改名(`router/index.js` meta.title、`views/system/audit.vue` 标题/导出名);路由/权限不变(仍 requiresSuperuser)。
 - **客户档案库 新建/编辑/删除**:仅业务经办+信息维护(超管)。`endpoints/customer.py` `WRITE_ROLES=(Role.BUSINESS_HANDLER,)`;前端 `views/customer/index.vue` 按 `canEdit` 隐藏新建/编辑/删除按钮。
+- **导航可见性**(`layout/index.vue` menus):除法律顾问外,所有角色**导航展示全部菜单项**(去掉菜单里的 roles/requiresSuperuser 过滤,仅保留法律顾问入口限制)。敏感页(用户管理/操作日志等)的**实际访问仍由 `permission.js` 路由守卫按 requiresSuperuser/roles 拦截**(点了会被拦回),操作权限不变。法律顾问仍只保留 `LEGAL_COUNSEL_PATHS`(合同管理/审批中心/个人设置)。
+- **清空经营数据中心(一次性运维,2026-07-30)**:按需求清空 5 张表 `biz_project_metrics/biz_financial_metrics/biz_finance_config/biz_channel_data/biz_operation_data`(渠道定义 `biz_channel` 保留)。**执行前已 mysqldump 备份**至 `/opt/sd-scm/backups/econ_center_<ts>.sql`,需恢复直接 `mysql sd_publish_scm < 该文件`。
 
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
