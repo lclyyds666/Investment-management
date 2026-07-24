@@ -54,8 +54,14 @@ _PARSE_SEMAPHORE = asyncio.Semaphore(1)
 
 # 台账变更(上传/保存/编辑/删除)角色：业务经办 + 信息维护(超管始终放行)
 _edit_guard = require_roles(Role.BUSINESS_HANDLER)
-# 确认函(上传/查看/下载/删除)角色：业务复核 + 信息维护(超管始终放行)
+# 确认函「确认」动作角色：业务复核 + 信息维护(超管)
 _confirm_guard = require_roles(Role.BUSINESS_REVIEWER)
+# 台账明细/确认函「查看下载」角色：业务经办/业务复核/财务经办/供管负责人/投资总经理 + 超管
+# (法务风控、财务复核、法律顾问不可下载台账类资料)
+_download_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
+    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
+)
 _CONFIRM_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".xls", ".xlsx"}
 _CONFIRM_MAX_BYTES = 20 * 1024 * 1024
 
@@ -515,7 +521,7 @@ def download_detail(
     stored: str,
     name: str = "",
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_download_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     # 路径安全：只取 basename，杜绝 ../ 越权访问其它目录
@@ -539,12 +545,12 @@ def download_detail(
 @router.post(
     "/{scenic_id}/ticket-ledger/{row_id}/confirm",
     response_model=Response[TicketLedgerRow],
-    summary="上传本期确认函(仅业务复核/信息维护)",
+    summary="上传本期确认函(业务经办/信息维护)→待确认",
 )
 async def upload_confirm(
     scenic_id: str, row_id: int,
     file: UploadFile = File(..., description="确认函(PDF/图片/Word/Excel)"),
-    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+    db: Session = Depends(get_db), _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
@@ -572,6 +578,7 @@ async def upload_confirm(
         if _period_key(sib) == key:
             sib.confirm_stored = stored
             sib.confirm_name = fname
+            sib.confirmed = False   # 新上传/重传 → 待确认，需业务复核重新确认
     if old_stored and old_stored != stored:
         try:
             old = d / Path(old_stored).name
@@ -581,13 +588,37 @@ async def upload_confirm(
             pass
     db.commit()
     db.refresh(row)
-    return Response.ok(_row_out(row), message="确认函已上传，本期状态：已确认")
+    return Response.ok(_row_out(row), message="确认函已上传，本期状态：待确认")
 
 
-@router.get("/{scenic_id}/ticket-ledger/confirm", summary="查看/下载本期确认函(仅业务复核/信息维护)")
+@router.post(
+    "/{scenic_id}/ticket-ledger/{row_id}/confirm/approve",
+    response_model=Response[TicketLedgerRow],
+    summary="确认本期确认函(仅业务复核/信息维护)→已确认",
+)
+def approve_confirm(
+    scenic_id: str, row_id: int,
+    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
+    if not row:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
+    if not row.confirm_stored:
+        raise HTTPException(status_code=400, detail="本期尚未上传确认函，无法确认")
+    key = _period_key(row)
+    for sib in _load_rows(db, sid):
+        if _period_key(sib) == key:
+            sib.confirmed = True
+    db.commit()
+    db.refresh(row)
+    return Response.ok(_row_out(row), message="本期状态：已确认")
+
+
+@router.get("/{scenic_id}/ticket-ledger/confirm", summary="查看/下载本期确认函(台账下载角色)")
 def download_confirm(
     scenic_id: str, stored: str, name: str = "",
-    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+    db: Session = Depends(get_db), _: User = Depends(_download_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     safe = Path(stored or "").name
@@ -603,11 +634,11 @@ def download_confirm(
 @router.delete(
     "/{scenic_id}/ticket-ledger/{row_id}/confirm",
     response_model=Response[dict],
-    summary="删除本期确认函(仅业务复核/信息维护)",
+    summary="删除本期确认函(业务经办/信息维护)→未确认",
 )
 def delete_confirm(
     scenic_id: str, row_id: int,
-    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+    db: Session = Depends(get_db), _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
@@ -619,6 +650,7 @@ def delete_confirm(
         if _period_key(sib) == key:
             sib.confirm_stored = ""
             sib.confirm_name = ""
+            sib.confirmed = False
     if stored:
         try:
             fp = _confirm_dir(sid) / Path(stored).name

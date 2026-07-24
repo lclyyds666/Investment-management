@@ -420,11 +420,18 @@ async def upload_attachment(
     return Response.ok(_to_out(form, names.get(form.created_by, "")), message="附件上传成功")
 
 
-@router.get("/{form_id}/attachment", summary="下载审批单合同附件原件")
+# 业务审批单附件/打印 下载角色：全部非法律顾问 + 超管
+_approval_dl_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
+    Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
+)
+
+
+@router.get("/{form_id}/attachment", summary="下载审批单合同附件原件(非法律顾问)")
 def download_attachment(
     form_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_approval_dl_guard),
 ):
     form = _get_form_or_404(db, form_id)
     if not form.attachment_stored:
@@ -438,11 +445,11 @@ def download_attachment(
 # --------------------------------------------------------------------------- #
 # 打印导出（填充原始 xlsx 模板）
 # --------------------------------------------------------------------------- #
-@router.get("/{form_id}/print", summary="导出审批单(xlsx，格式还原模板)")
+@router.get("/{form_id}/print", summary="导出审批单(xlsx，格式还原模板，非法律顾问)")
 def print_form(
     form_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_approval_dl_guard),
 ):
     form = _get_form_or_404(db, form_id)
     actions = db.scalars(

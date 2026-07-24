@@ -162,27 +162,34 @@
         </template>
       </el-table-column>
       <!-- 状态：本期合计行(多行)或独行(单行)有内容；确认函仅业务复核+信息维护 -->
-      <el-table-column label="状态" width="250" fixed="right">
+      <el-table-column label="状态" width="300" fixed="right">
         <template #default="{ row }">
           <template v-if="row.isTotal || row.isSoloPeriod">
-            <template v-if="row.confirm_stored">
-              <el-tag type="success" size="small" effect="plain">已确认</el-tag>
-              <template v-if="canConfirm">
-                <el-button size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
-                <el-button size="small" text @click="onConfirmDownload(row)">下载</el-button>
-                <el-button size="small" text type="danger" @click="onConfirmDelete(row)">删除</el-button>
-              </template>
-            </template>
-            <template v-else>
+            <template v-if="!row.confirm_stored">
               <el-tag type="info" size="small" effect="plain">未确认</el-tag>
               <el-upload
-                v-if="canConfirm" :auto-upload="false" :show-file-list="false"
+                v-if="canUploadConfirm" :auto-upload="false" :show-file-list="false"
                 accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
                 :on-change="(f) => onConfirmPick(row, f)"
                 style="display:inline-block; margin-left:8px"
               >
                 <el-button size="small" text type="primary">上传确认函</el-button>
               </el-upload>
+            </template>
+            <template v-else>
+              <el-tag :type="row.confirmed ? 'success' : 'warning'" size="small" effect="plain">{{ row.confirmed ? '已确认' : '待确认' }}</el-tag>
+              <el-button size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
+              <el-button size="small" text @click="onConfirmDownload(row)">下载</el-button>
+              <el-button v-if="!row.confirmed && canApproveConfirm" size="small" text type="success" @click="onConfirmApprove(row)">确认</el-button>
+              <el-upload
+                v-if="canUploadConfirm" :auto-upload="false" :show-file-list="false"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
+                :on-change="(f) => onConfirmPick(row, f)"
+                style="display:inline-block"
+              >
+                <el-button size="small" text>重传</el-button>
+              </el-upload>
+              <el-button v-if="canUploadConfirm" size="small" text type="danger" @click="onConfirmDelete(row)">删除</el-button>
             </template>
           </template>
         </template>
@@ -248,7 +255,7 @@ import { UploadFilled, Refresh, Download, Tickets, EditPen, Check } from '@eleme
 import {
   parseTicketFile, getTicketLedger, saveTicketLedger,
   updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob,
-  uploadTicketConfirm, deleteTicketConfirm, fetchTicketConfirmBlob
+  uploadTicketConfirm, approveTicketConfirm, deleteTicketConfirm, fetchTicketConfirmBlob
 } from '@/api/ticketLedger'
 import { downloadBlob } from '@/utils/file'
 import { getScenicById } from '@/constants/scenic'
@@ -264,8 +271,9 @@ const userStore = useUserStore()
 const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
 // 上传/编辑/删除台账：业务经办 + 信息维护(超管)
 const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
-// 确认函上传/查看/下载/删除：业务复核 + 信息维护(超管)
-const canConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
+// 确认函 上传/重传/删除：业务经办 + 信息维护(超管)；「确认」：业务复核 + 信息维护(超管)
+const canUploadConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
+const canApproveConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
 // 默认比例（核销率/结算费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
@@ -573,6 +581,7 @@ const displayRows = computed(() => {
     t.period_row_id = b.rows[0]?.id
     t.confirm_stored = b.rows[0]?.confirm_stored || ''
     t.confirm_name = b.rows[0]?.confirm_name || ''
+    t.confirmed = b.rows[0]?.confirmed || false
     out.push(...b.rows, t)
   }
   return out
@@ -585,10 +594,19 @@ async function onConfirmPick(row, file) {
   if (!raw) return
   try {
     await uploadTicketConfirm(props.scenicId, row.period_row_id, raw)
-    ElMessage.success('确认函已上传，本期状态：已确认')
+    ElMessage.success('确认函已上传，本期状态：待确认')
     await loadSaved()
   } catch {
     ElMessage.error('确认函上传失败')
+  }
+}
+async function onConfirmApprove(row) {
+  try {
+    await approveTicketConfirm(props.scenicId, row.period_row_id)
+    ElMessage.success('本期状态：已确认')
+    await loadSaved()
+  } catch {
+    ElMessage.error('确认失败')
   }
 }
 async function onConfirmView(row) {

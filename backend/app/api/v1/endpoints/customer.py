@@ -17,8 +17,13 @@ from app.services import customer_research as research_svc
 
 router = APIRouter()
 
-# 可维护客户档案(新建/编辑/删除)的角色：业务经办 + 信息维护(超管始终放行)
+# 可维护客户档案(新建/编辑/删除/资料上传删除/生成尽调)的角色：业务经办 + 信息维护(超管)
 WRITE_ROLES = (Role.BUSINESS_HANDLER,)
+# 客户准入资料 查看/下载 角色：除财务复核、法律顾问外 + 超管
+MATERIAL_VIEW_ROLES = (
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR,
+    Role.FINANCE_HANDLER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
+)
 
 
 def _dump_files(payload_dict: dict) -> dict:
@@ -136,8 +141,8 @@ def _research_out(r: CustomerResearch) -> dict:
     }
 
 
-@router.get("/{cid}/materials", response_model=Response[list[dict]], summary="客户准入资料列表")
-def list_materials(cid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{cid}/materials", response_model=Response[list[dict]], summary="客户准入资料列表(除财务复核/法律顾问)")
+def list_materials(cid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*MATERIAL_VIEW_ROLES))):
     rows = db.scalars(
         select(CustomerMaterial).where(CustomerMaterial.customer_id == cid).order_by(CustomerMaterial.id.desc())
     ).all()
@@ -149,7 +154,7 @@ async def upload_materials(
     cid: int,
     files: list[UploadFile] = File(..., description="准入资料，可多选 .pdf / .docx / .xlsx"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(*WRITE_ROLES)),
 ):
     """批量上传即解析：逐个提取文本 + 正则抽取关键信息；原始文件另存磁盘。
 
@@ -218,9 +223,9 @@ async def upload_materials(
     return Response.ok(data, message=msg)
 
 
-@router.get("/{cid}/materials/{mid}/download", summary="下载准入资料原件")
+@router.get("/{cid}/materials/{mid}/download", summary="下载准入资料原件(除财务复核/法律顾问)")
 def download_material(
-    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*MATERIAL_VIEW_ROLES))
 ):
     m = db.get(CustomerMaterial, mid)
     if not m or m.customer_id != cid:
@@ -231,9 +236,9 @@ def download_material(
     return FileResponse(str(path), filename=m.filename)
 
 
-@router.delete("/{cid}/materials/{mid}", response_model=Response[dict], summary="删除准入资料")
+@router.delete("/{cid}/materials/{mid}", response_model=Response[dict], summary="删除准入资料(业务经办/超管)")
 def delete_material(
-    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*WRITE_ROLES))
 ):
     m = db.get(CustomerMaterial, mid)
     if not m or m.customer_id != cid:
@@ -257,8 +262,8 @@ def get_research(cid: int, db: Session = Depends(get_db), _: User = Depends(get_
     return Response.ok(_research_out(r) if r else None)
 
 
-@router.post("/{cid}/research", response_model=Response[dict], summary="生成 AI 尽职调查报告")
-def generate_research(cid: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@router.post("/{cid}/research", response_model=Response[dict], summary="生成 AI 尽职调查报告(业务经办/超管)")
+def generate_research(cid: int, db: Session = Depends(get_db), current_user: User = Depends(require_roles(*WRITE_ROLES))):
     """融合内部准入资料 + 博查外部资讯，经 DeepSeek 综合出四段式尽调报告并标注来源。
 
     耗时可能 20-60s（解析已在上传时完成，此处为搜索 + 大模型综合）。

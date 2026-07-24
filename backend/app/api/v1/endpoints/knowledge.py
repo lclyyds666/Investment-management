@@ -95,8 +95,15 @@ def delete_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(req
     return Response.ok({"id": doc_id}, message="已删除")
 
 
-@router.get("/{doc_id}/download", summary="下载法规文件原件")
-def download_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+# 法规文件下载角色：同合同附件（业务经办/业务复核/法务风控/财务经办/供管/总经理/法律顾问 + 超管）
+_kb_dl_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
+    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR, Role.LEGAL_COUNSEL,
+)
+
+
+@router.get("/{doc_id}/download", summary="下载法规文件原件(除财务复核)")
+def download_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(_kb_dl_guard)):
     doc = db.get(KnowledgeDoc, doc_id)
     if not doc or not doc.stored_name:
         raise HTTPException(status_code=404, detail="文件不存在")

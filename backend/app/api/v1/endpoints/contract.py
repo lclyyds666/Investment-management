@@ -405,11 +405,19 @@ async def upload_attachment(
     return Response.ok(_to_out(contract, names.get(contract.created_by, "")), message="附件上传成功")
 
 
-@router.get("/{contract_id}/attachment", summary="下载合同附件原件")
+# 合同附件/法律文书 下载角色：业务经办/业务复核/法务风控/财务经办/供管负责人/投资总经理/法律顾问 + 超管
+# (仅财务复核不可下载)
+_contract_dl_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
+    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR, Role.LEGAL_COUNSEL,
+)
+
+
+@router.get("/{contract_id}/attachment", summary="下载合同附件原件(除财务复核)")
 def download_attachment(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_contract_dl_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
     if not contract.attachment_stored:
@@ -423,11 +431,11 @@ def download_attachment(
 # --------------------------------------------------------------------------- #
 # 法律文件审批表(.docx，严格 3cm 行高 + 方正小标宋简体/仿宋_GB2312)
 # --------------------------------------------------------------------------- #
-@router.get("/{contract_id}/legal-doc", summary="生成并下载法律文件审批表(.docx)")
+@router.get("/{contract_id}/legal-doc", summary="生成并下载法律文件审批表(.docx，除财务复核)")
 def download_legal_doc(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_contract_dl_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
     creator = _names_map(db, {contract.created_by}).get(contract.created_by, "")

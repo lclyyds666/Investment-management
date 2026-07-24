@@ -118,6 +118,7 @@ class HotelLedgerRow(BaseModel):
     order_count: int = 0
     confirm_stored: str = ""
     confirm_name: str = ""
+    confirmed: bool = False
     source_file: str = ""
     detail_stored: str = ""
     detail_name: str = ""

@@ -18,7 +18,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -92,9 +92,10 @@ class HotelLedger(Base):
     positive_count: Mapped[int] = mapped_column(Integer, default=0, comment="结算/实收为正数的订单数(核销率分子)")
     # 逐日明细(JSON)：每天到账/毛额/实收/达人/团长/间夜，供编辑改费率/佣金/算法时逐日重算累加
     daily_json: Mapped[str] = mapped_column(Text, nullable=True, comment="逐日明细JSON(供逐日重算)")
-    # 确认函(按期共享；同期各平台行同值)：有则状态=已确认，无则未确认。仅业务复核/信息维护可维护
+    # 确认函(按期共享；同期各平台行同值)。两步：业务经办上传→待确认；业务复核确认→已确认。
     confirm_stored: Mapped[str] = mapped_column(String(255), default="", comment="确认函磁盘存储名(uuid)")
     confirm_name: Mapped[str] = mapped_column(String(255), default="", comment="确认函原始文件名")
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=False, comment="业务复核是否已确认(True=已确认)")
     source_file: Mapped[str] = mapped_column(String(255), default="", comment="来源Excel文件名")
     detail_stored: Mapped[str] = mapped_column(String(255), default="", comment="明细文件磁盘存储名(uuid)")
     detail_name: Mapped[str] = mapped_column(String(255), default="", comment="明细文件原始名")

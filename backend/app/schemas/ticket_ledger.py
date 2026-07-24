@@ -125,6 +125,7 @@ class TicketLedgerRow(BaseModel):
     repay_amount: Optional[Decimal] = None
     confirm_stored: str = ""
     confirm_name: str = ""
+    confirmed: bool = False
     source_file: str = ""
     detail_stored: str = ""
     detail_name: str = ""
