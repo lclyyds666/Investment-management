@@ -150,7 +150,7 @@
 - **审批链不变**(与规格三条一致):合同链/业务审批单链/业务付款审批单链。
 - **接口层下载守卫**(`require_roles`,超管恒过):合同附件/法律文书/法规=`_contract_dl_guard`(除财务复核);审批附件/print=`_approval_dl_guard`(非法律顾问);客户资料 list/download=`MATERIAL_VIEW_ROLES`(除财务复核/法律顾问),上传/删除/生成尽调=`WRITE_ROLES`(业务经办);台账明细/确认函下载=`_download_guard`(业务经办/复核/财务经办/供管/总经理)。法规上传/删除=业务经办。
 - **确认函两步**(列 `confirmed`,迁移 `20260731_ledger_confirm_status.sql`):上传(业务经办 `_edit_guard`)→待确认(confirmed=0);`POST .../{row_id}/confirm/approve`(业务复核 `_confirm_guard`)→已确认(confirmed=1);删除(业务经办)→未确认;下载(`_download_guard`)。前端三态:未确认+上传/待确认(查看·下载·确认·重传·删除)/已确认。门票+酒店一致。⚠️存量已上传确认函行 confirmed=0(待确认),需业务复核重新点确认。
-- ⚠️ **待办(下一步)**:各模块列表/查看 GET 接口尚未按角色加守卫(仅前端菜单/路由控制查看);因 战略总览/大屏 与经营数据接口共用,需先理清 页面→API 依赖再逐个加,避免误伤可见战略总览的角色。
+- **查看/列表 GET 接口层守卫(2026-08-02 已加)**:operation 全部 GET=`_view_guard`(全部非法律顾问;因 战略总览首页/大屏 共用 `/operation/*`,只能拦法律顾问、不能再排除法务风控);approval list/detail/actions=非法律顾问;invoice list/stats=智慧财务角色;ledger get/export + scenic metrics/legacy-ledger GET=渠道业务角色(`_download_guard`),legacy-ledger 上传/清空=业务经办;customer research GET=`MATERIAL_VIEW_ROLES`。**保持登录级(共用/全局,不可收窄)**:`GET /contracts`(首页/大屏用)、`GET /customers`(合同/审批页共用)、`GET /contracts/{id}`及其 approvals(财务经办附件下载链路)、`/auth/me`、`/approval/pending-count`(全局角标)。
 
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:

@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_roles
+from app.core.enums import Role
 from app.db.session import get_db
 from app.models.hotel_ledger import HotelLedger
 from app.models.scenic import ScenicLedger
@@ -23,6 +24,14 @@ from app.schemas.common import Response
 from app.schemas.scenic import ScenicLedgerOut, ScenicLedgerRow, ScenicUploadResult
 
 router = APIRouter()
+
+# 渠道业务(文旅) 查看角色：业务经办/业务复核/财务经办/供管负责人/投资总经理 + 超管
+_view_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
+    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
+)
+# 台账变更(上传/清空)：业务经办 + 超管
+_edit_guard = require_roles(Role.BUSINESS_HANDLER)
 
 _XLSX_EXT = {".xlsx", ".xls"}
 _MAX_BYTES = 20 * 1024 * 1024  # ≤ 20MB
@@ -95,7 +104,7 @@ def _columns_of(rows: list[dict]) -> list[str]:
 def get_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_view_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     # 数据隔离：强制 WHERE scenic_id = :sid
@@ -118,7 +127,7 @@ async def upload_ledger(
     scenic_id: str,
     file: UploadFile = File(..., description="核销数据 Excel(.xlsx/.xls)，≤20MB"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     fname = file.filename or "台账.xlsx"
@@ -165,7 +174,7 @@ async def upload_ledger(
 def clear_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     # 数据隔离：只删该景区，绝不波及其他景区
@@ -179,7 +188,7 @@ def clear_ledger(
     response_model=Response[dict],
     summary="景区经营数据卡片(销售额/核销数/核销率)——每景区独立",
 )
-def get_metrics(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_metrics(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     """销售额 = 门票+酒店核销台账结算金额之和；核销数 = 两台账订单号数量之和(order_count)；
     核销率 = 两台账「订单实收/结算价/结算金额为正数」订单数之和 ÷ 核销数 × 100%。"""
     sid = _valid_scenic_id(scenic_id)

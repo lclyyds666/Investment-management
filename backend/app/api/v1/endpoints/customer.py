@@ -254,8 +254,8 @@ def delete_material(
     return Response.ok({"id": mid})
 
 
-@router.get("/{cid}/research", response_model=Response[dict | None], summary="获取最近一次尽调报告")
-def get_research(cid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{cid}/research", response_model=Response[dict | None], summary="获取最近一次尽调报告(除财务复核/法律顾问)")
+def get_research(cid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*MATERIAL_VIEW_ROLES))):
     r = db.scalar(
         select(CustomerResearch).where(CustomerResearch.customer_id == cid).order_by(CustomerResearch.id.desc())
     )

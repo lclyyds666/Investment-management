@@ -218,7 +218,7 @@ async def parse_file(
     response_model=Response[HotelLedgerOut],
     summary="查询某景区酒店平台业务台账",
 )
-def get_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(_download_guard)):
     sid = _valid_scenic_id(scenic_id)
     rows = _load_rows(db, sid)
     return Response.ok(HotelLedgerOut(
@@ -442,7 +442,7 @@ def clear_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depend
 # 6) 导出
 # --------------------------------------------------------------------------- #
 @router.get("/{scenic_id}/hotel-ledger/export", summary="导出酒店平台业务台账(.xlsx)")
-def export_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def export_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(_download_guard)):
     sid = _valid_scenic_id(scenic_id)
     rows = _load_rows(db, sid)
     if not rows:

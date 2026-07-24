@@ -9,7 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_roles
-from app.core.enums import ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus
+from app.core.enums import ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, Role
+
+# 经营数据查看：全部非法律顾问 + 超管（这些接口 首页战略总览/大屏 也在用，故不能再排除法务风控）
+_view_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, *FINANCE_ROLES, *DIRECTOR_ROLES,
+)
 from app.db.session import get_db
 from app.models.contract import Contract
 from app.models.invoice import Invoice
@@ -42,7 +47,7 @@ router = APIRouter()
     "/dashboard",
     response_model=Response[DashboardData],
     summary="经营数据看板聚合",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(_view_guard)],
 )
 def dashboard(
     year: int = Query(2026, description="统计年份"),
@@ -97,7 +102,7 @@ def dashboard(
     "",
     response_model=Response[list[OperationDataOut]],
     summary="经营数据明细列表",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(_view_guard)],
 )
 def list_operation(
     year: int = Query(2026),
@@ -135,7 +140,7 @@ def create_operation(
     "/ai-diagnose",
     response_model=Response[dict],
     summary="AI 智能大脑：业务/财务风险诊断与资金投资建议",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(_view_guard)],
 )
 def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
     """聚合真实经营/发票/合同数据，作为 Context 交由 AI 智能体（DeepSeek）产出风险预警与
@@ -174,7 +179,7 @@ def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
     "/financial",
     response_model=Response[FinancialDashboard],
     summary="财务经营指标看板（真实回款）",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(_view_guard)],
 )
 def financial_dashboard(db: Session = Depends(get_db)):
     """返回分平台已实现业务规模/毛收入 + 收益率/资金占用/可用资金聚合，供经营页与大屏共用。"""
@@ -274,7 +279,7 @@ async def upload_projects(
     "/projects/geo",
     response_model=Response[dict],
     summary="大屏地图点位（项目→城市，数据驱动）",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(_view_guard)],
 )
 def projects_geo(
     hub: str = Query("山东省", description="中枢省(飞线汇聚点)"),

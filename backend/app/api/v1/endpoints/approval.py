@@ -53,6 +53,12 @@ _ATTACH_MAX_BYTES = 20 * 1024 * 1024  # ≤ 20MB
 
 router = APIRouter()
 
+# 业务审批 查看：全部非法律顾问 + 超管（法律顾问不参与业务审批）
+_view_guard = require_roles(
+    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
+    Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
+)
+
 
 # --------------------------------------------------------------------------- #
 # 辅助
@@ -127,7 +133,7 @@ def _extract_attachment_text(name: str, path: Path) -> str:
 # --------------------------------------------------------------------------- #
 # 查询
 # --------------------------------------------------------------------------- #
-@router.get("", response_model=Response[list[ApprovalFormOut]], summary="审批单列表")
+@router.get("", response_model=Response[list[ApprovalFormOut]], summary="审批单列表", dependencies=[Depends(_view_guard)])
 def list_forms(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -141,7 +147,7 @@ def list_forms(
     return Response.ok([_to_out(f, names.get(f.created_by, "")) for f in rows])
 
 
-@router.get("/todo", response_model=Response[list[ApprovalFormOut]], summary="待我审批的单据")
+@router.get("/todo", response_model=Response[list[ApprovalFormOut]], summary="待我审批的单据", dependencies=[Depends(_view_guard)])
 def list_todo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -159,7 +165,7 @@ def list_todo(
     return Response.ok([_to_out(f, names.get(f.created_by, "")) for f in todo])
 
 
-@router.get("/{form_id}", response_model=Response[ApprovalFormOut], summary="审批单详情")
+@router.get("/{form_id}", response_model=Response[ApprovalFormOut], summary="审批单详情", dependencies=[Depends(_view_guard)])
 def get_form(
     form_id: int,
     db: Session = Depends(get_db),
@@ -174,6 +180,7 @@ def get_form(
     "/{form_id}/actions",
     response_model=Response[list[ApprovalFormActionOut]],
     summary="审批流转记录（审计日志）",
+    dependencies=[Depends(_view_guard)],
 )
 def list_actions(
     form_id: int,

@@ -231,7 +231,7 @@ async def parse_files(
 def get_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_download_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     rows = _load_rows(db, sid)
@@ -487,7 +487,7 @@ def clear_ledger(
 def export_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_download_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     rows = _load_rows(db, sid)

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_roles
-from app.core.enums import DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus
+from app.core.enums import DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, Role
 from app.db.session import get_db
 from app.models.invoice import Invoice
 from app.models.user import User
@@ -16,16 +16,18 @@ from app.schemas.invoice import InvoiceCreate, InvoiceOut, InvoiceStats, Invoice
 router = APIRouter()
 
 WRITE_ROLES = (*FINANCE_ROLES, *DIRECTOR_ROLES)
+# 智慧财务 查看：业务经办/业务复核 + 财务 + 负责人/总经理 + 超管（法务风控、法律顾问不可见）
+_view_guard = require_roles(Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, *FINANCE_ROLES, *DIRECTOR_ROLES)
 
 
 @router.get("", response_model=Response[list[InvoiceOut]], summary="发票列表")
-def list_invoices(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_invoices(db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     rows = db.scalars(select(Invoice).order_by(Invoice.id.desc())).all()
     return Response.ok([InvoiceOut.model_validate(r) for r in rows])
 
 
 @router.get("/stats", response_model=Response[InvoiceStats], summary="发票开票统计")
-def invoice_stats(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def invoice_stats(db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     rows = db.scalars(select(Invoice)).all()
     issued_amt = sum((r.amount for r in rows if r.status == InvoiceStatus.ISSUED), Decimal("0"))
     pending_amt = sum((r.amount for r in rows if r.status == InvoiceStatus.PENDING), Decimal("0"))
