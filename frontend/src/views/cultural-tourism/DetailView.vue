@@ -7,8 +7,10 @@
     </div>
 
     <template v-if="spot">
-      <!-- ① 顶部：景区经营数据（占位指标卡，待接入后端真实数据） -->
-      <el-card shadow="never" class="ct-section">
+      <!-- 经营数据 + 平台入口：左右两栏，等高自适应（矮的一栏底部留白） -->
+      <div class="ct-cols">
+      <!-- ① 经营数据（3 张指标卡竖排，随框宽自适应） -->
+      <el-card shadow="never" class="ct-section ct-col">
         <template #header>
           <div class="sec-header"><el-icon><TrendCharts /></el-icon><span>经营数据</span></div>
         </template>
@@ -29,8 +31,8 @@
         </div>
       </el-card>
 
-      <!-- ② 中部：平台入口（分组展示：景区酒店平台 / 景区门票平台） -->
-      <el-card shadow="never" class="ct-section">
+      <!-- ② 平台入口（分组展示：景区酒店平台 / 景区门票平台；平台卡两列等大） -->
+      <el-card shadow="never" class="ct-section ct-col">
         <template #header>
           <div class="sec-header"><el-icon><Link /></el-icon><span>平台入口</span></div>
         </template>
@@ -61,6 +63,7 @@
           <div v-else class="entry-empty">暂无入口</div>
         </div>
       </el-card>
+      </div>
 
       <!-- ③ 底部：核销数据台账（折叠面板，默认收起；点击标题栏平滑展开） -->
       <el-collapse v-model="ledgerActive" class="ledger-collapse">
@@ -183,6 +186,18 @@ function goBack() {
   color: var(--el-text-color-primary);
 }
 .ct-section { margin-bottom: 16px; }
+/* 经营数据 + 平台入口 左右两栏：等高（align-items:stretch 使两栏同高=较高者，较矮者底部留白） */
+.ct-cols {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.ct-col {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
+}
 .sec-header {
   display: flex;
   align-items: center;
@@ -191,10 +206,10 @@ function goBack() {
   .el-icon { color: var(--el-color-primary); }
 }
 
-/* ① 经营数据·指标卡 */
+/* ① 经营数据·指标卡：竖排铺满栏宽（数字再长也不溢出） */
 .biz-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 14px;
 }
 .biz-card {
@@ -226,12 +241,13 @@ function goBack() {
 .biz-card.sales .biz-icon { background: rgba(245, 158, 11, 0.14); .el-icon { color: #f59e0b; } }
 .biz-card.rate .biz-icon  { background: rgba(16, 185, 129, 0.14); .el-icon { color: #10b981; } }
 .biz-card.month .biz-icon { background: rgba(139, 92, 246, 0.14); .el-icon { color: #8b5cf6; } }
-.biz-body { min-width: 0; }
+.biz-body { min-width: 0; flex: 1; }
 .biz-value {
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 800;
   line-height: 1.2;
   color: var(--el-text-color-primary);
+  overflow-wrap: anywhere;   /* 数字过长时在框内换行，不溢出到框外 */
 }
 .biz-unit {
   font-size: 13px;
@@ -286,21 +302,22 @@ function goBack() {
   padding: 6px 2px;
 }
 
-/* 平台入口：Logo + 名称规律排列（放大版:更宽卡片 + 2x 图标 + 更大文字） */
+/* 平台入口：两列等大网格；所有平台卡尺寸/高度一致（同栏同 grid + 固定最小高度） */
 .platform-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
 }
 .platform-item {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 22px 24px;
-  min-width: 200px;
-  min-height: 88px;
+  gap: 12px;
+  padding: 14px 16px;
+  min-width: 0;
+  min-height: 68px;
+  box-sizing: border-box;
   border: 1px solid var(--el-border-color);
-  border-radius: 14px;
+  border-radius: 12px;
   text-decoration: none;
   color: var(--el-text-color-primary);
   transition: all 0.2s ease;
@@ -313,9 +330,8 @@ function goBack() {
   }
 }
 .platform-logo {
-  height: 56px;
-  width: auto;
-  max-width: 96px;
+  height: 40px;
+  width: 40px;
   flex-shrink: 0;
   display: block;
   object-fit: contain;
@@ -323,12 +339,17 @@ function goBack() {
 }
 .platform-name {
   flex: 1;
+  min-width: 0;
   font-weight: 700;
-  font-size: 18px;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .platform-go {
   color: var(--el-text-color-secondary);
-  font-size: 20px;
+  font-size: 18px;
+  flex-shrink: 0;
   transition: color 0.2s ease;
 }
 
@@ -355,9 +376,12 @@ function goBack() {
   .el-icon { color: var(--el-color-primary); font-size: 18px; }
 }
 
-/* 响应式：窄屏单列，标题与列表左对齐 */
+/* 响应式：窄屏两栏改上下堆叠；平台卡改单列 */
+@media (max-width: 900px) {
+  .ct-cols { flex-direction: column; }
+  .ct-col { margin-bottom: 0; }
+}
 @media (max-width: 640px) {
-  .biz-grid { grid-template-columns: 1fr; }
   .platform-grid { grid-template-columns: 1fr; }
 }
 </style>
