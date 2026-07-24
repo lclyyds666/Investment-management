@@ -284,6 +284,7 @@ def save_ledger(
             jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
             daily_json=r.daily_json or "",
             payment_amount=r.payment_amount or Decimal("0"),
+            payment_date=r.payment_date,
             repay_date=r.repay_date, repay_amount=r.repay_amount,
             order_count=r.order_count or 0,
             positive_count=r.positive_count or 0,
@@ -376,14 +377,18 @@ def update_row(
         row.hexiao_amount = payload.hexiao_amount
         row.service_fee = row.jinying_amount - row.hexiao_amount
 
-    # 付款金额 / 回款日期 / 回款金额：每期各平台共享 → 同步到本期所有平台行
+    # 付款金额 / 付款日期 / 回款日期 / 回款金额：每期各平台共享 → 同步到本期所有平台行
     balance_dirty = calc_dirty or (payload.hexiao_amount is not None)
-    if payload.payment_amount is not None or payload.repay_date is not None or payload.repay_amount is not None:
+    _shared = (payload.payment_amount is not None or payload.payment_date is not None
+               or payload.repay_date is not None or payload.repay_amount is not None)
+    if _shared:
         for sib in _load_rows(db, sid):
             if _period_key(sib) != _period_key(row):
                 continue
             if payload.payment_amount is not None:
                 sib.payment_amount = payload.payment_amount
+            if payload.payment_date is not None:
+                sib.payment_date = payload.payment_date
             if payload.repay_date is not None:
                 sib.repay_date = payload.repay_date
             if payload.repay_amount is not None:

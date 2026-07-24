@@ -57,6 +57,9 @@
         <el-table-column label="付款金额（本期共享）" width="150" align="right">
           <template #default="{ row }"><el-input-number v-model="row.payment_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:120px" @change="syncPayment(row.payment_amount)" /></template>
         </el-table-column>
+        <el-table-column label="付款日期（本期共享）" width="160">
+          <template #default="{ row }"><el-date-picker v-model="row.payment_date" type="date" value-format="YYYY-MM-DD" size="small" placeholder="手工选择" style="width:130px" @change="syncPaymentDate(row.payment_date)" /></template>
+        </el-table-column>
         <el-table-column label="结算金额（可改）" width="160" align="right">
           <template #default="{ row }"><el-input-number v-model="row.jinying_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:140px" @change="row.jinyingEdited = true" /></template>
         </el-table-column>
@@ -75,40 +78,39 @@
 
     <!-- 已保存台账（按核对日期升序，隐藏付款金额，含本期合计行） -->
     <el-table :data="displayRows" border stripe size="small" class="saved-table" :row-class-name="rowClass">
-      <el-table-column label="景区ID" width="150" fixed="left">
+      <el-table-column label="景区ID" min-width="110">
         <template #default="{ row }">{{ row.isTotal ? '' : scenicName }}</template>
       </el-table-column>
-      <el-table-column label="平台" width="90">
-        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isTotal ? '本期合计' : row.platform }}</span></template>
+      <el-table-column label="平台" min-width="80">
+        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isGrandTotal ? '总合计' : row.isTotal ? '本期合计' : row.platform }}</span></template>
       </el-table-column>
-      <el-table-column label="酒店名称" min-width="160" show-overflow-tooltip>
+      <el-table-column label="酒店名称" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.isTotal ? '' : row.hotel_name }}</template>
       </el-table-column>
-      <el-table-column label="核对日期" width="160">
+      <el-table-column label="核对日期" min-width="120">
         <template #default="{ row }">{{ row.check_date_text }}</template>
       </el-table-column>
-      <el-table-column label="景区核销金额" width="130" align="right">
+      <el-table-column label="景区核销金额" min-width="105" align="right">
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
-      <el-table-column label="景区待核销金额" width="140" align="right">
+      <el-table-column label="景区待核销金额" min-width="110" align="right">
         <!-- 整期滚动余额：本期合计行(多行)或独行(单行)显示，多平台明细行留空 -->
         <template #default="{ row }"><span v-if="row.isTotal || row.isSoloPeriod" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
       </el-table-column>
-      <el-table-column label="结算金额" width="130" align="right">
+      <el-table-column label="结算金额" min-width="105" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
       </el-table-column>
-      <el-table-column label="服务费" width="110" align="right">
+      <el-table-column label="服务费" min-width="90" align="right">
         <template #default="{ row }">{{ fmtMoney(row.service_fee) }}</template>
       </el-table-column>
       <!-- 间夜列已隐藏（数据库仍保存 room_nights 字段，参与服务费计算与编辑） -->
-      <el-table-column label="回款日期" width="110">
-        <!-- 回款每期共享：本期合计行或独行显示，多平台明细行留空 -->
+      <el-table-column label="回款日期" min-width="100">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_date || '') : '' }}</template>
       </el-table-column>
-      <el-table-column label="回款金额" width="130" align="right">
+      <el-table-column label="回款金额" min-width="100" align="right">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="130" fixed="right">
+      <el-table-column label="操作" min-width="90">
         <template #default="{ row }">
           <template v-if="!row.isTotal && canEdit">
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
@@ -116,10 +118,10 @@
           </template>
         </template>
       </el-table-column>
-      <!-- 状态：本期合计行(多行)或独行(单行)有内容；确认函上传/查看/下载/删除仅业务复核+信息维护 -->
-      <el-table-column label="状态" width="300" fixed="right">
+      <!-- 状态：本期合计/独行有内容(总合计行不显示)；确认函上传=业务经办、确认=业务复核 -->
+      <el-table-column label="状态" min-width="190">
         <template #default="{ row }">
-          <template v-if="row.isTotal || row.isSoloPeriod">
+          <template v-if="(row.isTotal || row.isSoloPeriod) && !row.isGrandTotal">
             <!-- 未确认：本期无确认函 -->
             <template v-if="!row.confirm_stored">
               <el-tag type="info" size="small" effect="plain">未确认</el-tag>
@@ -198,6 +200,10 @@
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="付款日期">
+          <el-date-picker v-model="editForm.payment_date" type="date" value-format="YYYY-MM-DD" style="width:100%" placeholder="手工填写付款日期" />
+          <div class="edit-hint">本期各平台共享，保存后回填到本期所有平台行</div>
         </el-form-item>
         <el-form-item label="回款日期">
           <el-date-picker v-model="editForm.repay_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
@@ -285,6 +291,7 @@ const draftPeriodPending = computed(() => {
 function draftPending() { return draftPeriodPending.value }
 // 付款金额/回款日期/回款金额 每期各平台共享：任一行修改即同步到本期所有平台行
 function syncPayment(val) { draftRows.value.forEach((r) => { r.payment_amount = val }) }
+function syncPaymentDate(val) { draftRows.value.forEach((r) => { r.payment_date = val }) }
 function syncRepayDate(val) { draftRows.value.forEach((r) => { r.repay_date = val }) }
 function syncRepayAmount(val) { draftRows.value.forEach((r) => { r.repay_amount = val }) }
 
@@ -354,9 +361,33 @@ const displayRows = computed(() => {
     t.confirmed = b.rows[0]?.confirmed || false
     out.push(...b.rows, t)
   }
+  // 总合计（所有期汇总）：核销/结算/服务费/间夜逐行累加；待核销取末期滚动余额；回款按每期一次累加
+  if (savedRows.value.length) {
+    const g = {
+      isGrandTotal: true, isTotal: true, platform: '总合计', check_date_text: '',
+      hexiao_amount: 0, jinying_amount: 0, service_fee: 0, room_nights: 0,
+      pending_writeoff: 0, repay_date: '', repay_amount: null
+    }
+    for (const r of savedRows.value) {
+      g.hexiao_amount += Number(r.hexiao_amount) || 0
+      g.jinying_amount += Number(r.jinying_amount) || 0
+      g.service_fee += Number(r.service_fee) || 0
+      g.room_nights += Number(r.room_nights) || 0
+    }
+    g.pending_writeoff = Number(savedRows.value[savedRows.value.length - 1].pending_writeoff) || 0
+    let gRepay = 0
+    for (const b of buckets) {
+      const rr = b.rows.find((r) => r.repay_amount != null)
+      if (rr) gRepay += Number(rr.repay_amount) || 0
+    }
+    g.repay_amount = gRepay || null
+    out.push(g)
+  }
   return out
 })
-function rowClass({ row }) { return row.isTotal ? 'total-row' : '' }
+function rowClass({ row }) {
+  return row.isGrandTotal ? 'grand-total-row' : row.isTotal ? 'total-row' : ''
+}
 
 async function loadSaved() {
   if (!props.scenicId) return
@@ -399,6 +430,7 @@ async function onFileChange(file) {
       jinying_amount: Number(p.def_jinying) || 0,
       jinyingEdited: false,
       payment_amount: 0,
+      payment_date: null,
       repay_date: null,
       repay_amount: null,
       order_count: p.order_count,
@@ -432,6 +464,7 @@ async function onSave() {
     def_service_fee: r.def_service_fee,
     def_jinying: r.def_jinying,
     payment_amount: r.payment_amount || 0,
+    payment_date: r.payment_date,
     repay_date: r.repay_date, repay_amount: r.repay_amount,
     order_count: r.order_count, positive_count: r.positive_count, source_file: r.source_file,
     detail_stored: r.detail_stored, detail_name: r.detail_name
@@ -459,7 +492,8 @@ const editForm = reactive({
   supplier_commission: 0, room_nights: 0,
   ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
-  jinying_amount: 0, jinyingEdited: false, payment_amount: 0, repay_date: null, repay_amount: null
+  jinying_amount: 0, jinyingEdited: false,
+  payment_amount: 0, payment_date: null, repay_date: null, repay_amount: null
 })
 // 结算基数 = 服务商到账(可编辑) − 佣金(仅抖音)；核销/结算金额默认预览，保存后由后端精算
 const editSettleBase = computed(() => {
@@ -505,6 +539,7 @@ function openEdit(row) {
   editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.jinyingEdited = false
   editForm.payment_amount = Number(row.payment_amount) || 0
+  editForm.payment_date = row.payment_date
   editForm.repay_date = row.repay_date
   editForm.repay_amount = row.repay_amount != null ? Number(row.repay_amount) : null
   editVisible.value = true
@@ -523,6 +558,7 @@ async function onSaveEdit() {
       fee_per_night: editForm.fee_per_night,
       rate_settle: round2(Number(editForm.ratePctSettle) / 100),
       payment_amount: editForm.payment_amount,
+      payment_date: editForm.payment_date,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     }
@@ -648,6 +684,9 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .muted { color: var(--el-text-color-secondary); }
 .saved-table { margin-top: 4px; }
 .saved-table :deep(.total-row) { background: var(--el-fill-color-light) !important; font-weight: 700; }
+/* 总合计：更深底色 + 主色文字，区别于「本期合计」 */
+.saved-table :deep(.grand-total-row) { background: var(--el-color-primary-light-9) !important; font-weight: 800; }
+.saved-table :deep(.grand-total-row .cell) { color: var(--el-color-primary); }
 .total-label { font-weight: 700; color: var(--el-color-primary); }
 .pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }
 </style>

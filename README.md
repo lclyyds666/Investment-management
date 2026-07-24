@@ -68,6 +68,7 @@
 | 2026-07-27 | 台账算法重构:①门票**结算金额=出版应得×结算费率(默认94%)、服务费=结算−核销**,编辑行「服务费率」→**「结算费率」**(可编辑);②酒店**双算法**(编辑台账行单选:算法1=间夜×每间夜服务费(现有)/算法2=结算基数×结算费率、服务费=结算−核销,与门票编辑一致);③酒店**付款金额/回款日期/回款金额每期各平台共享**,「景区待核销」改**整期滚动**(每期一个余额,显示于本期合计行);新增列 `biz_ticket_ledger.rate_settle`、`biz_hotel_ledger.fee_algo/rate_settle`(迁移 `20260726_ledger_settle_rate.sql`,幂等) | 生产 ✅ |
 | 2026-07-27b | 台账**逐日累加**贯穿始终:核销/结算/服务费一律「逐日算、逐日舍入、再累加」——不仅解析时,**编辑改费率/佣金/算法后也按天重算**(不再退回总额×费率)。为此持久化逐日明细 `daily_json`(门票+酒店,迁移 `20260727_ledger_daily.sql`)。手工改佣金总额时按各天订单实收占比分摊差额 | 生产 ✅ |
 | 2026-07-28 | **结算金额恢复可编辑且默认自动跟随**:改佣金/费率/算法/间夜时结算金额自动回默认(修复「改佣金→核销变而结算不变」bug),手工改则覆盖、服务费=结算−核销;仅手工改过才上传覆盖值,否则后端逐日累加;后端「输入实际变化」才重算(仅改结算/回款不冲掉手工值)。间夜(算法1)用行聚合值算服务费、核销仍逐日 | 生产 ✅ |
+| 2026-08-02 | 景区酒店核销台账:①编辑台账行新增**「付款日期」**手工填写(每期各平台共享,落库,迁移 `20260802_hotel_payment_date.sql`);②表格底部新增**「总合计」行**(各期汇总:核销/结算/服务费/间夜累加、待核销取末期滚动余额、回款按每期一次累加);③表格列改 `min-width` 自适应、去除 fixed 左右固定列,不再左右滑、列宽自动铺满;④后端查看 GET 接口层守卫(阶段2C) | 生产 ✅ |
 | 2026-08-01 | 文旅细节:①景区经营数据删「核销率」卡(留销售额/核销数);②编辑台账行**「服务商到账」「景区核销金额」可人工修改**(覆盖算法值并落库,下游核销/结算/服务费/待核销随之重算;改到账清逐日明细走期级,改核销则服务费=结算−核销);③门票/酒店台账表格自适应宽度+行高加高 | 生产 ✅ |
 | 2026-07-31 | **角色权限总梳理**:①菜单按角色可见性(经营数据中心去法务风控、文旅去财务复核/法务风控、合同管理去财务经办/复核含法律顾问、法律顾问仅合同+个人设置);②法规上传改业务经办;③**接口层下载守卫**(合同附件/法规=除财务复核;审批附件=非法律顾问;客户资料=除财务复核/法律顾问;台账明细/确认函=业务经办/复核/财务经办/供管/总经理);④**确认函两步**:业务经办上传→待确认,业务复核「确认」→已确认(新列 `confirmed`,迁移 `20260731_ledger_confirm_status.sql`,门票+酒店)。审批链保持不变 | 生产 ✅ |
 | 2026-07-30b | ⑤**导航可见性**:除法律顾问外所有角色导航展示全部菜单项(仅可见,用户管理/操作日志等敏感页访问仍由路由守卫按 requiresSuperuser 拦截,操作权限不变);法律顾问不变。⑥**清空经营数据中心**(一次性,已备份 `/opt/sd-scm/backups/econ_center_*.sql`):清空 biz_project_metrics/biz_financial_metrics/biz_finance_config/biz_channel_data/biz_operation_data | 生产 ✅ |
@@ -227,6 +228,7 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260728_hotel_confirm.sql 
 mysql -u root -p sd_publish_scm < backend/migrations/20260729_ticket_confirm.sql        # 门票台账本期确认函 confirm_stored/confirm_name
 mysql -u root -p sd_publish_scm < backend/migrations/20260730_ledger_positive.sql       # 台账核销率分子 positive_count(门票+酒店)
 mysql -u root -p sd_publish_scm < backend/migrations/20260731_ledger_confirm_status.sql # 确认函两步状态 confirmed(门票+酒店)
+mysql -u root -p sd_publish_scm < backend/migrations/20260802_hotel_payment_date.sql    # 酒店台账付款日期 payment_date
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。
