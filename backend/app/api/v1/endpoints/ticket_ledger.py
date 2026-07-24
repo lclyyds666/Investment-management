@@ -253,6 +253,13 @@ def save_ledger(
         ) or tl_svc.compute_row(
             r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_settle
         )
+        # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
+        if r.jinying_amount is not None:
+            jinying_val = r.jinying_amount
+            fee_val = r.jinying_amount - calc["hexiao_amount"]
+        else:
+            jinying_val = calc["jinying_amount"]
+            fee_val = calc["service_fee"]
         db.add(TicketLedger(
             scenic_id=sid,                       # ← 铁律：作用域键来自路径
             row_no=base_no + i,
@@ -268,8 +275,8 @@ def save_ledger(
             publisher_due=calc["publisher_due"],
             hexiao_amount=calc["hexiao_amount"],
             payment_amount=r.payment_amount or Decimal("0"),
-            jinying_amount=calc["jinying_amount"],   # 结算金额=逐日累加(派生,不手工覆盖)
-            service_fee=calc["service_fee"],
+            jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
+            service_fee=fee_val,                     # 服务费=结算−核销
             rate_hexiao=r.rate_hexiao,
             rate_settle=r.rate_settle,
             rate_fee=r.rate_fee,
@@ -335,21 +342,24 @@ def update_row(
     if payload.repay_amount is not None:
         row.repay_amount = payload.repay_amount
 
-    # 服务商佣金 / 比例变化 → 重算计算列（出版应得=到账-佣金，再按比例拆分）
+    # 服务商佣金 / 比例「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
     calc_dirty = False
     if payload.supplier_commission is not None:
+        if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
+            calc_dirty = True
         row.supplier_commission = payload.supplier_commission
-        calc_dirty = True
     if payload.rate_hexiao is not None:
+        if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
+            calc_dirty = True
         row.rate_hexiao = payload.rate_hexiao
-        calc_dirty = True
     if payload.rate_settle is not None:
+        if abs(payload.rate_settle - (row.rate_settle or Decimal("0"))) > Decimal("0.00005"):
+            calc_dirty = True
         row.rate_settle = payload.rate_settle
-        calc_dirty = True
     if payload.rate_fee is not None:
         row.rate_fee = payload.rate_fee
     if calc_dirty:
-        # 逐日重算：改费率/佣金也按天累加(有逐日明细时)，否则回退期级公式
+        # 逐日重算：改费率/佣金也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认
         calc = tl_svc.recompute_from_json(
             row.daily_json, row.rate_hexiao, row.rate_settle, row.supplier_commission
         ) or tl_svc.compute_row(
@@ -358,8 +368,12 @@ def update_row(
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]
         row.hexiao_amount = calc["hexiao_amount"]
-        row.jinying_amount = calc["jinying_amount"]   # 结算金额=逐日累加(派生,不手工覆盖)
+        row.jinying_amount = calc["jinying_amount"]
         row.service_fee = calc["service_fee"]
+    # 结算金额可编辑：显式传入(手工改)则覆盖，服务费=结算−核销
+    if payload.jinying_amount is not None:
+        row.jinying_amount = payload.jinying_amount
+        row.service_fee = row.jinying_amount - row.hexiao_amount
 
     # 付款金额变化，或核销金额变化 → 影响滚动余额，全景区重算
     balance_dirty = calc_dirty

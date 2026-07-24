@@ -235,11 +235,18 @@ def save_ledger(
         # 逐日重算：有逐日明细则按天累加，否则回退期级公式
         calc = hl_svc.recompute_from_json(
             r.platform, r.daily_json, r.rate_hexiao, r.rate_settle,
-            r.fee_per_night, r.fee_algo, r.supplier_commission,
+            r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
             r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
         )
+        # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
+        if r.jinying_amount is not None:
+            jinying_val = r.jinying_amount
+            fee_val = r.jinying_amount - calc["hexiao_amount"]
+        else:
+            jinying_val = calc["jinying_amount"]
+            fee_val = calc["service_fee"]
         db.add(HotelLedger(
             scenic_id=sid, row_no=base_no + i,
             platform=r.platform or "", hotel_name=r.hotel_name or "",
@@ -254,8 +261,8 @@ def save_ledger(
             fee_algo=r.fee_algo or 1,
             fee_per_night=r.fee_per_night,
             rate_settle=r.rate_settle,
-            service_fee=calc["service_fee"],
-            jinying_amount=calc["jinying_amount"],   # 结算金额=逐日累加(派生,不手工覆盖)
+            service_fee=fee_val,                     # 服务费=结算−核销
+            jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
             daily_json=r.daily_json or "",
             payment_amount=r.payment_amount or Decimal("0"),
             repay_date=r.repay_date, repay_amount=r.repay_amount,
@@ -295,24 +302,37 @@ def update_row(
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
 
+    # 佣金/费率/算法/间夜「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
     calc_dirty = False
     if payload.supplier_commission is not None:
-        row.supplier_commission = payload.supplier_commission; calc_dirty = True
+        if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
+            calc_dirty = True
+        row.supplier_commission = payload.supplier_commission
     if payload.rate_hexiao is not None:
-        row.rate_hexiao = payload.rate_hexiao; calc_dirty = True
+        if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
+            calc_dirty = True
+        row.rate_hexiao = payload.rate_hexiao
     if payload.fee_algo is not None:
-        row.fee_algo = payload.fee_algo; calc_dirty = True
+        if (payload.fee_algo or 1) != (row.fee_algo or 1):
+            calc_dirty = True
+        row.fee_algo = payload.fee_algo
     if payload.fee_per_night is not None:
-        row.fee_per_night = payload.fee_per_night; calc_dirty = True
+        if abs(payload.fee_per_night - (row.fee_per_night or Decimal("0"))) > Decimal("0.005"):
+            calc_dirty = True
+        row.fee_per_night = payload.fee_per_night
     if payload.rate_settle is not None:
-        row.rate_settle = payload.rate_settle; calc_dirty = True
+        if abs(payload.rate_settle - (row.rate_settle or Decimal("0"))) > Decimal("0.00005"):
+            calc_dirty = True
+        row.rate_settle = payload.rate_settle
     if payload.room_nights is not None:
-        row.room_nights = payload.room_nights; calc_dirty = True
+        if int(payload.room_nights) != int(row.room_nights or 0):
+            calc_dirty = True
+        row.room_nights = payload.room_nights
     if calc_dirty:
-        # 逐日重算：改费率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式
+        # 逐日重算：改费率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认
         calc = hl_svc.recompute_from_json(
             row.platform, row.daily_json, row.rate_hexiao, row.rate_settle,
-            row.fee_per_night, row.fee_algo, row.supplier_commission,
+            row.fee_per_night, row.fee_algo, row.supplier_commission, row.room_nights,
         ) or hl_svc.compute_row(
             row.platform, row.base_received, row.supplier_commission,
             row.room_nights, row.rate_hexiao, row.fee_per_night, row.fee_algo, row.rate_settle,
@@ -321,7 +341,11 @@ def update_row(
         row.settle_base = calc["settle_base"]
         row.hexiao_amount = calc["hexiao_amount"]
         row.service_fee = calc["service_fee"]
-        row.jinying_amount = calc["jinying_amount"]   # 结算金额=逐日累加(派生,不手工覆盖)
+        row.jinying_amount = calc["jinying_amount"]
+    # 结算金额可编辑：显式传入(手工改)则覆盖，服务费=结算−核销
+    if payload.jinying_amount is not None:
+        row.jinying_amount = payload.jinying_amount
+        row.service_fee = row.jinying_amount - row.hexiao_amount
 
     # 付款金额 / 回款日期 / 回款金额：每期各平台共享 → 同步到本期所有平台行
     balance_dirty = calc_dirty

@@ -212,9 +212,11 @@ def recompute_from_days(platform: str, days: list[dict],
                         rate_settle: Decimal = DEFAULT_RATE_SETTLE,
                         fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
                         fee_algo: int = 1,
-                        commission_override=None) -> dict | None:
-    """酒店逐日重算并累加（逐日舍入到分）。结算基数=到账/毛额−佣金；核销=基数×核销率；
-    算法1：服务费=间夜×每间夜服务费、结算=核销+服务费；算法2：结算=基数×结算费率、服务费=结算−核销。
+                        commission_override=None,
+                        room_nights_override=None) -> dict | None:
+    """酒店逐日重算并累加（逐日舍入到分）。结算基数=到账/毛额−佣金；核销=Σ(基数_day×核销率)；
+    算法1：服务费=间夜×每间夜服务费(间夜用行聚合值，×整数费率无逐日舍入差)、结算=核销+服务费；
+    算法2：结算=Σ(基数_day×结算费率)、服务费=结算−核销。
     佣金（仅抖音）默认逐日自动=实收×6%−达人−团长；改总额时按各天实收占比分摊差额。"""
     if not days:
         return None
@@ -238,21 +240,25 @@ def recompute_from_days(platform: str, days: list[dict],
         c_total = Decimal("0")
 
     algo2 = int(fee_algo or 1) == 2
-    hexiao = jinying = fee_sum = sbase = Decimal("0")
+    hexiao = jinying_a2 = fee_a2 = sbase = Decimal("0")
+    nights_sum = 0
     for i, d in enumerate(days):
         raw_base = d["recv"] if is_dy else d["base"]
         b = raw_base - comm_day[i]
         sbase += b
+        nights_sum += int(d["nights"] or 0)
         hx = _q(b * rate_hexiao)
+        hexiao += hx
         if algo2:
             jy = _q(b * (rate_settle or Decimal("0")))
-            fe = _q(jy - hx)
-        else:
-            fe = _q(Decimal(int(d["nights"] or 0)) * (fee_per_night or Decimal("0")))
-            jy = _q(hx + fe)
-        hexiao += hx
-        jinying += jy
-        fee_sum += fe
+            jinying_a2 += jy
+            fee_a2 += _q(jy - hx)
+    if algo2:
+        jinying, fee_sum = _q(jinying_a2), _q(fee_a2)
+    else:
+        nights = room_nights_override if room_nights_override is not None else nights_sum
+        fee_sum = _q(Decimal(int(nights or 0)) * (fee_per_night or Decimal("0")))
+        jinying = _q(hexiao + fee_sum)
     return {
         "supplier_commission": _q(c_total),
         "settle_base": _q(sbase),
@@ -267,9 +273,11 @@ def recompute_from_json(platform: str, daily_json: str,
                         rate_settle: Decimal = DEFAULT_RATE_SETTLE,
                         fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
                         fee_algo: int = 1,
-                        commission_override=None) -> dict | None:
+                        commission_override=None,
+                        room_nights_override=None) -> dict | None:
     return recompute_from_days(platform, _days_from_json(daily_json), rate_hexiao,
-                               rate_settle, fee_per_night, fee_algo, commission_override)
+                               rate_settle, fee_per_night, fee_algo, commission_override,
+                               room_nights_override)
 
 
 def daily_defaults(platform: str, daily: dict[str, dict],
