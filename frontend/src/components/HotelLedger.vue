@@ -170,13 +170,18 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="服务商到账">
-          <el-input :model-value="fmtMoney(editRow.base_received)" disabled style="width:100%" />
+          <el-input-number v-model="editForm.base_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @change="editForm.receivedEdited = true" />
+          <div class="edit-hint">算法自动算出（美团/携程为平台结算毛额），可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金">
           <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width:100%" />
         </el-form-item>
         <el-form-item label="核销率">
           <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="景区核销金额">
+          <el-input-number v-model="editForm.hexiao_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @change="editForm.hexiaoEdited = true" />
+          <div class="edit-hint">默认 = 结算基数 × 核销率，可人工修改（服务费 = 结算 − 核销）</div>
         </el-form-item>
         <el-form-item v-if="editForm.fee_algo === 1" label="间夜">
           <el-input-number v-model="editForm.room_nights" :min="0" :precision="0" controls-position="right" style="width:100%" />
@@ -449,15 +454,18 @@ const editVisible = ref(false)
 const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
-  hotel_name: '', supplier_commission: 0, room_nights: 0,
+  hotel_name: '',
+  base_received: 0, receivedEdited: false,       // 服务商到账/平台毛额(可人工改)
+  supplier_commission: 0, room_nights: 0,
   ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
+  hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false, payment_amount: 0, repay_date: null, repay_amount: null
 })
-// 编辑弹窗：结算基数/核销/结算金额（派生只读预览；保存后由后端按逐日累加得精确值）
+// 结算基数 = 服务商到账(可编辑) − 佣金(仅抖音)；核销/结算金额默认预览，保存后由后端精算
 const editSettleBase = computed(() => {
   if (!editRow.value) return 0
   const comm = editRow.value.platform === '抖音' ? (Number(editForm.supplier_commission) || 0) : 0
-  return round2((Number(editRow.value.base_received) || 0) - comm)
+  return round2((Number(editForm.base_received) || 0) - comm)
 })
 const editHexiao = computed(() => round2(editSettleBase.value * (Number(editForm.ratePctHexiao) || 0) / 100))
 const editJinying = computed(() => {
@@ -467,13 +475,15 @@ const editJinying = computed(() => {
   const fee = round2((Number(editForm.room_nights) || 0) * (Number(editForm.fee_per_night) || 0))
   return round2(editHexiao.value + fee)
 })
-// 改佣金/核销率/算法/间夜/结算费率 → 结算金额回到默认(跟随)并清手工标记；openEdit 期间抑制
+// 改到账/佣金/核销率/算法/间夜/结算费率 → 核销、结算金额回到默认(跟随)并清手工标记；openEdit 期间抑制
 let suppressJinyingWatch = false
 watch(
-  () => [editForm.supplier_commission, editForm.ratePctHexiao, editForm.fee_algo,
+  () => [editForm.base_received, editForm.supplier_commission, editForm.ratePctHexiao, editForm.fee_algo,
     editForm.fee_per_night, editForm.room_nights, editForm.ratePctSettle],
   () => {
     if (suppressJinyingWatch) return
+    editForm.hexiao_amount = editHexiao.value
+    editForm.hexiaoEdited = false
     editForm.jinying_amount = editJinying.value
     editForm.jinyingEdited = false
   }
@@ -482,12 +492,16 @@ function openEdit(row) {
   suppressJinyingWatch = true   // 载入既有值期间不触发跟随
   editRow.value = row
   editForm.hotel_name = row.hotel_name
+  editForm.base_received = Number(row.base_received) || 0
+  editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
   editForm.room_nights = Number(row.room_nights) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
   editForm.fee_algo = Number(row.fee_algo) || 1
   editForm.fee_per_night = Number(row.fee_per_night) || DEFAULT_FEE_PER_NIGHT
   editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
+  editForm.hexiao_amount = Number(row.hexiao_amount) || 0
+  editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.jinyingEdited = false
   editForm.payment_amount = Number(row.payment_amount) || 0
@@ -512,7 +526,9 @@ async function onSaveEdit() {
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     }
-    // 仅当手工改过结算金额才上传覆盖，否则由后端逐日累加
+    // 人工改过才上传覆盖：服务商到账 / 景区核销金额 / 结算金额；否则由后端按算法(逐日)重算
+    if (editForm.receivedEdited) payload.base_received = editForm.base_received
+    if (editForm.hexiaoEdited) payload.hexiao_amount = editForm.hexiao_amount
     if (editForm.jinyingEdited) payload.jinying_amount = editForm.jinying_amount
     await updateHotelRow(props.scenicId, editRow.value.id, payload)
     editVisible.value = false
@@ -614,7 +630,11 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .hl-tip { margin-bottom: 12px; }
 .hl-draft { margin-bottom: 16px; border: 1px solid var(--el-color-primary-light-5); }
 .draft-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-weight: 600; > div { display: flex; align-items: center; gap: 8px; } }
-.draft-table :deep(.el-table__cell) { padding: 4px 0; }
+/* 表格自适应宽度(100%) + 行高加高、字号加大，便于阅读 */
+.draft-table, .saved-table { width: 100%; }
+.draft-table :deep(.el-table__cell),
+.saved-table :deep(.el-table__cell) { padding: 12px 0; font-size: 14px; }
+.saved-table :deep(.el-table__cell .cell) { line-height: 24px; }
 /* 统一所有单元格 + 表头居中对齐 */
 .draft-table :deep(.el-table__cell .cell),
 .saved-table :deep(.el-table__cell .cell) {

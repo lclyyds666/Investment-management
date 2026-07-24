@@ -209,7 +209,8 @@
           </el-select>
         </el-form-item>
         <el-form-item label="服务商到账">
-          <el-input :model-value="fmtMoney(editRow.supplier_received)" disabled style="width: 100%" />
+          <el-input-number v-model="editForm.supplier_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" @change="editForm.receivedEdited = true" />
+          <div class="edit-hint">算法自动算出，可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
         <el-form-item label="服务商佣金">
           <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width: 100%" />
@@ -221,6 +222,10 @@
         <el-form-item label="核销率">
           <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
           <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="景区核销金额">
+          <el-input-number v-model="editForm.hexiao_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" @change="editForm.hexiaoEdited = true" />
+          <div class="edit-hint">默认 = 出版应得 × 核销率，可人工修改（服务费 = 结算 − 核销）</div>
         </el-form-item>
         <el-form-item label="结算费率">
           <el-input-number v-model="editForm.ratePctSettle" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width: 100%" />
@@ -451,23 +456,29 @@ const editVisible = ref(false)
 const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
-  pay_date: null, platform: '', supplier_commission: 0,
-  ratePctHexiao: 90, ratePctSettle: 94, jinying_amount: 0, jinyingEdited: false, payment_amount: 0,
+  pay_date: null, platform: '',
+  supplier_received: 0, receivedEdited: false,   // 服务商到账(可人工改)
+  supplier_commission: 0,
+  ratePctHexiao: 90, ratePctSettle: 94,
+  hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
+  jinying_amount: 0, jinyingEdited: false, payment_amount: 0,
   repay_date: null, repay_amount: null
 })
 
-const editPublisherDue = computed(() => {
-  if (!editRow.value) return 0
-  return round2((Number(editRow.value.supplier_received) || 0) - (Number(editForm.supplier_commission) || 0))
-})
-// 结算金额默认值 = 出版应得 × 结算费率；保存后由后端按逐日累加得精确值
+// 出版应得到账 = 服务商到账(可编辑) − 服务商佣金
+const editPublisherDue = computed(() =>
+  round2((Number(editForm.supplier_received) || 0) - (Number(editForm.supplier_commission) || 0)))
+// 景区核销金额默认 = 出版应得 × 核销率；结算金额默认 = 出版应得 × 结算费率
+const editHexiao = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctHexiao) || 0) / 100))
 const editJinying = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctSettle) || 0) / 100))
-// 改佣金/费率 → 结算金额回到默认(跟随)并清手工标记；openEdit 期间抑制，避免冲掉已存值
+// 改到账/佣金/费率 → 核销、结算金额回到默认(跟随)并清手工标记；openEdit 期间抑制
 let suppressJinyingWatch = false
 watch(
-  () => [editForm.supplier_commission, editForm.ratePctHexiao, editForm.ratePctSettle],
+  () => [editForm.supplier_received, editForm.supplier_commission, editForm.ratePctHexiao, editForm.ratePctSettle],
   () => {
     if (suppressJinyingWatch) return
+    editForm.hexiao_amount = editHexiao.value
+    editForm.hexiaoEdited = false
     editForm.jinying_amount = editJinying.value
     editForm.jinyingEdited = false
   }
@@ -478,9 +489,13 @@ function openEdit(row) {
   editRow.value = row
   editForm.pay_date = row.pay_date
   editForm.platform = row.platform
+  editForm.supplier_received = Number(row.supplier_received) || 0
+  editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
   editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
+  editForm.hexiao_amount = Number(row.hexiao_amount) || 0
+  editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0
   editForm.jinyingEdited = false
   editForm.payment_amount = Number(row.payment_amount) || 0
@@ -504,7 +519,9 @@ async function onSaveEdit() {
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     }
-    // 仅当手工改过结算金额才上传覆盖，否则由后端逐日累加
+    // 人工改过才上传覆盖：服务商到账 / 景区核销金额 / 结算金额；否则由后端按算法(逐日)重算
+    if (editForm.receivedEdited) payload.supplier_received = editForm.supplier_received
+    if (editForm.hexiaoEdited) payload.hexiao_amount = editForm.hexiao_amount
     if (editForm.jinyingEdited) payload.jinying_amount = editForm.jinying_amount
     await updateTicketRow(props.scenicId, editRow.value.id, payload)
     editVisible.value = false
@@ -676,7 +693,11 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   font-weight: 600;
   > div { display: flex; align-items: center; gap: 8px; }
 }
-.draft-table :deep(.el-table__cell) { padding: 4px 0; }
+/* 表格自适应宽度(100%) + 行高加高、字号加大，便于阅读 */
+.draft-table, .saved-table { width: 100%; }
+.draft-table :deep(.el-table__cell),
+.saved-table :deep(.el-table__cell) { padding: 12px 0; font-size: 14px; }
+.saved-table :deep(.el-table__cell .cell) { line-height: 24px; }
 /* 统一所有单元格 + 表头居中对齐 */
 .draft-table :deep(.el-table__cell .cell),
 .saved-table :deep(.el-table__cell .cell) {

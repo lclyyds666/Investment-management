@@ -77,11 +77,13 @@ class HotelUpdateIn(BaseModel):
     platform: Optional[str] = None
     hotel_name: Optional[str] = None
     room_nights: Optional[int] = None
+    base_received: Optional[Decimal] = None    # 服务商到账/平台毛额(人工覆盖;传入即清逐日明细走期级重算)
     supplier_commission: Optional[Decimal] = None
     rate_hexiao: Optional[Decimal] = None
     fee_per_night: Optional[Decimal] = None
     fee_algo: Optional[int] = None             # 服务费算法(1/2)
     rate_settle: Optional[Decimal] = None      # 结算费率(算法2)
+    hexiao_amount: Optional[Decimal] = None    # 景区核销金额(人工覆盖;服务费=结算−核销)
     jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
     payment_amount: Optional[Decimal] = None
     repay_date: Optional[date] = None

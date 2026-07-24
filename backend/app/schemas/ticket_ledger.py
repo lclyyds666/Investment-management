@@ -86,11 +86,13 @@ class TicketLedgerUpdateIn(BaseModel):
     pay_date: Optional[date] = None
     platform: Optional[str] = None
     ticket_product: Optional[str] = None
+    supplier_received: Optional[Decimal] = None  # 服务商到账(人工覆盖;传入即清逐日明细走期级重算)
     supplier_commission: Optional[Decimal] = None
     payment_amount: Optional[Decimal] = None
     rate_hexiao: Optional[Decimal] = None
     rate_settle: Optional[Decimal] = None      # 结算费率(可编辑)
     rate_fee: Optional[Decimal] = None         # 旧服务费率(已弃用,兼容保留)
+    hexiao_amount: Optional[Decimal] = None    # 景区核销金额(人工覆盖;服务费=结算−核销)
     jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None

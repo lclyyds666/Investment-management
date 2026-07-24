@@ -27,7 +27,7 @@
         </div>
         <div class="biz-note">
           <el-icon><InfoFilled /></el-icon>
-          <span>销售额 = 门票+酒店核销台账「结算金额」之和；核销数 = 对账明细订单数；核销率 = 实收/结算为正数的订单占比。随台账实时更新（本景区独立）。</span>
+          <span>销售额 = 门票+酒店核销台账「结算金额」之和；核销数 = 对账明细订单数。随台账实时更新（本景区独立）。</span>
         </div>
       </el-card>
 
@@ -120,7 +120,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Link, TopRight, Files, Tickets, TrendCharts, InfoFilled,
-  Checked, Money, DataLine
+  Checked, Money
 } from '@element-plus/icons-vue'
 import { getScenicById } from '@/constants/scenic'
 import { getScenicMetrics } from '@/api/scenic'
@@ -152,8 +152,7 @@ watch(scenicId, loadMetrics, { immediate: true })
 
 const bizMetrics = computed(() => [
   { key: 'sales', label: '销售额', value: fmtNum(metrics.value.sales), unit: '元', icon: Money },
-  { key: 'month', label: '核销数', value: fmtNum(metrics.value.writeoff_count), unit: '笔', icon: Checked },
-  { key: 'rate', label: '核销率', value: fmtNum(metrics.value.rate), unit: '%', icon: DataLine }
+  { key: 'month', label: '核销数', value: fmtNum(metrics.value.writeoff_count), unit: '笔', icon: Checked }
 ])
 
 // 平台入口分组：景区酒店平台入口 / 景区门票平台入口（空数组渲染「暂无入口」空状态）

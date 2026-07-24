@@ -367,8 +367,13 @@ def update_row(
     if payload.repay_amount is not None:
         row.repay_amount = payload.repay_amount
 
-    # 服务商佣金 / 比例「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
+    # 服务商到账 / 佣金 / 比例「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
     calc_dirty = False
+    if payload.supplier_received is not None:
+        if abs(payload.supplier_received - (row.supplier_received or Decimal("0"))) > Decimal("0.005"):
+            row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
+            calc_dirty = True
+        row.supplier_received = payload.supplier_received
     if payload.supplier_commission is not None:
         if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
             calc_dirty = True
@@ -399,9 +404,13 @@ def update_row(
     if payload.jinying_amount is not None:
         row.jinying_amount = payload.jinying_amount
         row.service_fee = row.jinying_amount - row.hexiao_amount
+    # 景区核销金额可编辑：显式传入(人工改)则覆盖，服务费=结算−核销
+    if payload.hexiao_amount is not None:
+        row.hexiao_amount = payload.hexiao_amount
+        row.service_fee = row.jinying_amount - row.hexiao_amount
 
     # 付款金额变化，或核销金额变化 → 影响滚动余额，全景区重算
-    balance_dirty = calc_dirty
+    balance_dirty = calc_dirty or (payload.hexiao_amount is not None)
     if payload.payment_amount is not None:
         row.payment_amount = payload.payment_amount
         balance_dirty = True
