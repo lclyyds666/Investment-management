@@ -68,6 +68,7 @@
 | 2026-07-27 | 台账算法重构:①门票**结算金额=出版应得×结算费率(默认94%)、服务费=结算−核销**,编辑行「服务费率」→**「结算费率」**(可编辑);②酒店**双算法**(编辑台账行单选:算法1=间夜×每间夜服务费(现有)/算法2=结算基数×结算费率、服务费=结算−核销,与门票编辑一致);③酒店**付款金额/回款日期/回款金额每期各平台共享**,「景区待核销」改**整期滚动**(每期一个余额,显示于本期合计行);新增列 `biz_ticket_ledger.rate_settle`、`biz_hotel_ledger.fee_algo/rate_settle`(迁移 `20260726_ledger_settle_rate.sql`,幂等) | 生产 ✅ |
 | 2026-07-27b | 台账**逐日累加**贯穿始终:核销/结算/服务费一律「逐日算、逐日舍入、再累加」——不仅解析时,**编辑改费率/佣金/算法后也按天重算**(不再退回总额×费率)。为此持久化逐日明细 `daily_json`(门票+酒店,迁移 `20260727_ledger_daily.sql`)。手工改佣金总额时按各天订单实收占比分摊差额 | 生产 ✅ |
 | 2026-07-28 | **结算金额恢复可编辑且默认自动跟随**:改佣金/费率/算法/间夜时结算金额自动回默认(修复「改佣金→核销变而结算不变」bug),手工改则覆盖、服务费=结算−核销;仅手工改过才上传覆盖值,否则后端逐日累加;后端「输入实际变化」才重算(仅改结算/回款不冲掉手工值)。间夜(算法1)用行聚合值算服务费、核销仍逐日 | 生产 ✅ |
+| 2026-07-29 | 门票核销台账**对齐酒店**:①一份明细=一期,按期分组——一期 **≥2 行生成「本期合计」行**(承载待核销/回款/状态)、只有 1 行则该行自身承载(无合计行);②门票也加**确认函/状态列**(操作栏右侧,`confirm_stored/confirm_name`,迁移 `20260729_ticket_confirm.sql`,端点 `.../{row_id}/confirm`,仅业务复核+信息维护);③酒店同规则:1 行期不再显示本期合计行。门票原「底部总合计」改为按期合计 | 生产 ✅ |
 | 2026-07-28b | 核销台账:①两台账加**「景区ID」列**(最左=景区名,与客户档案「客户ID」按内容相等关联);②酒店台账操作栏右侧加**「状态」列**(仅本期合计行:未确认+上传确认函 / 已确认+查看·下载·删除;确认函按期共享落盘 `hotel_confirm_{sid}`,新列 `confirm_stored/confirm_name`,迁移 `20260728_hotel_confirm.sql`);③**角色门禁**:上传对账明细+编辑/删除台账仅业务经办+信息维护(超管),确认函上传/查看/下载/删除仅业务复核+信息维护(超管);前端隐藏按钮+后端 `require_roles` 强制。门票状态栏暂缓 | 生产 ✅ |
 
 ---
@@ -219,6 +220,7 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260724_hotel_ledger.sql  
 mysql -u root -p sd_publish_scm < backend/migrations/20260726_ledger_settle_rate.sql    # 台账结算费率 rate_settle + 酒店服务费算法 fee_algo
 mysql -u root -p sd_publish_scm < backend/migrations/20260727_ledger_daily.sql          # 台账逐日明细 daily_json(供编辑逐日重算)
 mysql -u root -p sd_publish_scm < backend/migrations/20260728_hotel_confirm.sql         # 酒店台账本期确认函 confirm_stored/confirm_name
+mysql -u root -p sd_publish_scm < backend/migrations/20260729_ticket_confirm.sql        # 门票台账本期确认函 confirm_stored/confirm_name
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。

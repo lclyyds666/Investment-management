@@ -91,8 +91,8 @@
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
       <el-table-column label="景区待核销金额" width="140" align="right">
-        <!-- 整期滚动余额：仅在「本期合计」行显示，平台行留空 -->
-        <template #default="{ row }"><span v-if="row.isTotal" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
+        <!-- 整期滚动余额：本期合计行(多行)或独行(单行)显示，多平台明细行留空 -->
+        <template #default="{ row }"><span v-if="row.isTotal || row.isSoloPeriod" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
       </el-table-column>
       <el-table-column label="结算金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
@@ -102,11 +102,11 @@
       </el-table-column>
       <!-- 间夜列已隐藏（数据库仍保存 room_nights 字段，参与服务费计算与编辑） -->
       <el-table-column label="回款日期" width="110">
-        <!-- 回款每期共享：仅在「本期合计」行显示，平台行留空 -->
-        <template #default="{ row }">{{ row.isTotal ? (row.repay_date || '') : '' }}</template>
+        <!-- 回款每期共享：本期合计行或独行显示，多平台明细行留空 -->
+        <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_date || '') : '' }}</template>
       </el-table-column>
       <el-table-column label="回款金额" width="130" align="right">
-        <template #default="{ row }">{{ row.isTotal ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
+        <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="130" fixed="right">
         <template #default="{ row }">
@@ -116,10 +116,10 @@
           </template>
         </template>
       </el-table-column>
-      <!-- 状态：仅本期合计行有内容；确认函上传/查看/下载/删除仅业务复核+信息维护 -->
+      <!-- 状态：本期合计行(多行)或独行(单行)有内容；确认函上传/查看/下载/删除仅业务复核+信息维护 -->
       <el-table-column label="状态" width="250" fixed="right">
         <template #default="{ row }">
-          <template v-if="row.isTotal">
+          <template v-if="row.isTotal || row.isSoloPeriod">
             <template v-if="row.confirm_stored">
               <el-tag type="success" size="small" effect="plain">已确认</el-tag>
               <template v-if="canConfirm">
@@ -310,6 +310,12 @@ const displayRows = computed(() => {
 
   const out = []
   for (const b of buckets) {
+    // 仅当本期 ≥2 行才生成「本期合计」行；只有 1 行则该行自身承载期级信息(待核销/回款/状态)
+    if (b.rows.length < 2) {
+      const r0 = b.rows[0]
+      out.push({ ...r0, isSoloPeriod: true, period_row_id: r0.id })
+      continue
+    }
     const t = {
       isTotal: true, platform: '本期合计', check_date_text: periodSpan(b.rows),
       hexiao_amount: 0, pending_writeoff: 0, jinying_amount: 0, service_fee: 0, room_nights: 0,

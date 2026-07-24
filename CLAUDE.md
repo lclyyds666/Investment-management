@@ -129,7 +129,8 @@
 
 ## 核销台账·景区ID列 + 确认函状态 + 角色门禁(2026-07-28b)
 1. **景区ID 列**(门票+酒店台账,最左):值=景区名(`getScenicById(scenicId).name`)。与客户档案库「客户ID(`customer_code`)」**按内容相等约定关联**(客户ID作为景区数据外键,同值绑定),**不改客户侧 schema**。
-2. **酒店台账「状态」列**(操作栏右侧,仅**本期合计行**有内容):无确认函=「未确认」+上传;有=「已确认」+查看/下载/删除。确认函**按期共享**(同期各平台行同 `confirm_stored/confirm_name`,落盘 `uploads/hotel_confirm_{sid}/`);端点 `POST/GET/DELETE .../hotel-ledger/{row_id}/confirm`(GET 为 `?stored=&name=`)。删除确认函→状态回「未确认」。迁移 `20260728_hotel_confirm.sql`。**门票状态栏暂缓(用户要求先不做)**。
+2. **状态列 + 确认函**(操作栏右侧;门票+酒店均有,2026-07-29 门票对齐补齐):无确认函=「未确认」+上传;有=「已确认」+查看/下载/删除。确认函**按期共享**(同期各行同 `confirm_stored/confirm_name`,落盘 `uploads/{hotel|ticket}_confirm_{sid}/`);端点 `POST/GET/DELETE .../{hotel|ticket}-ledger/{row_id}/confirm`(GET 为 `?stored=&name=`)。删除确认函→状态回「未确认」。迁移 `20260728_hotel_confirm.sql`+`20260729_ticket_confirm.sql`。
+   - **状态位置规则(两台账一致)**:前端 `displayRows` 按期(source_file)分组——**一期 ≥2 行 → 追加「本期合计」行**,待核销/回款/状态在合计行;**一期只有 1 行 → 该行自身承载(`isSoloPeriod`)**,不生成合计行。门票由「一文件=一期=1行」故通常走独行分支;门票原「底部 el-table 总合计」已移除,改为按期合计。
 3. **角色门禁**(前端 `userStore` 隐藏按钮 + 后端 `require_roles` 强制,超管`is_superuser`始终放行):
    - 上传对账明细 + 编辑/删除台账行:仅 **业务经办(`business_handler`)+ 信息维护(超管)**。门票/酒店 endpoint 的 parse/save/update/delete/clear 已加 `_edit_guard=require_roles(Role.BUSINESS_HANDLER)`。
    - 确认函 上传/查看/下载/删除:仅 **业务复核(`business_reviewer`)+ 信息维护(超管)**(`_confirm_guard`)。
@@ -138,7 +139,7 @@
 
 ## 数据库迁移(新库/换机必跑)
 `init.sql` 建基础表;`python -m app.db.init_db` 建表+种子;运行库补丁按序执行 `backend/migrations/` 下:
-`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)、`20260726_ledger_settle_rate.sql`(门票/酒店台账结算费率 rate_settle + 酒店服务费算法 fee_algo,幂等)、`20260727_ledger_daily.sql`(门票/酒店台账逐日明细 daily_json,幂等)、`20260728_hotel_confirm.sql`(酒店台账本期确认函 confirm_stored/confirm_name,幂等)。
+`20260710_commercial_data_link.sql`、`20260710_financial_metrics.sql`、`20260710_project_metrics.sql`、`20260713_project_geo.sql`、`20260714_customer_research.sql`、`20260715_contract_lifecycle.sql`(合同全生命周期新列,幂等)、`20260716_module_refactor.sql`(社会信用代码/合同类型文本化/渠道 biz_type,幂等)、`20260717_rename_admin.sql`(admin 显示名→信息维护,幂等)、`20260722_ticket_ledger_recurrence.sql`(门票台账期次递推:supplier_commission/payment_amount/pending_writeoff/detail_* 新列,幂等)、`20260723_audit_log.sql`(操作审计日志表 sys_audit_log,幂等)、`20260724_hotel_ledger.sql`(景区酒店平台核销台账 biz_hotel_ledger,幂等)、`20260726_ledger_settle_rate.sql`(门票/酒店台账结算费率 rate_settle + 酒店服务费算法 fee_algo,幂等)、`20260727_ledger_daily.sql`(门票/酒店台账逐日明细 daily_json,幂等)、`20260728_hotel_confirm.sql`(酒店台账本期确认函 confirm_stored/confirm_name,幂等)、`20260729_ticket_confirm.sql`(门票台账本期确认函 confirm_stored/confirm_name,幂等)。
 
 ## 待办 / 注意
 - **DeepSeek 账户余额**:Key 有效但曾余额不足会回退规则引擎;充值后无需改码自动切真实模型。

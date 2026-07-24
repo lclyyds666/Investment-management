@@ -80,6 +80,9 @@ class TicketLedger(Base):
 
     # 逐日明细(JSON)：每天聚合后的到账/实收/达人/团长，供编辑改费率/佣金时逐日重算累加
     daily_json: Mapped[str] = mapped_column(Text, nullable=True, comment="逐日明细JSON(供逐日重算)")
+    # 确认函(按期共享；同期各行同值)：有则状态=已确认，无则未确认。仅业务复核/信息维护可维护
+    confirm_stored: Mapped[str] = mapped_column(String(255), default="", comment="确认函磁盘存储名(uuid)")
+    confirm_name: Mapped[str] = mapped_column(String(255), default="", comment="确认函原始文件名")
 
     source_file: Mapped[str] = mapped_column(String(255), default="", comment="来源Excel文件名")
     # 明细源文件落盘(供预览/下载)：detail_stored=磁盘uuid文件名, detail_name=原始文件名

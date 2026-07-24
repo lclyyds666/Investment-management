@@ -11,6 +11,7 @@
 """
 import asyncio
 import io
+import mimetypes
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -53,6 +54,19 @@ _PARSE_SEMAPHORE = asyncio.Semaphore(1)
 
 # 台账变更(上传/保存/编辑/删除)角色：业务经办 + 信息维护(超管始终放行)
 _edit_guard = require_roles(Role.BUSINESS_HANDLER)
+# 确认函(上传/查看/下载/删除)角色：业务复核 + 信息维护(超管始终放行)
+_confirm_guard = require_roles(Role.BUSINESS_REVIEWER)
+_CONFIRM_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".xls", ".xlsx"}
+_CONFIRM_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _period_key(r: TicketLedger) -> str:
+    """一期标识（一份对账明细=一期）；与前端 displayRows 分组键一致。"""
+    return r.source_file or r.detail_name or r.period_text or r.check_date_text or "NA"
+
+
+def _confirm_dir(sid: str) -> Path:
+    return Path(settings.UPLOAD_DIR) / f"ticket_confirm_{sid}"
 
 
 def _valid_scenic_id(scenic_id: str) -> str:
@@ -515,3 +529,101 @@ def download_detail(
         filename=name or safe,
         media_type=_XLSX_MIME,
     )
+
+
+# --------------------------------------------------------------------------- #
+# 8) 本期确认函（按期共享；仅业务复核/信息维护可维护）
+#    有确认函 → 本期状态=已确认；删除后 → 未确认。同一期各行共享同一确认函。
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/{scenic_id}/ticket-ledger/{row_id}/confirm",
+    response_model=Response[TicketLedgerRow],
+    summary="上传本期确认函(仅业务复核/信息维护)",
+)
+async def upload_confirm(
+    scenic_id: str, row_id: int,
+    file: UploadFile = File(..., description="确认函(PDF/图片/Word/Excel)"),
+    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
+    if not row:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
+    fname = file.filename or "确认函"
+    ext = Path(fname).suffix.lower()
+    if ext not in _CONFIRM_EXT:
+        raise HTTPException(status_code=400, detail="仅支持 PDF/图片/Word/Excel 确认函")
+    content = await file.read()
+    if len(content) > _CONFIRM_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="确认函超过 20MB 上限")
+    d = _confirm_dir(sid)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        stored = f"{uuid.uuid4().hex}{ext}"
+        (d / stored).write_bytes(content)
+    except OSError:
+        raise HTTPException(status_code=500, detail="确认函保存失败")
+    finally:
+        del content
+    key = _period_key(row)
+    old_stored = row.confirm_stored
+    for sib in _load_rows(db, sid):
+        if _period_key(sib) == key:
+            sib.confirm_stored = stored
+            sib.confirm_name = fname
+    if old_stored and old_stored != stored:
+        try:
+            old = d / Path(old_stored).name
+            if old.exists():
+                old.unlink()
+        except OSError:
+            pass
+    db.commit()
+    db.refresh(row)
+    return Response.ok(_row_out(row), message="确认函已上传，本期状态：已确认")
+
+
+@router.get("/{scenic_id}/ticket-ledger/confirm", summary="查看/下载本期确认函(仅业务复核/信息维护)")
+def download_confirm(
+    scenic_id: str, stored: str, name: str = "",
+    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    safe = Path(stored or "").name
+    if not safe:
+        raise HTTPException(status_code=400, detail="缺少文件标识")
+    path = _confirm_dir(sid) / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="确认函不存在或已删除")
+    mt = mimetypes.guess_type(name or safe)[0] or "application/octet-stream"
+    return FileResponse(str(path), filename=name or safe, media_type=mt)
+
+
+@router.delete(
+    "/{scenic_id}/ticket-ledger/{row_id}/confirm",
+    response_model=Response[dict],
+    summary="删除本期确认函(仅业务复核/信息维护)",
+)
+def delete_confirm(
+    scenic_id: str, row_id: int,
+    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
+    if not row:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
+    key = _period_key(row)
+    stored = row.confirm_stored
+    for sib in _load_rows(db, sid):
+        if _period_key(sib) == key:
+            sib.confirm_stored = ""
+            sib.confirm_name = ""
+    if stored:
+        try:
+            fp = _confirm_dir(sid) / Path(stored).name
+            if fp.exists():
+                fp.unlink()
+        except OSError:
+            pass
+    db.commit()
+    return Response.ok({"deleted": 1}, message="确认函已删除，本期状态：未确认")

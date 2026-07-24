@@ -123,20 +123,23 @@
     </el-card>
 
     <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库） -->
-    <el-table :data="savedRows" border stripe size="small" class="saved-table" :show-summary="savedRows.length > 0" :summary-method="summary">
-      <el-table-column type="index" label="#" width="46" align="center" />
-      <el-table-column label="景区ID" width="150" prop="platform">
-        <template #default>{{ scenicName }}</template>
+    <el-table :data="displayRows" border stripe size="small" class="saved-table" :row-class-name="rowClass">
+      <el-table-column label="景区ID" width="150" fixed="left">
+        <template #default="{ row }">{{ row.isTotal ? '' : scenicName }}</template>
       </el-table-column>
-      <el-table-column label="平台" width="80" prop="platform" />
-      <el-table-column label="景区门票" min-width="160" prop="ticket_product" show-overflow-tooltip />
+      <el-table-column label="平台" width="90">
+        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isTotal ? '本期合计' : row.platform }}</span></template>
+      </el-table-column>
+      <el-table-column label="景区门票" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.isTotal ? '' : row.ticket_product }}</template>
+      </el-table-column>
       <el-table-column label="核对日期" width="160" prop="check_date_text" />
       <el-table-column label="景区核销金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
-      <!-- 景区待核销金额：紧邻景区核销金额右侧 -->
+      <!-- 景区待核销金额：本期合计行(多行)或独行(单行)显示 -->
       <el-table-column label="景区待核销金额" width="140" align="right">
-        <template #default="{ row }"><span class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
+        <template #default="{ row }"><span v-if="row.isTotal || row.isSoloPeriod" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
       </el-table-column>
       <el-table-column label="结算金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
@@ -144,15 +147,43 @@
       <el-table-column label="服务费" width="120" align="right">
         <template #default="{ row }">{{ fmtMoney(row.service_fee) }}</template>
       </el-table-column>
-      <el-table-column label="回款日期" width="110" prop="repay_date" />
-      <el-table-column label="回款金额" width="130" align="right">
-        <template #default="{ row }">{{ row.repay_amount != null ? fmtMoney(row.repay_amount) : '—' }}</template>
+      <el-table-column label="回款日期" width="110">
+        <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_date || '') : '' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="回款金额" width="130" align="right">
+        <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="130" fixed="right">
         <template #default="{ row }">
-          <template v-if="canEdit">
+          <template v-if="!row.isTotal && canEdit">
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
+          </template>
+        </template>
+      </el-table-column>
+      <!-- 状态：本期合计行(多行)或独行(单行)有内容；确认函仅业务复核+信息维护 -->
+      <el-table-column label="状态" width="250" fixed="right">
+        <template #default="{ row }">
+          <template v-if="row.isTotal || row.isSoloPeriod">
+            <template v-if="row.confirm_stored">
+              <el-tag type="success" size="small" effect="plain">已确认</el-tag>
+              <template v-if="canConfirm">
+                <el-button size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
+                <el-button size="small" text @click="onConfirmDownload(row)">下载</el-button>
+                <el-button size="small" text type="danger" @click="onConfirmDelete(row)">删除</el-button>
+              </template>
+            </template>
+            <template v-else>
+              <el-tag type="info" size="small" effect="plain">未确认</el-tag>
+              <el-upload
+                v-if="canConfirm" :auto-upload="false" :show-file-list="false"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
+                :on-change="(f) => onConfirmPick(row, f)"
+                style="display:inline-block; margin-left:8px"
+              >
+                <el-button size="small" text type="primary">上传确认函</el-button>
+              </el-upload>
+            </template>
           </template>
         </template>
       </el-table-column>
@@ -216,7 +247,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Refresh, Download, Tickets, EditPen, Check } from '@element-plus/icons-vue'
 import {
   parseTicketFile, getTicketLedger, saveTicketLedger,
-  updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob
+  updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob,
+  uploadTicketConfirm, deleteTicketConfirm, fetchTicketConfirmBlob
 } from '@/api/ticketLedger'
 import { downloadBlob } from '@/utils/file'
 import { getScenicById } from '@/constants/scenic'
@@ -232,6 +264,8 @@ const userStore = useUserStore()
 const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
 // 上传/编辑/删除台账：业务经办 + 信息维护(超管)
 const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
+// 确认函上传/查看/下载/删除：业务复核 + 信息维护(超管)
+const canConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
 // 默认比例（核销率/结算费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
@@ -497,25 +531,95 @@ async function onExport() {
   }
 }
 
-// el-table 合计行（按列「标题」匹配，避免新增列导致下标错位）
-function summary({ columns, data }) {
-  const sumByLabel = {
-    景区核销金额: 'hexiao_amount', 结算金额: 'jinying_amount',
-    服务费: 'service_fee', 回款金额: 'repay_amount'
+// 展示行：按「一份对账明细=一期」分组（对齐酒店台账）。
+//  · 一期 ≥2 行 → 追加「本期合计」行(承载待核销/回款/状态)；
+//  · 一期只有 1 行 → 该行自身承载期级信息(isSoloPeriod)，不生成合计行。
+const displayRows = computed(() => {
+  const groups = new Map()
+  for (const r of savedRows.value) {
+    const key = r.source_file || r.detail_name || r.period_text || r.check_date_text || 'NA'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(r)
   }
-  return columns.map((col, idx) => {
-    if (idx === 0) return '合计'
-    // 景区待核销为滚动余额 → 取末期值
-    if (col.label === '景区待核销金额') {
-      return data.length ? fmtMoney(data[data.length - 1].pending_writeoff) : ''
-    }
-    const key = sumByLabel[col.label]
-    if (key) {
-      const total = data.reduce((acc, r) => acc + (Number(r[key]) || 0), 0)
-      return fmtMoney(total)
-    }
-    return ''
+  const buckets = [...groups.values()].map((rows) => {
+    const minStart = rows.map((r) => r.period_start).filter(Boolean).sort()[0] || ''
+    return { rows, minStart }
   })
+  buckets.sort((a, b) => String(a.minStart).localeCompare(String(b.minStart)))
+  const out = []
+  for (const b of buckets) {
+    if (b.rows.length < 2) {
+      const r0 = b.rows[0]
+      out.push({ ...r0, isSoloPeriod: true, period_row_id: r0.id })
+      continue
+    }
+    const t = {
+      isTotal: true, platform: '本期合计', ticket_product: '',
+      check_date_text: b.rows[0].check_date_text || '',
+      hexiao_amount: 0, jinying_amount: 0, service_fee: 0, pending_writeoff: 0,
+      repay_date: '', repay_amount: null
+    }
+    for (const r of b.rows) {
+      t.hexiao_amount += Number(r.hexiao_amount) || 0
+      t.jinying_amount += Number(r.jinying_amount) || 0
+      t.service_fee += Number(r.service_fee) || 0
+      t.repay_amount = (t.repay_amount || 0) + (Number(r.repay_amount) || 0)
+    }
+    // 待核销为滚动余额 → 取本期末行值；回款日期取本期首个非空
+    t.pending_writeoff = Number(b.rows[b.rows.length - 1]?.pending_writeoff) || 0
+    t.repay_date = (b.rows.find((r) => r.repay_date) || {}).repay_date || ''
+    t.period_row_id = b.rows[0]?.id
+    t.confirm_stored = b.rows[0]?.confirm_stored || ''
+    t.confirm_name = b.rows[0]?.confirm_name || ''
+    out.push(...b.rows, t)
+  }
+  return out
+})
+function rowClass({ row }) { return row.isTotal ? 'total-row' : '' }
+
+// —— 本期确认函（业务复核/信息维护）——
+async function onConfirmPick(row, file) {
+  const raw = file?.raw
+  if (!raw) return
+  try {
+    await uploadTicketConfirm(props.scenicId, row.period_row_id, raw)
+    ElMessage.success('确认函已上传，本期状态：已确认')
+    await loadSaved()
+  } catch {
+    ElMessage.error('确认函上传失败')
+  }
+}
+async function onConfirmView(row) {
+  try {
+    const blob = await fetchTicketConfirmBlob(props.scenicId, row.confirm_stored, row.confirm_name)
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch {
+    ElMessage.error('查看失败')
+  }
+}
+async function onConfirmDownload(row) {
+  try {
+    const blob = await fetchTicketConfirmBlob(props.scenicId, row.confirm_stored, row.confirm_name)
+    downloadBlob(blob, row.confirm_name || '确认函')
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+async function onConfirmDelete(row) {
+  try {
+    await ElMessageBox.confirm('确定删除本期确认函吗？删除后本期状态变为「未确认」。', '删除确认', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
+    })
+  } catch { return }
+  try {
+    await deleteTicketConfirm(props.scenicId, row.period_row_id)
+    ElMessage.success('确认函已删除，本期状态：未确认')
+    await loadSaved()
+  } catch {
+    ElMessage.error('删除失败')
+  }
 }
 
 watch(() => props.scenicId, loadSaved, { immediate: true })
@@ -562,6 +666,8 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .calc { color: var(--el-color-primary); font-weight: 600; }
 .pending { color: #f59e0b; font-weight: 700; }
 .saved-table { margin-top: 4px; }
+.saved-table :deep(.total-row) { background: var(--el-fill-color-light) !important; font-weight: 700; }
+.total-label { font-weight: 700; color: var(--el-color-primary); }
 
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
 .pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }
