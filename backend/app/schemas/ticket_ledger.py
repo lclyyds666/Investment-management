@@ -22,6 +22,7 @@ class ParsedFile(BaseModel):
     def_jinying: Decimal = Decimal("0")
     daily_json: str = ""                          # 逐日明细(供逐日重算)
     order_count: int = 0
+    positive_count: int = 0                       # 订单实收为正数的订单数(核销率分子)
     period_text: str = ""                        # 对账周期文本
     check_date_text: str = ""                    # 核对日期（=周期）
     period_start: Optional[date] = None
@@ -64,6 +65,7 @@ class TicketLedgerSaveRow(BaseModel):
     def_jinying: Optional[Decimal] = None
     daily_json: str = ""                             # 逐日明细(透传持久化，供编辑逐日重算)
     order_count: int = 0
+    positive_count: int = 0                          # 订单实收为正数的订单数(核销率分子)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
     source_file: str = ""

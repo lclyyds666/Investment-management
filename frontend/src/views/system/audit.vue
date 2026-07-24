@@ -3,7 +3,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="hdr">
-          <span><el-icon><Document /></el-icon> 操作审计</span>
+          <span><el-icon><Document /></el-icon> 操作日志</span>
           <span class="hdr-sub">登录日志 + 系统写操作留痕（仅超级管理员可见）</span>
         </div>
       </template>
@@ -157,7 +157,7 @@ async function onExport() {
   try {
     const p = buildParams(); delete p.page; delete p.size
     const blob = await fetchAuditExportBlob(p)
-    downloadBlob(blob, `操作审计_${new Date().toISOString().slice(0, 10)}.csv`)
+    downloadBlob(blob, `操作日志_${new Date().toISOString().slice(0, 10)}.csv`)
   } catch {
     ElMessage.error('导出失败')
   }

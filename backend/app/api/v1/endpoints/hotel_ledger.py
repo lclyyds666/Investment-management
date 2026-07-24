@@ -281,6 +281,7 @@ def save_ledger(
             payment_amount=r.payment_amount or Decimal("0"),
             repay_date=r.repay_date, repay_amount=r.repay_amount,
             order_count=r.order_count or 0,
+            positive_count=r.positive_count or 0,
             source_file=r.source_file or "",
             detail_stored=r.detail_stored or "", detail_name=r.detail_name or r.source_file or "",
             uploaded_by=current_user.id,

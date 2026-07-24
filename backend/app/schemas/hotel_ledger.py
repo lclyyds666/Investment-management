@@ -12,6 +12,7 @@ class ParsedPlatform(BaseModel):
     platform: str = ""
     room_nights: int = 0
     order_count: int = 0
+    positive_count: int = 0                        # 结算/实收为正数的订单数(核销率分子)
     base_received: Decimal = Decimal("0")          # 抖音=服务商到账;美团/携程=平台结算毛额
     suggested_commission: Decimal = Decimal("0")   # 抖音佣金建议值(可改);其他=0
     # 按日期粒度逐日计算后累加的精准默认值
@@ -59,6 +60,7 @@ class HotelSaveRow(BaseModel):
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
     order_count: int = 0
+    positive_count: int = 0                         # 结算/实收为正数的订单数(核销率分子)
     source_file: str = ""
     detail_stored: str = ""
     detail_name: str = ""

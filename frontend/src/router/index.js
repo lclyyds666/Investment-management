@@ -129,8 +129,8 @@ const routes = [
         path: 'audit',
         name: 'Audit',
         component: () => import('@/views/system/audit.vue'),
-        // 操作审计：归入「系统管理」菜单组；仅超级管理员可见 / 可访问
-        meta: { title: '操作审计', icon: 'List', requiresSuperuser: true, group: '系统管理', groupIcon: 'Setting' }
+        // 操作日志：归入「系统管理」菜单组；仅超级管理员可见 / 可访问
+        meta: { title: '操作日志', icon: 'List', requiresSuperuser: true, group: '系统管理', groupIcon: 'Setting' }
       },
       {
         path: 'profile',

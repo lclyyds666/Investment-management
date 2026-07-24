@@ -25,7 +25,7 @@
         </div>
         <div class="biz-note">
           <el-icon><InfoFilled /></el-icon>
-          <span>以上为占位指标,数据接口接入后自动替换为实时经营数据。</span>
+          <span>销售额 = 门票+酒店核销台账「结算金额」之和；核销数 = 对账明细订单数；核销率 = 实收/结算为正数的订单占比。随台账实时更新（本景区独立）。</span>
         </div>
       </el-card>
 
@@ -113,13 +113,14 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Link, TopRight, Files, Tickets, TrendCharts, InfoFilled,
-  Checked, Money, DataLine, Calendar
+  Checked, Money, DataLine
 } from '@element-plus/icons-vue'
 import { getScenicById } from '@/constants/scenic'
+import { getScenicMetrics } from '@/api/scenic'
 import TicketLedger from '@/components/TicketLedger.vue'
 import TicketDetailFiles from '@/components/TicketDetailFiles.vue'
 import HotelLedger from '@/components/HotelLedger.vue'
@@ -137,13 +138,19 @@ const router = useRouter()
 const scenicId = computed(() => String(route.params.scenicId || ''))
 const spot = computed(() => getScenicById(scenicId.value))
 
-// 经营数据占位指标（待接入后端真实数据；value 现为占位符 —）。
-// 后续把 value 换成接口返回值即可,结构无需改。
+// 经营数据（每景区独立，源自门票+酒店核销台账实时聚合）
+const metrics = ref({ sales: 0, writeoff_count: 0, positive_count: 0, rate: 0 })
+function fmtNum(n) { return Number(n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) }
+async function loadMetrics() {
+  if (!scenicId.value) return
+  try { metrics.value = await getScenicMetrics(scenicId.value) } catch { /* 拦截器已提示 */ }
+}
+watch(scenicId, loadMetrics, { immediate: true })
+
 const bizMetrics = computed(() => [
-  { key: 'today', label: '当日核销数', value: '—', unit: '张', icon: Checked },
-  { key: 'sales', label: '本月销售额', value: '—', unit: '元', icon: Money },
-  { key: 'rate', label: '核销率', value: '—', unit: '%', icon: DataLine },
-  { key: 'month', label: '本月核销数', value: '—', unit: '张', icon: Calendar }
+  { key: 'sales', label: '销售额', value: fmtNum(metrics.value.sales), unit: '元', icon: Money },
+  { key: 'month', label: '核销数', value: fmtNum(metrics.value.writeoff_count), unit: '笔', icon: Checked },
+  { key: 'rate', label: '核销率', value: fmtNum(metrics.value.rate), unit: '%', icon: DataLine }
 ])
 
 // 平台入口分组：景区酒店平台入口 / 景区门票平台入口（空数组渲染「暂无入口」空状态）

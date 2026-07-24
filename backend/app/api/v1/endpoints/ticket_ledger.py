@@ -300,6 +300,7 @@ def save_ledger(
             rate_fee=r.rate_fee,
             daily_json=r.daily_json or "",
             order_count=r.order_count or 0,
+            positive_count=r.positive_count or 0,
             repay_date=r.repay_date,
             repay_amount=r.repay_amount,
             source_file=r.source_file or "",

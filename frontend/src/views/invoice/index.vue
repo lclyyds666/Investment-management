@@ -2,10 +2,9 @@
   <div class="invoice">
     <!-- 统计卡(响应式:窄屏两列、超窄单列) -->
     <el-row :gutter="16" class="stat-row">
-      <el-col :xs="12" :sm="12" :md="6"><el-card shadow="hover"><div class="stat-label">发票总数</div><div class="stat-value">{{ stats.total }}</div></el-card></el-col>
-      <el-col :xs="12" :sm="12" :md="6"><el-card shadow="hover"><div class="stat-label">待开票</div><div class="stat-value warn">{{ stats.pending }}</div></el-card></el-col>
-      <el-col :xs="12" :sm="12" :md="6"><el-card shadow="hover"><div class="stat-label">已开票</div><div class="stat-value ok">{{ stats.issued }}</div></el-card></el-col>
-      <el-col :xs="12" :sm="12" :md="6"><el-card shadow="hover"><div class="stat-label">已开票金额(元)</div><div class="stat-value blue">{{ Number(stats.issued_amount || 0).toLocaleString() }}</div></el-card></el-col>
+      <el-col :xs="12" :sm="8" :md="8"><el-card shadow="hover"><div class="stat-label">待开票</div><div class="stat-value warn">{{ stats.pending }}</div></el-card></el-col>
+      <el-col :xs="12" :sm="8" :md="8"><el-card shadow="hover"><div class="stat-label">已开票</div><div class="stat-value ok">{{ stats.issued }}</div></el-card></el-col>
+      <el-col :xs="24" :sm="8" :md="8"><el-card shadow="hover"><div class="stat-label">已开票金额(元)</div><div class="stat-value blue">{{ Number(stats.issued_amount || 0).toLocaleString() }}</div></el-card></el-col>
     </el-row>
 
     <ProTable

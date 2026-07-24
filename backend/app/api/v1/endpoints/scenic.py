@@ -10,12 +10,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.hotel_ledger import HotelLedger
 from app.models.scenic import ScenicLedger
+from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.scenic import ScenicLedgerOut, ScenicLedgerRow, ScenicUploadResult
@@ -170,3 +172,38 @@ def clear_ledger(
     result = db.execute(sa_delete(ScenicLedger).where(ScenicLedger.scenic_id == sid))
     db.commit()
     return Response.ok({"scenic_id": sid, "deleted": result.rowcount or 0}, message="已清空该景区台账")
+
+
+@router.get(
+    "/{scenic_id}/metrics",
+    response_model=Response[dict],
+    summary="景区经营数据卡片(销售额/核销数/核销率)——每景区独立",
+)
+def get_metrics(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """销售额 = 门票+酒店核销台账结算金额之和；核销数 = 两台账订单号数量之和(order_count)；
+    核销率 = 两台账「订单实收/结算价/结算金额为正数」订单数之和 ÷ 核销数 × 100%。"""
+    sid = _valid_scenic_id(scenic_id)
+
+    def _sums(model):
+        r = db.execute(
+            select(
+                func.coalesce(func.sum(model.jinying_amount), 0),
+                func.coalesce(func.sum(model.order_count), 0),
+                func.coalesce(func.sum(model.positive_count), 0),
+            ).where(model.scenic_id == sid)
+        ).one()
+        return r[0] or 0, int(r[1] or 0), int(r[2] or 0)
+
+    t_sales, t_cnt, t_pos = _sums(TicketLedger)
+    h_sales, h_cnt, h_pos = _sums(HotelLedger)
+    sales = float(t_sales) + float(h_sales)
+    writeoff = t_cnt + h_cnt
+    positive = t_pos + h_pos
+    rate = round(positive / writeoff * 100, 2) if writeoff else 0.0
+    return Response.ok({
+        "scenic_id": sid,
+        "sales": sales,               # 销售额(元)
+        "writeoff_count": writeoff,   # 核销数
+        "positive_count": positive,
+        "rate": rate,                 # 核销率(%)
+    })

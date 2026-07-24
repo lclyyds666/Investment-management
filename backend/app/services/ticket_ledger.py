@@ -145,6 +145,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
 
     supplier_received = Decimal("0")
     order_count = 0
+    positive_count = 0   # 订单实收金额为正数的订单数（核销率分子）
     min_dt: date | None = None
     max_dt: date | None = None
     used_sheets: list[str] = []
@@ -187,6 +188,8 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                     base += (f or Decimal("0"))  # 费用在明细中为负数，直接相加
                 supplier_received += base
                 order_count += 1
+                if shishou is not None and shishou > 0:
+                    positive_count += 1
 
                 d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
                 if d:
@@ -225,6 +228,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
         "def_jinying": defs["jinying"],
         "daily_json": serialize_daily(daily),
         "order_count": order_count,
+        "positive_count": positive_count,
         "period_start": p_start,
         "period_end": p_end,
         "period_text": period_text,

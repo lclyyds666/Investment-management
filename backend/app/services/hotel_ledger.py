@@ -307,7 +307,7 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
                 continue
             header, rows = _header_row(ws.iter_rows(values_only=True))
             d = agg.setdefault(plat, {
-                "platform": plat, "room_nights": 0, "order_count": 0,
+                "platform": plat, "room_nights": 0, "order_count": 0, "positive_count": 0,
                 "base_received": Decimal("0"), "daily": {}, "pstart": None, "pend": None,
             })
             s0, e0 = _dates_from_title(ws.title, year)
@@ -345,6 +345,8 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
                     day["nights"] += int(n) if n is not None else 0
                     d["base_received"] += recv
                     d["order_count"] += 1
+                    if shi is not None and shi > 0:
+                        d["positive_count"] += 1
                     d["room_nights"] += int(n) if n is not None else 0
                     if dt:
                         s0 = dt if s0 is None else min(s0, dt)
@@ -372,6 +374,8 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
                     day["nights"] += int(n) if n is not None else 0
                     d["base_received"] += base
                     d["order_count"] += 1
+                    if base is not None and base > 0:
+                        d["positive_count"] += 1
                     d["room_nights"] += int(n) if n is not None else 0
                     if dt:
                         s0 = dt if s0 is None else min(s0, dt)
@@ -401,6 +405,7 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             "platform": plat,
             "room_nights": d["room_nights"],
             "order_count": d["order_count"],
+            "positive_count": d["positive_count"],
             "base_received": base_received,
             "suggested_commission": defs["commission"],
             "def_hexiao": defs["hexiao"],

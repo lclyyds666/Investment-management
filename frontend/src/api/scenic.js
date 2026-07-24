@@ -21,3 +21,8 @@ export function uploadScenicLedger(scenicId, file) {
 export function clearScenicLedger(scenicId) {
   return request.delete(`/scenic-spots/${encodeURIComponent(scenicId)}/ledger`)
 }
+
+/** 景区经营数据卡片：销售额/核销数/核销率（门票+酒店台账聚合，每景区独立） */
+export function getScenicMetrics(scenicId) {
+  return request.get(`/scenic-spots/${encodeURIComponent(scenicId)}/metrics`)
+}

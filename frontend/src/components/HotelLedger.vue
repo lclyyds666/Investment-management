@@ -386,6 +386,7 @@ async function onFileChange(file) {
       repay_date: null,
       repay_amount: null,
       order_count: p.order_count,
+      positive_count: Number(p.positive_count) || 0,
       source_file: res.source_file,
       detail_stored: res.detail_stored,
       detail_name: res.detail_name
@@ -416,7 +417,7 @@ async function onSave() {
     def_jinying: r.def_jinying,
     payment_amount: r.payment_amount || 0,
     repay_date: r.repay_date, repay_amount: r.repay_amount,
-    order_count: r.order_count, source_file: r.source_file,
+    order_count: r.order_count, positive_count: r.positive_count, source_file: r.source_file,
     detail_stored: r.detail_stored, detail_name: r.detail_name
   }))
   saving.value = true

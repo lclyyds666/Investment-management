@@ -71,6 +71,7 @@ class TicketLedger(Base):
         Numeric(6, 4), default=Decimal("0.0400"), comment="旧服务费率(已弃用,保留历史列)"
     )
     order_count: Mapped[int] = mapped_column(Integer, default=0, comment="核销订单数(明细统计)")
+    positive_count: Mapped[int] = mapped_column(Integer, default=0, comment="订单实收为正数的订单数(核销率分子)")
 
     # —— 回款（手工录入）——
     repay_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="回款日期(手工)")

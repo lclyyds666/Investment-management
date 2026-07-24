@@ -17,8 +17,8 @@ from app.services import customer_research as research_svc
 
 router = APIRouter()
 
-# 可维护客户档案的角色
-WRITE_ROLES = (Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR)
+# 可维护客户档案(新建/编辑/删除)的角色：业务经办 + 信息维护(超管始终放行)
+WRITE_ROLES = (Role.BUSINESS_HANDLER,)
 
 
 def _dump_files(payload_dict: dict) -> dict:
