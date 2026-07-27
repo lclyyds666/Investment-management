@@ -52,6 +52,7 @@ class TicketLedgerSaveRow(BaseModel):
     period_end: Optional[date] = None
     supplier_received: Decimal = Decimal("0")
     supplier_commission: Decimal = Decimal("0")     # 服务商佣金（手工，默认0）
+    commission_rate: Decimal = Field(default=Decimal("0.06"))  # 服务商佣金率（仅抖音，默认0.06）
     payment_amount: Decimal = Decimal("0")          # 付款金额（手工，期次递推输入）
     rate_hexiao: Decimal = Field(default=Decimal("0.90"))
     rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率（结算金额=B×结算费率）
@@ -88,6 +89,7 @@ class TicketLedgerUpdateIn(BaseModel):
     ticket_product: Optional[str] = None
     supplier_received: Optional[Decimal] = None  # 服务商到账(人工覆盖;传入即清逐日明细走期级重算)
     supplier_commission: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None    # 服务商佣金率(仅抖音;改后佣金按新率逐日重算)
     payment_amount: Optional[Decimal] = None
     rate_hexiao: Optional[Decimal] = None
     rate_settle: Optional[Decimal] = None      # 结算费率(可编辑)
@@ -113,6 +115,7 @@ class TicketLedgerRow(BaseModel):
     period_end: Optional[date] = None
     supplier_received: Decimal = Decimal("0")
     supplier_commission: Decimal = Decimal("0")
+    commission_rate: Decimal = Decimal("0.06")
     publisher_due: Decimal = Decimal("0")
     hexiao_amount: Decimal = Decimal("0")
     payment_amount: Decimal = Decimal("0")

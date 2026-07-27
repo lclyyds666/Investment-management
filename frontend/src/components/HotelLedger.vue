@@ -175,8 +175,14 @@
           <el-input-number v-model="editForm.base_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @change="editForm.receivedEdited = true" />
           <div class="edit-hint">算法自动算出（美团/携程为平台结算毛额），可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
+        <!-- 服务商佣金算法仅对抖音生效：佣金率可动态调整(默认6%) -->
+        <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金率">
+          <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width:100%" @change="editForm.commissionEdited = false" /><span class="pct-suffix">%</span>
+          <div class="edit-hint">仅抖音生效。改佣金率后，服务商佣金按新费率逐日重算(实收×佣金率−达人−团长)，保存后生效</div>
+        </el-form-item>
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金">
-          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width:100%" />
+          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width:100%" @change="editForm.commissionEdited = true" />
+          <div class="edit-hint">手工改佣金金额则以该值为准；否则随佣金率逐日重算</div>
         </el-form-item>
         <el-form-item label="核销率">
           <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
@@ -490,6 +496,7 @@ const editForm = reactive({
   hotel_name: '',
   base_received: 0, receivedEdited: false,       // 服务商到账/平台毛额(可人工改)
   supplier_commission: 0, room_nights: 0,
+  commissionRatePct: 6, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
   ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false,
@@ -529,6 +536,8 @@ function openEdit(row) {
   editForm.base_received = Number(row.base_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
+  editForm.commissionRatePct = round2((Number(row.commission_rate) || 0.06) * 100)
+  editForm.commissionEdited = false
   editForm.room_nights = Number(row.room_nights) || 0
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
   editForm.fee_algo = Number(row.fee_algo) || 1
@@ -551,7 +560,6 @@ async function onSaveEdit() {
   try {
     const payload = {
       hotel_name: editForm.hotel_name,
-      supplier_commission: editForm.supplier_commission,
       room_nights: editForm.room_nights,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
       fee_algo: editForm.fee_algo,
@@ -562,6 +570,10 @@ async function onSaveEdit() {
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     }
+    // 服务商佣金率(仅抖音)：动态可调，改后佣金按新率逐日重算
+    if (editRow.value.platform === '抖音') payload.commission_rate = round2(Number(editForm.commissionRatePct) / 100)
+    // 手工改过佣金金额才覆盖上传；否则佣金随佣金率逐日重算
+    if (editForm.commissionEdited) payload.supplier_commission = editForm.supplier_commission
     // 人工改过才上传覆盖：服务商到账 / 景区核销金额 / 结算金额；否则由后端按算法(逐日)重算
     if (editForm.receivedEdited) payload.base_received = editForm.base_received
     if (editForm.hexiaoEdited) payload.hexiao_amount = editForm.hexiao_amount

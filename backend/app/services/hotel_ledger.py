@@ -213,16 +213,19 @@ def recompute_from_days(platform: str, days: list[dict],
                         fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
                         fee_algo: int = 1,
                         commission_override=None,
-                        room_nights_override=None) -> dict | None:
+                        room_nights_override=None,
+                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict | None:
     """酒店逐日重算并累加（逐日舍入到分）。结算基数=到账/毛额−佣金；核销=Σ(基数_day×核销率)；
     算法1：服务费=间夜×每间夜服务费(间夜用行聚合值，×整数费率无逐日舍入差)、结算=核销+服务费；
     算法2：结算=Σ(基数_day×结算费率)、服务费=结算−核销。
-    佣金（仅抖音）默认逐日自动=实收×6%−达人−团长；改总额时按各天实收占比分摊差额。"""
+    佣金（仅抖音）默认逐日自动=实收×佣金率−达人−团长；改总额时按各天实收占比分摊差额。
+    佣金率可动态调整（默认 6%）。"""
     if not days:
         return None
     is_dy = platform == "抖音"
+    rate_comm = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
     if is_dy:
-        comm_auto = [_q(d["shishou"] * DEFAULT_COMMISSION_RATE + d["daren"] + d["tuanzhang"]) for d in days]
+        comm_auto = [_q(d["shishou"] * rate_comm + d["daren"] + d["tuanzhang"]) for d in days]
         c0 = _q(sum(comm_auto, Decimal("0")))
         if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
             comm_day, c_total = comm_auto, c0
@@ -274,10 +277,11 @@ def recompute_from_json(platform: str, daily_json: str,
                         fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
                         fee_algo: int = 1,
                         commission_override=None,
-                        room_nights_override=None) -> dict | None:
+                        room_nights_override=None,
+                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict | None:
     return recompute_from_days(platform, _days_from_json(daily_json), rate_hexiao,
                                rate_settle, fee_per_night, fee_algo, commission_override,
-                               room_nights_override)
+                               room_nights_override, commission_rate)
 
 
 def daily_defaults(platform: str, daily: dict[str, dict],

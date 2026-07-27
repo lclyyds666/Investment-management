@@ -122,38 +122,38 @@
       </el-table>
     </el-card>
 
-    <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库） -->
+    <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库；表格宽度自适应） -->
     <el-table :data="displayRows" border stripe size="small" class="saved-table" :row-class-name="rowClass">
-      <el-table-column label="景区ID" width="150" fixed="left">
+      <el-table-column label="景区ID" min-width="110">
         <template #default="{ row }">{{ row.isTotal ? '' : scenicName }}</template>
       </el-table-column>
-      <el-table-column label="平台" width="90">
-        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isTotal ? '本期合计' : row.platform }}</span></template>
+      <el-table-column label="平台" min-width="80">
+        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isGrandTotal ? '总合计' : row.isTotal ? '本期合计' : row.platform }}</span></template>
       </el-table-column>
       <el-table-column label="景区门票" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">{{ row.isTotal ? '' : row.ticket_product }}</template>
       </el-table-column>
-      <el-table-column label="核对日期" width="160" prop="check_date_text" />
-      <el-table-column label="景区核销金额" width="130" align="right">
+      <el-table-column label="核对日期" min-width="130" prop="check_date_text" />
+      <el-table-column label="景区核销金额" min-width="105" align="right">
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
       <!-- 景区待核销金额：本期合计行(多行)或独行(单行)显示 -->
-      <el-table-column label="景区待核销金额" width="140" align="right">
+      <el-table-column label="景区待核销金额" min-width="110" align="right">
         <template #default="{ row }"><span v-if="row.isTotal || row.isSoloPeriod" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
       </el-table-column>
-      <el-table-column label="结算金额" width="130" align="right">
+      <el-table-column label="结算金额" min-width="105" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
       </el-table-column>
-      <el-table-column label="服务费" width="120" align="right">
+      <el-table-column label="服务费" min-width="90" align="right">
         <template #default="{ row }">{{ fmtMoney(row.service_fee) }}</template>
       </el-table-column>
-      <el-table-column label="回款日期" width="110">
+      <el-table-column label="回款日期" min-width="100">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_date || '') : '' }}</template>
       </el-table-column>
-      <el-table-column label="回款金额" width="130" align="right">
+      <el-table-column label="回款金额" min-width="100" align="right">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="130" fixed="right">
+      <el-table-column label="操作" min-width="110">
         <template #default="{ row }">
           <template v-if="!row.isTotal && canEdit">
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
@@ -161,10 +161,10 @@
           </template>
         </template>
       </el-table-column>
-      <!-- 状态：本期合计行(多行)或独行(单行)有内容；确认函仅业务复核+信息维护 -->
-      <el-table-column label="状态" width="300" fixed="right">
+      <!-- 状态：本期合计行(多行)或独行(单行)有内容(总合计行不显示)；确认函仅业务复核+信息维护 -->
+      <el-table-column label="状态" min-width="200">
         <template #default="{ row }">
-          <template v-if="row.isTotal || row.isSoloPeriod">
+          <template v-if="(row.isTotal || row.isSoloPeriod) && !row.isGrandTotal">
             <template v-if="!row.confirm_stored">
               <el-tag type="info" size="small" effect="plain">未确认</el-tag>
               <el-upload
@@ -200,9 +200,6 @@
     <!-- 编辑单行弹窗（集中编辑：服务商佣金 / 核销率 / 服务费率 / 付款金额 / 回款） -->
     <el-dialog v-model="editVisible" title="编辑台账行" width="480px">
       <el-form label-width="120px" v-if="editRow">
-        <el-form-item label="付款日期">
-          <el-date-picker v-model="editForm.pay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
-        </el-form-item>
         <el-form-item label="平台">
           <el-select v-model="editForm.platform" style="width: 100%">
             <el-option v-for="p in PLATFORMS" :key="p" :label="p" :value="p" />
@@ -212,8 +209,15 @@
           <el-input-number v-model="editForm.supplier_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" @change="editForm.receivedEdited = true" />
           <div class="edit-hint">算法自动算出，可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
-        <el-form-item label="服务商佣金">
-          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width: 100%" />
+        <!-- 服务商佣金算法仅对抖音生效：佣金率可动态调整(默认6%) -->
+        <el-form-item v-if="editForm.platform === '抖音'" label="服务商佣金率">
+          <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width: 100%" @change="editForm.commissionEdited = false" />
+          <span class="pct-suffix">%</span>
+          <div class="edit-hint">仅抖音生效。改佣金率后，服务商佣金按新费率逐日重算(实收×佣金率−达人−团长)，保存后生效</div>
+        </el-form-item>
+        <el-form-item v-if="editForm.platform === '抖音'" label="服务商佣金">
+          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width: 100%" @change="editForm.commissionEdited = true" />
+          <div class="edit-hint">手工改佣金金额则以该值为准；否则随佣金率逐日重算</div>
         </el-form-item>
         <el-form-item label="出版应得到账">
           <el-input :model-value="fmtMoney(editPublisherDue)" disabled style="width: 100%" />
@@ -237,6 +241,9 @@
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="付款日期">
+          <el-date-picker v-model="editForm.pay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
         </el-form-item>
         <el-form-item label="回款日期">
           <el-date-picker v-model="editForm.repay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -459,15 +466,18 @@ const editForm = reactive({
   pay_date: null, platform: '',
   supplier_received: 0, receivedEdited: false,   // 服务商到账(可人工改)
   supplier_commission: 0,
+  commissionRatePct: 6, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
   ratePctHexiao: 90, ratePctSettle: 94,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false, payment_amount: 0,
   repay_date: null, repay_amount: null
 })
 
-// 出版应得到账 = 服务商到账(可编辑) − 服务商佣金
-const editPublisherDue = computed(() =>
-  round2((Number(editForm.supplier_received) || 0) - (Number(editForm.supplier_commission) || 0)))
+// 出版应得到账 = 服务商到账(可编辑) − 服务商佣金；佣金仅抖音计入
+const editPublisherDue = computed(() => {
+  const comm = editForm.platform === '抖音' ? (Number(editForm.supplier_commission) || 0) : 0
+  return round2((Number(editForm.supplier_received) || 0) - comm)
+})
 // 景区核销金额默认 = 出版应得 × 核销率；结算金额默认 = 出版应得 × 结算费率
 const editHexiao = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctHexiao) || 0) / 100))
 const editJinying = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctSettle) || 0) / 100))
@@ -492,6 +502,8 @@ function openEdit(row) {
   editForm.supplier_received = Number(row.supplier_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
+  editForm.commissionRatePct = round2((Number(row.commission_rate) || 0.06) * 100)
+  editForm.commissionEdited = false
   editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
   editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
@@ -512,13 +524,16 @@ async function onSaveEdit() {
     const payload = {
       pay_date: editForm.pay_date,
       platform: editForm.platform,
-      supplier_commission: editForm.supplier_commission,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
       rate_settle: round2(Number(editForm.ratePctSettle) / 100),
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     }
+    // 服务商佣金率(仅抖音)：动态可调，改后佣金按新率逐日重算
+    if (editForm.platform === '抖音') payload.commission_rate = round2(Number(editForm.commissionRatePct) / 100)
+    // 手工改过佣金金额才覆盖上传；否则佣金随佣金率逐日重算
+    if (editForm.commissionEdited) payload.supplier_commission = editForm.supplier_commission
     // 人工改过才上传覆盖：服务商到账 / 景区核销金额 / 结算金额；否则由后端按算法(逐日)重算
     if (editForm.receivedEdited) payload.supplier_received = editForm.supplier_received
     if (editForm.hexiaoEdited) payload.hexiao_amount = editForm.hexiao_amount
@@ -601,9 +616,27 @@ const displayRows = computed(() => {
     t.confirmed = b.rows[0]?.confirmed || false
     out.push(...b.rows, t)
   }
+  // 总合计（所有期汇总）：核销/结算/服务费逐行累加；待核销取末期滚动余额；回款各行累加
+  if (savedRows.value.length) {
+    const g = {
+      isGrandTotal: true, isTotal: true, platform: '总合计', ticket_product: '', check_date_text: '',
+      hexiao_amount: 0, jinying_amount: 0, service_fee: 0, pending_writeoff: 0,
+      repay_date: '', repay_amount: null
+    }
+    let gRepay = 0
+    for (const r of savedRows.value) {
+      g.hexiao_amount += Number(r.hexiao_amount) || 0
+      g.jinying_amount += Number(r.jinying_amount) || 0
+      g.service_fee += Number(r.service_fee) || 0
+      gRepay += Number(r.repay_amount) || 0
+    }
+    g.pending_writeoff = Number(savedRows.value[savedRows.value.length - 1].pending_writeoff) || 0
+    g.repay_amount = gRepay || null
+    out.push(g)
+  }
   return out
 })
-function rowClass({ row }) { return row.isTotal ? 'total-row' : '' }
+function rowClass({ row }) { return row.isGrandTotal ? 'grand-total-row' : row.isTotal ? 'total-row' : '' }
 
 // —— 本期确认函（业务复核/信息维护）——
 async function onConfirmPick(row, file) {
@@ -708,6 +741,9 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .pending { color: #f59e0b; font-weight: 700; }
 .saved-table { margin-top: 4px; }
 .saved-table :deep(.total-row) { background: var(--el-fill-color-light) !important; font-weight: 700; }
+/* 总合计：更深底色 + 主色文字，区别于「本期合计」 */
+.saved-table :deep(.grand-total-row) { background: var(--el-color-primary-light-9) !important; font-weight: 800; }
+.saved-table :deep(.grand-total-row .cell) { color: var(--el-color-primary); }
 .total-label { font-weight: 700; color: var(--el-color-primary); }
 
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }

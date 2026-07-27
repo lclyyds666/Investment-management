@@ -255,6 +255,7 @@ def save_ledger(
         calc = hl_svc.recompute_from_json(
             r.platform, r.daily_json, r.rate_hexiao, r.rate_settle,
             r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
+            r.commission_rate,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
             r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
@@ -274,6 +275,7 @@ def save_ledger(
             room_nights=r.room_nights or 0,
             base_received=r.base_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
+            commission_rate=r.commission_rate,
             settle_base=calc["settle_base"],
             rate_hexiao=r.rate_hexiao,
             hexiao_amount=calc["hexiao_amount"],
@@ -323,8 +325,10 @@ def update_row(
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
 
-    # 服务商到账 / 佣金 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
+    # 服务商到账 / 佣金 / 佣金率 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
     calc_dirty = False
+    # 佣金 override：手工传入佣金金额 → 该值为准；否则 None（佣金随佣金率逐日重算）
+    comm_override = None
     if payload.base_received is not None:
         if abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005"):
             row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
@@ -334,6 +338,11 @@ def update_row(
         if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
             calc_dirty = True
         row.supplier_commission = payload.supplier_commission
+        comm_override = payload.supplier_commission   # 手工佣金金额覆盖
+    if payload.commission_rate is not None:
+        if abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005"):
+            calc_dirty = True
+        row.commission_rate = payload.commission_rate
     if payload.rate_hexiao is not None:
         if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
             calc_dirty = True
@@ -355,12 +364,15 @@ def update_row(
             calc_dirty = True
         row.room_nights = payload.room_nights
     if calc_dirty:
-        # 逐日重算：改费率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认
+        # 逐日重算：改费率/佣金率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认。
+        # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
         calc = hl_svc.recompute_from_json(
             row.platform, row.daily_json, row.rate_hexiao, row.rate_settle,
-            row.fee_per_night, row.fee_algo, row.supplier_commission, row.room_nights,
+            row.fee_per_night, row.fee_algo, comm_override, row.room_nights,
+            row.commission_rate,
         ) or hl_svc.compute_row(
-            row.platform, row.base_received, row.supplier_commission,
+            row.platform, row.base_received,
+            comm_override if comm_override is not None else row.supplier_commission,
             row.room_nights, row.rate_hexiao, row.fee_per_night, row.fee_algo, row.rate_settle,
         )
         row.supplier_commission = calc["supplier_commission"]
