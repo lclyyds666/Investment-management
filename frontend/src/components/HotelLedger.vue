@@ -8,16 +8,64 @@
       </div>
       <div class="hl-ops">
         <el-upload v-if="canEdit" :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls" :on-change="onFileChange">
-          <el-button type="primary" :icon="UploadFilled" :loading="parsing">上传对账明细</el-button>
+          <el-button type="primary" :icon="UploadFilled" :loading="parsing" :disabled="!configReady">上传对账明细</el-button>
         </el-upload>
         <el-button :icon="Refresh" @click="loadSaved">刷新</el-button>
         <el-button type="success" plain :icon="Download" :disabled="!savedRows.length" @click="onExport">导出Excel</el-button>
       </div>
     </div>
 
-    <el-alert type="info" :closable="false" show-icon class="hl-tip"
-      title="流程：每次上传 1 个对账明细（=1 期，内含抖音/美团/携程等多平台）→ 按平台自动算结算基数（抖音=服务商到账−佣金；美团/携程=平台结算毛额）与间夜 → 录入付款金额/回款（本期各平台共享）→ 系统算 景区核销=基数×核销率、结算金额与服务费（默认算法1：服务费=间夜×44、结算=核销+服务费；可在「编辑台账行」切换算法2：结算=基数×结算费率、服务费=结算−核销），并按整期递推景区待核销 → 保存生成台账（按核对日期升序，含本期合计行）。"
-    />
+    <el-alert type="info" :closable="false" show-icon class="hl-tip" :title="configDescription" />
+
+    <el-card shadow="never" class="config-card" v-loading="configLoading">
+      <div class="config-card-head">
+        <span>新酒店台账默认参数</span>
+        <div>
+          <el-tag size="small" effect="plain">{{ configSourceText }}</el-tag>
+          <el-tag v-if="hasConfigChanges" size="small" type="warning" effect="plain">已手工修改</el-tag>
+          <el-button v-if="hasConfigChanges" size="small" text type="primary" @click="restoreHotelConfig">恢复景区配置</el-button>
+        </div>
+      </div>
+      <el-form inline class="config-form">
+        <el-form-item label="核销率">
+          <el-input-number
+            v-model="configForm.rate_hexiao" :min="0" :max="100" :precision="2" :step="1"
+            controls-position="right" :disabled="!configReady || !canEdit" @change="onHotelConfigChange('rate_hexiao')"
+          />
+          <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="结算率">
+          <el-input-number
+            v-model="configForm.rate_settle" :min="0" :max="100" :precision="2" :step="1"
+            controls-position="right" :disabled="!configReady || !canEdit" @change="onHotelConfigChange('rate_settle')"
+          />
+          <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="佣金率">
+          <el-input-number
+            v-model="configForm.commission_rate" :min="0" :max="100" :precision="2" :step="0.5"
+            controls-position="right" :disabled="!configReady || !canEdit" @change="onHotelConfigChange('commission_rate')"
+          />
+          <span class="pct-suffix">%</span>
+        </el-form-item>
+        <el-form-item label="服务费算法">
+          <el-radio-group
+            v-model="configForm.fee_algo" :disabled="!configReady || !canEdit"
+            @change="onHotelConfigChange('fee_algo')"
+          >
+            <el-radio :value="1">算法1</el-radio>
+            <el-radio :value="2">算法2</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="每间夜服务费">
+          <el-input-number
+            v-model="configForm.fee_per_night" :min="0" :precision="2" :step="1"
+            controls-position="right" :disabled="!configReady || !canEdit" @change="onHotelConfigChange('fee_per_night')"
+          />
+          <span class="pct-suffix">元</span>
+        </el-form-item>
+      </el-form>
+    </el-card>
 
     <!-- 待确认区：本期各平台草稿 -->
     <el-card v-if="draftRows.length" shadow="never" class="hl-draft">
@@ -231,29 +279,33 @@ import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Refresh, Download, House, EditPen, Check } from '@element-plus/icons-vue'
 import {
-  parseHotelFile, getHotelLedger, saveHotelLedger,
+  parseHotelFile, getHotelLedger, getHotelScenicConfig, saveHotelLedger,
   updateHotelRow, deleteHotelRow, fetchHotelLedgerExportBlob,
   uploadHotelConfirm, approveHotelConfirm, deleteHotelConfirm, fetchHotelConfirmBlob
 } from '@/api/hotelLedger'
 import { downloadBlob } from '@/utils/file'
-import { getScenicById } from '@/constants/scenic'
 import { ROLES } from '@/constants/business'
+import { useScenicStore } from '@/store/scenic'
 import { useUserStore } from '@/store/user'
+import {
+  HOTEL_CONFIG_FIELDS,
+  buildHotelConfigOverrides,
+  hotelConfigFromForm,
+  hotelConfigToForm
+} from '@/utils/hotelConfig'
 
 const props = defineProps({ scenicId: { type: String, required: true } })
 
 const userStore = useUserStore()
+const scenicStore = useScenicStore()
 // 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
-const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
+const scenicName = computed(() => scenicStore.getById(props.scenicId)?.name || props.scenicId)
 // 上传/编辑/删除台账：业务经办 + 信息维护(超管)
 const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 // 确认函 上传/重传/删除：业务经办 + 信息维护(超管)；「确认」：业务复核 + 信息维护(超管)
 const canUploadConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 const canApproveConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
-const DEFAULT_RATE_HEXIAO = 0.9
-const DEFAULT_FEE_PER_NIGHT = 44
-const DEFAULT_RATE_SETTLE = 0.94   // 算法2 结算费率默认（结算金额=结算基数×结算费率）
 const DEFAULT_HOTEL_NAME = '郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店'
 
 const loading = ref(false)
@@ -261,15 +313,97 @@ const parsing = ref(false)
 const saving = ref(false)
 const savedRows = ref([])
 const draftRows = ref([])
+const hotelConfig = ref(null)
+const configLoading = ref(false)
+const configLoadedFor = ref('')
+const configForm = reactive({
+  rate_hexiao: null,
+  rate_settle: null,
+  commission_rate: null,
+  fee_algo: null,
+  fee_per_night: null
+})
+const configModified = reactive({
+  rate_hexiao: false,
+  rate_settle: false,
+  commission_rate: false,
+  fee_algo: false,
+  fee_per_night: false
+})
+const configReady = computed(() => configLoadedFor.value === props.scenicId)
+const hasConfigChanges = computed(() => HOTEL_CONFIG_FIELDS.some((field) => configModified[field]))
+const configSourceText = computed(() => {
+  if (!configReady.value) return '配置加载中'
+  return hotelConfig.value?.configured ? '景区配置' : '系统默认配置'
+})
+const configDescription = computed(() => {
+  if (!configReady.value) return '正在读取景区酒店计算参数，完成后可上传对账明细。'
+  const algoText = Number(configForm.fee_algo) === 2 ? '算法2（结算率）' : '算法1（间夜服务费）'
+  return `当前新台账参数：核销率 ${configForm.rate_hexiao}%、结算率 ${configForm.rate_settle}%、佣金率 ${configForm.commission_rate}%、${algoText}。`
+})
+
+function applyHotelConfig(config, preserveModified = false) {
+  const form = hotelConfigToForm(config)
+  for (const field of HOTEL_CONFIG_FIELDS) {
+    if (!preserveModified || !configModified[field]) configForm[field] = form[field]
+    if (!preserveModified) configModified[field] = false
+  }
+  hotelConfig.value = config
+  configLoadedFor.value = props.scenicId
+}
+
+async function loadHotelConfig(scenicId = props.scenicId, preserveModified = false) {
+  if (!scenicId) return
+  configLoading.value = true
+  try {
+    const config = await getHotelScenicConfig(scenicId)
+    if (scenicId === props.scenicId) applyHotelConfig(config, preserveModified)
+    return config
+  } catch (error) {
+    if (scenicId === props.scenicId) configLoadedFor.value = ''
+    throw error
+  } finally {
+    if (scenicId === props.scenicId) configLoading.value = false
+  }
+}
+
+function currentHotelConfig() {
+  return hotelConfigFromForm(configForm)
+}
+
+function currentConfigOverrides() {
+  return buildHotelConfigOverrides(configForm, configModified)
+}
+
+function onHotelConfigChange(field) {
+  configModified[field] = true
+  if (draftRows.value.length) {
+    draftRows.value = []
+    ElMessage.warning('酒店参数已修改，请重新上传对账明细后再保存。')
+  }
+}
+
+function restoreHotelConfig() {
+  const hadDraft = draftRows.value.length > 0
+  applyHotelConfig(hotelConfig.value)
+  if (hadDraft) {
+    draftRows.value = []
+    ElMessage.warning('已恢复景区配置，请重新上传对账明细。')
+  }
+}
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 function settleBase(row) {
   const comm = row.platform === '抖音' ? (Number(row.supplier_commission) || 0) : 0
   return round2((Number(row.base_received) || 0) - comm)
 }
-function calcHexiao(row) { return round2(settleBase(row) * DEFAULT_RATE_HEXIAO) }
-function calcFee(row) { return round2((Number(row.room_nights) || 0) * DEFAULT_FEE_PER_NIGHT) }
-function calcJinying(row) { return round2(calcHexiao(row) + calcFee(row)) }
+function calcHexiao(row) { return round2(settleBase(row) * currentHotelConfig().rate_hexiao) }
+function calcJinying(row) {
+  const config = currentHotelConfig()
+  if (config.fee_algo === 2) return round2(settleBase(row) * config.rate_settle)
+  const fee = round2((Number(row.room_nights) || 0) * config.fee_per_night)
+  return round2(calcHexiao(row) + fee)
+}
 // 佣金未改 → 展示后端「按日期粒度」精准默认核销；改了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
   return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
@@ -413,7 +547,8 @@ async function onFileChange(file) {
   if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) { ElMessage.error('仅支持 Excel 文件(.xlsx/.xls)'); return }
   parsing.value = true
   try {
-    const res = await parseHotelFile(props.scenicId, raw)
+    await loadHotelConfig(props.scenicId, true)
+    const res = await parseHotelFile(props.scenicId, raw, currentConfigOverrides())
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
     draftRows.value = (res.platforms || []).map((p) => ({
       platform: p.platform,
@@ -455,13 +590,13 @@ async function onFileChange(file) {
 
 async function onSave() {
   if (!draftRows.value.length) return
+  const configOverrides = currentConfigOverrides()
   const rows = draftRows.value.map((r) => ({
     platform: r.platform, hotel_name: r.hotel_name,
     check_date_text: r.check_date_text, period_text: r.period_text,
     period_start: r.period_start, period_end: r.period_end,
     room_nights: r.room_nights, base_received: r.base_received,
     supplier_commission: r.supplier_commission || 0,
-    rate_hexiao: DEFAULT_RATE_HEXIAO, fee_per_night: DEFAULT_FEE_PER_NIGHT,
     daily_json: r.daily_json,
     // 结算金额仅在手工改过时上传(覆盖)，否则由后端逐日累加
     jinying_amount: r.jinyingEdited ? r.jinying_amount : null,
@@ -473,7 +608,8 @@ async function onSave() {
     payment_date: r.payment_date,
     repay_date: r.repay_date, repay_amount: r.repay_amount,
     order_count: r.order_count, positive_count: r.positive_count, source_file: r.source_file,
-    detail_stored: r.detail_stored, detail_name: r.detail_name
+    detail_stored: r.detail_stored, detail_name: r.detail_name,
+    ...configOverrides
   }))
   saving.value = true
   try {
@@ -496,8 +632,8 @@ const editForm = reactive({
   hotel_name: '',
   base_received: 0, receivedEdited: false,       // 服务商到账/平台毛额(可人工改)
   supplier_commission: 0, room_nights: 0,
-  commissionRatePct: 6, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
-  ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
+  commissionRatePct: null, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
+  ratePctHexiao: null, fee_algo: null, fee_per_night: null, ratePctSettle: null,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false,
   payment_amount: 0, payment_date: null, repay_date: null, repay_amount: null
@@ -536,13 +672,13 @@ function openEdit(row) {
   editForm.base_received = Number(row.base_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
-  editForm.commissionRatePct = round2((Number(row.commission_rate) || 0.06) * 100)
+  editForm.commissionRatePct = round2(Number(row.commission_rate) * 100)
   editForm.commissionEdited = false
   editForm.room_nights = Number(row.room_nights) || 0
-  editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
-  editForm.fee_algo = Number(row.fee_algo) || 1
-  editForm.fee_per_night = Number(row.fee_per_night) || DEFAULT_FEE_PER_NIGHT
-  editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
+  editForm.ratePctHexiao = round2(Number(row.rate_hexiao) * 100)
+  editForm.fee_algo = Number(row.fee_algo)
+  editForm.fee_per_night = Number(row.fee_per_night)
+  editForm.ratePctSettle = round2(Number(row.rate_settle) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
   editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0
@@ -667,7 +803,21 @@ async function onConfirmDelete(row) {
   }
 }
 
-watch(() => props.scenicId, loadSaved, { immediate: true })
+watch(
+  () => props.scenicId,
+  (scenicId) => {
+    draftRows.value = []
+    hotelConfig.value = null
+    configLoadedFor.value = ''
+    for (const field of HOTEL_CONFIG_FIELDS) {
+      configForm[field] = null
+      configModified[field] = false
+    }
+    loadSaved()
+    loadHotelConfig(scenicId).catch(() => {})
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped lang="scss">
@@ -676,6 +826,18 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .hl-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--el-text-color-primary); .el-icon { color: var(--el-color-primary); } }
 .hl-ops { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .hl-tip { margin-bottom: 12px; }
+.config-card { margin-bottom: 12px; }
+.config-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-weight: 600;
+  > div { display: flex; align-items: center; gap: 8px; }
+}
+.config-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
+.config-form :deep(.el-form-item) { margin: 0; }
 .hl-draft { margin-bottom: 16px; border: 1px solid var(--el-color-primary-light-5); }
 .draft-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-weight: 600; > div { display: flex; align-items: center; gap: 8px; } }
 /* 表格自适应宽度(100%) + 行高加高、字号加大，便于阅读 */

@@ -1,5 +1,5 @@
 <template>
-  <div class="ct-detail">
+  <div class="ct-detail" v-loading="scenicStore.loading">
     <!-- 返回 + 标题 -->
     <div class="ct-detail-head">
       <el-button :icon="ArrowLeft" @click="goBack">返回文旅业务</el-button>
@@ -77,7 +77,7 @@
           </template>
 
           <el-tabs v-model="ledgerTab" class="ledger-tabs">
-            <el-tab-pane label="景区门票核销台账" name="ticket">
+            <el-tab-pane v-if="spot.ticket_enabled" label="景区门票核销台账" name="ticket">
               <TicketLedger :scenic-id="scenicId" />
               <!-- 原始核销明细预览（对照/校验用）：仅展示已保存的对账明细源文件，点击查看/下载 -->
               <el-collapse class="raw-collapse">
@@ -91,7 +91,7 @@
               </el-collapse>
             </el-tab-pane>
 
-            <el-tab-pane label="景区酒店核销台账" name="scenic">
+            <el-tab-pane v-if="spot.hotel_enabled" label="景区酒店核销台账" name="hotel">
               <HotelLedger :scenic-id="scenicId" />
               <!-- 原始核销明细预览（对照/校验用）：仅列源文件，可查看/下载 -->
               <el-collapse class="raw-collapse">
@@ -105,11 +105,16 @@
               </el-collapse>
             </el-tab-pane>
           </el-tabs>
+          <el-empty
+            v-if="!spot.ticket_enabled && !spot.hotel_enabled"
+            description="该景区暂未启用核销台账模块"
+            :image-size="80"
+          />
         </el-collapse-item>
       </el-collapse>
     </template>
 
-    <el-empty v-else description="未找到该景区" :image-size="90">
+    <el-empty v-else-if="scenicStore.loaded" description="未找到该景区" :image-size="90">
       <el-button type="primary" @click="goBack">返回文旅业务</el-button>
     </el-empty>
   </div>
@@ -122,8 +127,10 @@ import {
   ArrowLeft, Link, TopRight, Files, Tickets, TrendCharts, InfoFilled,
   Checked, Money
 } from '@element-plus/icons-vue'
-import { getScenicById } from '@/constants/scenic'
+import { getScenicPlatformGroups } from '@/constants/scenicPlatforms'
 import { getScenicMetrics } from '@/api/scenic'
+import { useScenicStore } from '@/store/scenic'
+import { enabledLedgerModules } from '@/utils/scenicCatalog'
 import TicketLedger from '@/components/TicketLedger.vue'
 import TicketDetailFiles from '@/components/TicketDetailFiles.vue'
 import HotelLedger from '@/components/HotelLedger.vue'
@@ -136,10 +143,26 @@ const ledgerActive = ref([])
 
 const route = useRoute()
 const router = useRouter()
+const scenicStore = useScenicStore()
 
 // 通过动态路由参数识别当前景区（数据作用域键）
 const scenicId = computed(() => String(route.params.scenicId || ''))
-const spot = computed(() => getScenicById(scenicId.value))
+const spot = computed(() => scenicStore.getById(scenicId.value))
+
+watch(
+  scenicId,
+  () => scenicStore.load().catch(() => {}),
+  { immediate: true }
+)
+
+watch(
+  spot,
+  (current) => {
+    const modules = enabledLedgerModules(current)
+    if (!modules.includes(ledgerTab.value)) ledgerTab.value = modules[0] || ''
+  },
+  { immediate: true }
+)
 
 // 经营数据（每景区独立，源自门票+酒店核销台账实时聚合）
 const metrics = ref({ sales: 0, writeoff_count: 0, positive_count: 0, rate: 0 })
@@ -159,10 +182,9 @@ const bizMetrics = computed(() => [
 const platformGroups = computed(() => {
   const s = spot.value
   if (!s) return []
-  return [
-    { key: 'scenic', title: '景区酒店平台入口', items: s.scenicPlatforms || [] },
-    { key: 'ticket', title: '景区门票平台入口', items: s.ticketPlatforms || [] }
-  ]
+  return getScenicPlatformGroups(s.id).filter((group) => (
+    group.key === 'ticket' ? s.ticket_enabled : s.hotel_enabled
+  ))
 })
 
 function goBack() {

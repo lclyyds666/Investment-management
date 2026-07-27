@@ -305,8 +305,8 @@ import {
   uploadTicketConfirm, approveTicketConfirm, deleteTicketConfirm, fetchTicketConfirmBlob
 } from '@/api/ticketLedger'
 import { downloadBlob } from '@/utils/file'
-import { getScenicById } from '@/constants/scenic'
 import { ROLES } from '@/constants/business'
+import { useScenicStore } from '@/store/scenic'
 import { useUserStore } from '@/store/user'
 import {
   TICKET_RATE_FIELDS,
@@ -321,8 +321,9 @@ const props = defineProps({
 })
 
 const userStore = useUserStore()
+const scenicStore = useScenicStore()
 // 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
-const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
+const scenicName = computed(() => scenicStore.getById(props.scenicId)?.name || props.scenicId)
 // 上传/编辑/删除台账：业务经办 + 信息维护(超管)
 const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 // 确认函 上传/重传/删除：业务经办 + 信息维护(超管)；「确认」：业务复核 + 信息维护(超管)

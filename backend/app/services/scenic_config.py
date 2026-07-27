@@ -21,6 +21,10 @@ DEFAULT_FEE_PER_NIGHT = Decimal("44.00")
 class EffectiveScenicConfig:
     scenic_id: str
     scenic_name: str
+    image_url: str
+    ticket_enabled: bool
+    hotel_enabled: bool
+    sort_order: int
     default_ticket_product: str
     default_hotel_name: str
     rate_hexiao: Decimal
@@ -42,6 +46,10 @@ def get_effective_scenic_config(db: Session, scenic_id: str) -> EffectiveScenicC
         return EffectiveScenicConfig(
             scenic_id=scenic_id,
             scenic_name="",
+            image_url="",
+            ticket_enabled=True,
+            hotel_enabled=True,
+            sort_order=0,
             default_ticket_product=DEFAULT_TICKET_PRODUCT,
             default_hotel_name=DEFAULT_HOTEL_NAME,
             rate_hexiao=DEFAULT_RATE_HEXIAO,
@@ -56,6 +64,10 @@ def get_effective_scenic_config(db: Session, scenic_id: str) -> EffectiveScenicC
     return EffectiveScenicConfig(
         scenic_id=row.scenic_id,
         scenic_name=row.scenic_name,
+        image_url=row.image_url,
+        ticket_enabled=row.ticket_enabled,
+        hotel_enabled=row.hotel_enabled,
+        sort_order=row.sort_order,
         default_ticket_product=row.default_ticket_product,
         default_hotel_name=row.default_hotel_name,
         rate_hexiao=row.rate_hexiao,

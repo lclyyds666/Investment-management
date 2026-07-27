@@ -45,11 +45,11 @@ class HotelSaveRow(BaseModel):
     room_nights: int = 0
     base_received: Decimal = Decimal("0")
     supplier_commission: Decimal = Decimal("0")
-    commission_rate: Decimal = Field(default=Decimal("0.06"))  # 服务商佣金率(仅抖音,默认0.06)
-    rate_hexiao: Decimal = Field(default=Decimal("0.90"))
-    fee_per_night: Decimal = Field(default=Decimal("44.00"))
-    fee_algo: int = 1                                # 服务费算法(1=间夜×每间夜服务费;2=结算−核销)
-    rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率(算法2)
+    commission_rate: Optional[Decimal] = Field(default=None, ge=0, le=1)
+    rate_hexiao: Optional[Decimal] = Field(default=None, ge=0, le=1)
+    fee_per_night: Optional[Decimal] = Field(default=None, ge=0)
+    fee_algo: Optional[int] = Field(default=None, ge=1, le=2)
+    rate_settle: Optional[Decimal] = Field(default=None, ge=0, le=1)
     jinying_amount: Optional[Decimal] = None        # 结算金额：默认公式算,可编辑覆盖
     payment_date: Optional[date] = None             # 付款日期(手工,每期共享)
     # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用）

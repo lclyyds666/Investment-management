@@ -8,6 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ScenicConfigPutIn(BaseModel):
     scenic_name: str = Field(min_length=1, max_length=128)
+    image_url: Optional[str] = Field(default=None, max_length=500)
+    ticket_enabled: Optional[bool] = None
+    hotel_enabled: Optional[bool] = None
+    sort_order: Optional[int] = Field(default=None, ge=0)
     default_ticket_product: str = Field(default="", max_length=200)
     default_hotel_name: str = Field(default="", max_length=255)
     rate_hexiao: Decimal = Field(ge=0, le=1)
@@ -23,6 +27,10 @@ class ScenicConfigOut(BaseModel):
 
     scenic_id: str
     scenic_name: str = ""
+    image_url: str = ""
+    ticket_enabled: bool = True
+    hotel_enabled: bool = True
+    sort_order: int = 0
     default_ticket_product: str = ""
     default_hotel_name: str = ""
     rate_hexiao: Decimal = Decimal("0.9000")
@@ -35,3 +43,11 @@ class ScenicConfigOut(BaseModel):
     source: Literal["database", "fallback"] = "database"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class ScenicSpotOut(BaseModel):
+    id: str
+    name: str
+    image: str = ""
+    ticket_enabled: bool = True
+    hotel_enabled: bool = True

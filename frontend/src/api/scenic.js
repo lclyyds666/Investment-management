@@ -1,5 +1,10 @@
 import request from './request'
 
+/** 查询已启用景区目录。 */
+export function getScenicSpots() {
+  return request.get('/scenic-spots')
+}
+
 // 文旅业务·景区核销台账 API —— 所有请求都以 scenicId 作用域，后端按 scenic_id 隔离。
 
 /** 查询某景区台账（仅返回该景区数据） */

@@ -1,7 +1,7 @@
 """景区核销台账默认配置模型。"""
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Numeric, SmallInteger, String, text
+from sqlalchemy import Boolean, CheckConstraint, Index, Integer, Numeric, SmallInteger, String, text
 from sqlalchemy.dialects.mysql import TINYINT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,7 @@ class ScenicConfig(Base):
         ),
         CheckConstraint("hotel_fee_algo IN (1, 2)", name="chk_scenic_cfg_hotel_fee_algo"),
         CheckConstraint("fee_per_night >= 0", name="chk_scenic_cfg_fee_per_night"),
+        Index("idx_scenic_config_enabled_sort", "enabled", "sort_order"),
     )
 
     scenic_id: Mapped[str] = mapped_column(
@@ -26,6 +27,18 @@ class ScenicConfig(Base):
     )
     scenic_name: Mapped[str] = mapped_column(
         String(128), default="", server_default="", nullable=False, comment="景区名称"
+    )
+    image_url: Mapped[str] = mapped_column(
+        String(500), default="", server_default="", nullable=False, comment="景区展示图片地址"
+    )
+    ticket_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("1"), nullable=False, comment="是否启用门票台账模块"
+    )
+    hotel_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("1"), nullable=False, comment="是否启用酒店台账模块"
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False, comment="景区展示顺序"
     )
     default_ticket_product: Mapped[str] = mapped_column(
         String(200), default="", server_default="", nullable=False, comment="门票产品名默认值"

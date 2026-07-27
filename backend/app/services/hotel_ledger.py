@@ -286,10 +286,14 @@ def recompute_from_json(platform: str, daily_json: str,
 
 def daily_defaults(platform: str, daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+                   rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                   commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+                   fee_algo: int = 1,
                    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT) -> dict:
-    """解析时的按日精准默认值（算法1；佣金取逐日自动值）。"""
+    """解析时按实际参数逐日计算并舍入，再累加平台默认值。"""
     res = recompute_from_days(platform, _days_from_daily(daily), rate_hexiao,
-                              DEFAULT_RATE_SETTLE, fee_per_night, 1, None)
+                              rate_settle, fee_per_night, fee_algo, None, None,
+                              commission_rate)
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
                 "service_fee": Decimal("0"), "jinying": Decimal("0")}
@@ -297,7 +301,15 @@ def daily_defaults(platform: str, daily: dict[str, dict],
             "service_fee": res["service_fee"], "jinying": res["jinying_amount"]}
 
 
-def parse_hotel_file(content: bytes, filename: str = "") -> dict:
+def parse_hotel_file(
+    content: bytes,
+    filename: str = "",
+    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+    commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+    fee_algo: int = 1,
+    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
+) -> dict:
     """解析一份酒店对账明细，按平台聚合。**按日期分组 → 逐日计算舍入 → 累加**。"""
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
     year = _year_from_filename(filename)
@@ -398,7 +410,15 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             continue
         d = agg[plat]
         base_received = _q(d["base_received"])
-        defs = daily_defaults(plat, d["daily"])   # 按日计算的精准默认值
+        defs = daily_defaults(
+            plat,
+            d["daily"],
+            rate_hexiao,
+            rate_settle,
+            commission_rate,
+            fee_algo,
+            fee_per_night,
+        )
         p_text = ""
         if d["pstart"] and d["pend"]:
             s, e = d["pstart"], d["pend"]

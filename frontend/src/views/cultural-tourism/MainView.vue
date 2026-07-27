@@ -3,17 +3,17 @@
     <h1 class="ct-title">文旅业务</h1>
     <p class="ct-subtitle">选择景区，查看平台入口与核销数据台账</p>
 
-    <div class="ct-grid">
+    <div class="ct-grid" v-loading="scenicStore.loading">
       <div
-        v-for="spot in scenicSpots"
+        v-for="spot in scenicStore.spots"
         :key="spot.id"
         class="ct-card"
         @click="goDetail(spot.id)"
       >
         <div class="ct-card-img">
           <img
-            v-if="!failed[spot.id]"
-            :src="spot.imagePath"
+            v-if="spot.image && !failed[spot.id]"
+            :src="spot.image"
             :alt="spot.name"
             @error="failed[spot.id] = true"
           />
@@ -21,19 +21,24 @@
             <el-icon><Place /></el-icon>
           </div>
         </div>
+        <div class="ct-card-name">{{ spot.name }}</div>
       </div>
     </div>
+    <el-empty v-if="scenicStore.loaded && !scenicStore.spots.length" description="暂无已启用景区" />
   </div>
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { Place } from '@element-plus/icons-vue'
-import { scenicSpots } from '@/constants/scenic'
+import { useScenicStore } from '@/store/scenic'
 
 const router = useRouter()
+const scenicStore = useScenicStore()
 const failed = reactive({}) // 图片加载失败 → 降级占位
+
+onMounted(() => scenicStore.load(true).catch(() => {}))
 
 function goDetail(id) {
   router.push(`/cultural-tourism/${id}`)
@@ -91,6 +96,14 @@ function goDetail(id) {
     object-fit: cover;
     display: block;
   }
+}
+.ct-card-name {
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--el-text-color-primary);
+  background: var(--el-fill-color-blank);
 }
 .ct-card-fallback {
   width: 100%;
