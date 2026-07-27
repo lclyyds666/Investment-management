@@ -123,7 +123,13 @@ def _period_from_filename(filename: str) -> tuple[date | None, date | None]:
         return None, None
 
 
-def parse_reconciliation(content: bytes, filename: str = "") -> dict:
+def parse_reconciliation(
+    content: bytes,
+    filename: str = "",
+    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+    commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+) -> dict:
     """解析一个对账明细 xlsx，返回汇总。
 
     返回:
@@ -218,7 +224,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
         period_text = f"{p_start.year}/{p_start.month}/{p_start.day}-{p_end.year}/{p_end.month}/{p_end.day}"
 
     # **按日期粒度**逐日计算并舍入,再累加为期合计（精准默认值,供前端预填/可改）
-    defs = daily_defaults(daily)
+    defs = daily_defaults(daily, rate_hexiao, rate_settle, commission_rate)
 
     return {
         "supplier_received": _q(supplier_received),
@@ -338,9 +344,12 @@ def recompute_from_json(daily_json: str,
 
 def daily_defaults(daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-                   rate_settle: Decimal = DEFAULT_RATE_SETTLE) -> dict:
+                   rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                   commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict:
     """解析时的按日精准默认值（佣金取逐日自动值）。"""
-    res = recompute_from_days(_days_from_daily(daily), rate_hexiao, rate_settle, None)
+    res = recompute_from_days(
+        _days_from_daily(daily), rate_hexiao, rate_settle, None, commission_rate
+    )
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
                 "service_fee": Decimal("0"), "jinying": Decimal("0")}

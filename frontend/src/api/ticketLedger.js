@@ -3,14 +3,23 @@ import request from './request'
 // 文旅业务·门票平台核销业务台账 API —— 均以 scenicId 作用域，后端按 scenic_id 隔离。
 
 /** 上传单个对账明细并解析（单文件=一期；算服务商到账+周期、落盘源文件，不落台账） */
-export function parseTicketFile(scenicId, file) {
+export function parseTicketFile(scenicId, file, rateOverrides = {}) {
   const form = new FormData()
   form.append('files', file) // 后端字段名沿用 files（单文件）
   return request.post(
     `/scenic-spots/${encodeURIComponent(scenicId)}/ticket-ledger/parse`,
     form,
-    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: rateOverrides,
+      timeout: 120000
+    }
   )
+}
+
+/** 获取当前景区的门票核销默认配置。 */
+export function getTicketScenicConfig(scenicId) {
+  return request.get(`/scenic-spots/${encodeURIComponent(scenicId)}/config`)
 }
 
 /** 查询某景区门票平台业务台账（含合计） */
