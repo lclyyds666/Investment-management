@@ -5,6 +5,16 @@ export function getScenicSpots() {
   return request.get('/scenic-spots')
 }
 
+/** 查询景区配置；未配置时后端返回 configured=false 的系统默认值。 */
+export function getScenicConfig(scenicId) {
+  return request.get(`/scenic-spots/${encodeURIComponent(scenicId)}/config`)
+}
+
+/** 创建或更新景区配置。 */
+export function saveScenicConfig(scenicId, payload) {
+  return request.put(`/scenic-spots/${encodeURIComponent(scenicId)}/config`, payload)
+}
+
 // 文旅业务·景区核销台账 API —— 所有请求都以 scenicId 作用域，后端按 scenic_id 隔离。
 
 /** 查询某景区台账（仅返回该景区数据） */
