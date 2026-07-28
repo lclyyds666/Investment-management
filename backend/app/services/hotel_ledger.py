@@ -213,19 +213,16 @@ def recompute_from_days(platform: str, days: list[dict],
                         fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
                         fee_algo: int = 1,
                         commission_override=None,
-                        room_nights_override=None,
-                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict | None:
+                        room_nights_override=None) -> dict | None:
     """酒店逐日重算并累加（逐日舍入到分）。结算基数=到账/毛额−佣金；核销=Σ(基数_day×核销率)；
     算法1：服务费=间夜×每间夜服务费(间夜用行聚合值，×整数费率无逐日舍入差)、结算=核销+服务费；
     算法2：结算=Σ(基数_day×结算费率)、服务费=结算−核销。
-    佣金（仅抖音）默认逐日自动=实收×佣金率−达人−团长；改总额时按各天实收占比分摊差额。
-    佣金率可动态调整（默认 6%）。"""
+    佣金（仅抖音）默认逐日自动=实收×6%−达人−团长；改总额时按各天实收占比分摊差额。"""
     if not days:
         return None
     is_dy = platform == "抖音"
-    rate_comm = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
     if is_dy:
-        comm_auto = [_q(d["shishou"] * rate_comm + d["daren"] + d["tuanzhang"]) for d in days]
+        comm_auto = [_q(d["shishou"] * DEFAULT_COMMISSION_RATE + d["daren"] + d["tuanzhang"]) for d in days]
         c0 = _q(sum(comm_auto, Decimal("0")))
         if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
             comm_day, c_total = comm_auto, c0
@@ -277,23 +274,18 @@ def recompute_from_json(platform: str, daily_json: str,
                         fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
                         fee_algo: int = 1,
                         commission_override=None,
-                        room_nights_override=None,
-                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict | None:
+                        room_nights_override=None) -> dict | None:
     return recompute_from_days(platform, _days_from_json(daily_json), rate_hexiao,
                                rate_settle, fee_per_night, fee_algo, commission_override,
-                               room_nights_override, commission_rate)
+                               room_nights_override)
 
 
 def daily_defaults(platform: str, daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-                   rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-                   commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-                   fee_algo: int = 1,
                    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT) -> dict:
-    """解析时按实际参数逐日计算并舍入，再累加平台默认值。"""
+    """解析时的按日精准默认值（算法1；佣金取逐日自动值）。"""
     res = recompute_from_days(platform, _days_from_daily(daily), rate_hexiao,
-                              rate_settle, fee_per_night, fee_algo, None, None,
-                              commission_rate)
+                              DEFAULT_RATE_SETTLE, fee_per_night, 1, None)
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
                 "service_fee": Decimal("0"), "jinying": Decimal("0")}
@@ -301,15 +293,7 @@ def daily_defaults(platform: str, daily: dict[str, dict],
             "service_fee": res["service_fee"], "jinying": res["jinying_amount"]}
 
 
-def parse_hotel_file(
-    content: bytes,
-    filename: str = "",
-    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-    commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-    fee_algo: int = 1,
-    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
-) -> dict:
+def parse_hotel_file(content: bytes, filename: str = "") -> dict:
     """解析一份酒店对账明细，按平台聚合。**按日期分组 → 逐日计算舍入 → 累加**。"""
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
     year = _year_from_filename(filename)
@@ -410,15 +394,7 @@ def parse_hotel_file(
             continue
         d = agg[plat]
         base_received = _q(d["base_received"])
-        defs = daily_defaults(
-            plat,
-            d["daily"],
-            rate_hexiao,
-            rate_settle,
-            commission_rate,
-            fee_algo,
-            fee_per_night,
-        )
+        defs = daily_defaults(plat, d["daily"])   # 按日计算的精准默认值
         p_text = ""
         if d["pstart"] and d["pend"]:
             s, e = d["pstart"], d["pend"]

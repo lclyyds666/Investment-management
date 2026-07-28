@@ -18,13 +18,10 @@ from app.core.enums import Role
 from app.db.session import get_db
 from app.models.hotel_ledger import HotelLedger
 from app.models.scenic import ScenicLedger
-from app.models.scenic_config import ScenicConfig
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.scenic import ScenicLedgerOut, ScenicLedgerRow, ScenicUploadResult
-from app.schemas.scenic_config import ScenicConfigOut, ScenicConfigPutIn, ScenicSpotOut
-from app.services import scenic_config as scenic_config_svc
 
 router = APIRouter()
 
@@ -97,70 +94,6 @@ def _columns_of(rows: list[dict]) -> list[str]:
             if k not in cols:
                 cols.append(k)
     return cols
-
-
-@router.get(
-    "",
-    response_model=Response[list[ScenicSpotOut]],
-    summary="查询已启用景区列表",
-)
-def list_scenic_spots(
-    db: Session = Depends(get_db),
-    _: User = Depends(_view_guard),
-):
-    rows = db.scalars(
-        select(ScenicConfig)
-        .where(ScenicConfig.enabled.is_(True))
-        .order_by(
-            ScenicConfig.sort_order.asc(),
-            ScenicConfig.scenic_name.asc(),
-            ScenicConfig.scenic_id.asc(),
-        )
-    ).all()
-    return Response.ok([
-        ScenicSpotOut(
-            id=row.scenic_id,
-            name=row.scenic_name,
-            image=row.image_url,
-            ticket_enabled=row.ticket_enabled,
-            hotel_enabled=row.hotel_enabled,
-        )
-        for row in rows
-    ])
-
-
-@router.get(
-    "/{scenic_id}/config",
-    response_model=Response[ScenicConfigOut],
-    summary="查询景区核销台账默认配置",
-)
-def get_scenic_config(
-    scenic_id: str,
-    db: Session = Depends(get_db),
-    _: User = Depends(_view_guard),
-):
-    sid = _valid_scenic_id(scenic_id)
-    config = scenic_config_svc.get_effective_scenic_config(db, sid)
-    return Response.ok(ScenicConfigOut.model_validate(config))
-
-
-@router.put(
-    "/{scenic_id}/config",
-    response_model=Response[ScenicConfigOut],
-    summary="创建或更新景区核销台账默认配置",
-)
-def update_scenic_config(
-    scenic_id: str,
-    payload: ScenicConfigPutIn,
-    db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
-):
-    sid = _valid_scenic_id(scenic_id)
-    row = scenic_config_svc.upsert_scenic_config(db, sid, payload.model_dump(exclude_none=True))
-    db.commit()
-    db.refresh(row)
-    config = scenic_config_svc.get_effective_scenic_config(db, sid)
-    return Response.ok(ScenicConfigOut.model_validate(config), message="景区配置已保存")
 
 
 @router.get(

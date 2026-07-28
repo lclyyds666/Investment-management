@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
@@ -35,7 +35,6 @@ from app.schemas.hotel_ledger import (
     ParsedPlatform,
     ParseResult,
 )
-from app.services import scenic_config as scenic_config_svc
 from app.services import hotel_ledger as hl_svc
 
 router = APIRouter()
@@ -68,34 +67,6 @@ def _valid_scenic_id(scenic_id: str) -> str:
     if not sid or len(sid) > 64:
         raise HTTPException(status_code=400, detail="景区标识(scenic_id)非法")
     return sid
-
-
-def _effective_hotel_params(
-    db: Session,
-    scenic_id: str,
-    rate_hexiao: Decimal | None = None,
-    rate_settle: Decimal | None = None,
-    commission_rate: Decimal | None = None,
-    fee_algo: int | None = None,
-    fee_per_night: Decimal | None = None,
-) -> tuple[Decimal, Decimal, Decimal, int, Decimal]:
-    config = scenic_config_svc.get_effective_scenic_config(db, scenic_id)
-    config_hexiao = config.rate_hexiao if config.configured else hl_svc.DEFAULT_RATE_HEXIAO
-    config_settle = config.rate_settle if config.configured else hl_svc.DEFAULT_RATE_SETTLE
-    config_commission = (
-        config.commission_rate if config.configured else hl_svc.DEFAULT_COMMISSION_RATE
-    )
-    config_fee_algo = config.hotel_fee_algo if config.configured else 1
-    config_fee_per_night = (
-        config.fee_per_night if config.configured else hl_svc.DEFAULT_FEE_PER_NIGHT
-    )
-    return (
-        rate_hexiao if rate_hexiao is not None else config_hexiao,
-        rate_settle if rate_settle is not None else config_settle,
-        commission_rate if commission_rate is not None else config_commission,
-        fee_algo if fee_algo is not None else config_fee_algo,
-        fee_per_night if fee_per_night is not None else config_fee_per_night,
-    )
 
 
 def _detail_dir(sid: str) -> Path:
@@ -194,11 +165,6 @@ def _recompute_running_balance(rows: list[HotelLedger]) -> None:
 async def parse_file(
     scenic_id: str,
     files: list[UploadFile] = File(..., description="对账明细 Excel(.xlsx/.xls)，每次仅 1 个"),
-    rate_hexiao: Decimal | None = Query(default=None, ge=0, le=1),
-    rate_settle: Decimal | None = Query(default=None, ge=0, le=1),
-    commission_rate: Decimal | None = Query(default=None, ge=0, le=1),
-    fee_algo: int | None = Query(default=None, ge=1, le=2),
-    fee_per_night: Decimal | None = Query(default=None, ge=0),
     db: Session = Depends(get_db),
     _: User = Depends(_edit_guard),
 ):
@@ -213,15 +179,6 @@ async def parse_file(
     content = await f.read()
     if len(content) > _MAX_BYTES:
         raise HTTPException(status_code=400, detail="文件超过 30MB 上限")
-    effective_params = _effective_hotel_params(
-        db,
-        sid,
-        rate_hexiao,
-        rate_settle,
-        commission_rate,
-        fee_algo,
-        fee_per_night,
-    )
 
     detail_stored = ""
     try:
@@ -234,16 +191,7 @@ async def parse_file(
 
     try:
         async with _PARSE_SEMAPHORE:
-            info = await run_in_threadpool(
-                hl_svc.parse_hotel_file,
-                content,
-                fname,
-                rate_hexiao=effective_params[0],
-                rate_settle=effective_params[1],
-                commission_rate=effective_params[2],
-                fee_algo=effective_params[3],
-                fee_per_night=effective_params[4],
-            )
+            info = await run_in_threadpool(hl_svc.parse_hotel_file, content, fname)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"解析失败：{exc}")
     finally:
@@ -293,7 +241,6 @@ def save_ledger(
     current_user: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    config_params = _effective_hotel_params(db, sid)
     if payload.mode == "replace":
         db.execute(sa_delete(HotelLedger).where(HotelLedger.scenic_id == sid))
         base_no = 0
@@ -304,23 +251,13 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
-        rate_hexiao = r.rate_hexiao if r.rate_hexiao is not None else config_params[0]
-        rate_settle = r.rate_settle if r.rate_settle is not None else config_params[1]
-        commission_rate = (
-            r.commission_rate if r.commission_rate is not None else config_params[2]
-        )
-        fee_algo = r.fee_algo if r.fee_algo is not None else config_params[3]
-        fee_per_night = (
-            r.fee_per_night if r.fee_per_night is not None else config_params[4]
-        )
         # 逐日重算：有逐日明细则按天累加，否则回退期级公式
         calc = hl_svc.recompute_from_json(
-            r.platform, r.daily_json, rate_hexiao, rate_settle,
-            fee_per_night, fee_algo, r.supplier_commission, r.room_nights,
-            commission_rate,
+            r.platform, r.daily_json, r.rate_hexiao, r.rate_settle,
+            r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
-            r.room_nights, rate_hexiao, fee_per_night, fee_algo, rate_settle,
+            r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
         )
         # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
         if r.jinying_amount is not None:
@@ -337,13 +274,12 @@ def save_ledger(
             room_nights=r.room_nights or 0,
             base_received=r.base_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
-            commission_rate=commission_rate,
             settle_base=calc["settle_base"],
-            rate_hexiao=rate_hexiao,
+            rate_hexiao=r.rate_hexiao,
             hexiao_amount=calc["hexiao_amount"],
-            fee_algo=fee_algo,
-            fee_per_night=fee_per_night,
-            rate_settle=rate_settle,
+            fee_algo=r.fee_algo or 1,
+            fee_per_night=r.fee_per_night,
+            rate_settle=r.rate_settle,
             service_fee=fee_val,                     # 服务费=结算−核销
             jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
             daily_json=r.daily_json or "",
@@ -387,10 +323,8 @@ def update_row(
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
 
-    # 服务商到账 / 佣金 / 佣金率 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
+    # 服务商到账 / 佣金 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
     calc_dirty = False
-    # 佣金 override：手工传入佣金金额 → 该值为准；否则 None（佣金随佣金率逐日重算）
-    comm_override = None
     if payload.base_received is not None:
         if abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005"):
             row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
@@ -400,11 +334,6 @@ def update_row(
         if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
             calc_dirty = True
         row.supplier_commission = payload.supplier_commission
-        comm_override = payload.supplier_commission   # 手工佣金金额覆盖
-    if payload.commission_rate is not None:
-        if abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
-        row.commission_rate = payload.commission_rate
     if payload.rate_hexiao is not None:
         if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
             calc_dirty = True
@@ -426,15 +355,12 @@ def update_row(
             calc_dirty = True
         row.room_nights = payload.room_nights
     if calc_dirty:
-        # 逐日重算：改费率/佣金率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认。
-        # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
+        # 逐日重算：改费率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认
         calc = hl_svc.recompute_from_json(
             row.platform, row.daily_json, row.rate_hexiao, row.rate_settle,
-            row.fee_per_night, row.fee_algo, comm_override, row.room_nights,
-            row.commission_rate,
+            row.fee_per_night, row.fee_algo, row.supplier_commission, row.room_nights,
         ) or hl_svc.compute_row(
-            row.platform, row.base_received,
-            comm_override if comm_override is not None else row.supplier_commission,
+            row.platform, row.base_received, row.supplier_commission,
             row.room_nights, row.rate_hexiao, row.fee_per_night, row.fee_algo, row.rate_settle,
         )
         row.supplier_commission = calc["supplier_commission"]

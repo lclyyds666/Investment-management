@@ -12,7 +12,7 @@
           v-if="canEdit" :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls"
           :on-change="onFileChange"
         >
-          <el-button type="primary" :icon="UploadFilled" :loading="parsing" :disabled="!configReady">上传对账明细</el-button>
+          <el-button type="primary" :icon="UploadFilled" :loading="parsing">上传对账明细</el-button>
         </el-upload>
         <el-button :icon="Refresh" @click="loadSaved">刷新</el-button>
         <el-button
@@ -24,43 +24,8 @@
 
     <el-alert
       type="info" :closable="false" show-icon class="tl-tip"
-      :title="rateDescription"
+      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账」与「服务商佣金(=订单实收×6%−达人−团长，可改)」→ 出版应得到账=服务商到账−服务商佣金 → 录入「付款金额」→ 系统按核销率/结算费率算景区核销(=出版应得×90%)、结算金额(=出版应得×结算费率94%)、服务费(=结算−核销)，并按期次递推「景区待核销金额」→ 保存生成台账。"
     />
-
-    <el-card shadow="never" class="rate-card" v-loading="configLoading">
-      <div class="rate-card-head">
-        <span>新门票台账默认参数</span>
-        <div>
-          <el-tag size="small" effect="plain">{{ configSourceText }}</el-tag>
-          <el-tag v-if="hasRateChanges" size="small" type="warning" effect="plain">已手工修改</el-tag>
-          <el-button v-if="hasRateChanges" size="small" text type="primary" @click="restoreConfigRates">恢复景区配置</el-button>
-        </div>
-      </div>
-      <el-form inline class="rate-form">
-        <el-form-item label="核销率">
-          <el-input-number
-            v-model="ratePercent.rate_hexiao" :min="0" :max="100" :precision="2" :step="1"
-            controls-position="right" :disabled="!configReady || !canEdit" @change="onRateChange('rate_hexiao')"
-          />
-          <span class="pct-suffix">%</span>
-        </el-form-item>
-        <el-form-item label="结算率">
-          <el-input-number
-            v-model="ratePercent.rate_settle" :min="0" :max="100" :precision="2" :step="1"
-            controls-position="right" :disabled="!configReady || !canEdit" @change="onRateChange('rate_settle')"
-          />
-          <span class="pct-suffix">%</span>
-        </el-form-item>
-        <el-form-item label="佣金率">
-          <el-input-number
-            v-model="ratePercent.commission_rate" :min="0" :max="100" :precision="2" :step="0.5"
-            controls-position="right" :disabled="!configReady || !canEdit" @change="onRateChange('commission_rate')"
-          />
-          <span class="pct-suffix">%</span>
-        </el-form-item>
-      </el-form>
-      <div class="rate-hint">未修改时保存请求不发送费率，由后端读取景区配置；手工修改后仅发送已修改项。</div>
-    </el-card>
 
     <!-- 待确认区：本期上传解析后的可编辑草稿表（仅展示本次上传，不含历史已确认记录） -->
     <el-card v-if="draftRows.length" shadow="never" class="tl-draft">
@@ -157,38 +122,38 @@
       </el-table>
     </el-card>
 
-    <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库；表格宽度自适应） -->
+    <!-- 已保存台账（景区核销数据台账；已隐藏「付款日期」列，字段仍保留于数据库） -->
     <el-table :data="displayRows" border stripe size="small" class="saved-table" :row-class-name="rowClass">
-      <el-table-column label="景区ID" min-width="110">
+      <el-table-column label="景区ID" width="150" fixed="left">
         <template #default="{ row }">{{ row.isTotal ? '' : scenicName }}</template>
       </el-table-column>
-      <el-table-column label="平台" min-width="80">
-        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isGrandTotal ? '总合计' : row.isTotal ? '本期合计' : row.platform }}</span></template>
+      <el-table-column label="平台" width="90">
+        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isTotal ? '本期合计' : row.platform }}</span></template>
       </el-table-column>
       <el-table-column label="景区门票" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">{{ row.isTotal ? '' : row.ticket_product }}</template>
       </el-table-column>
-      <el-table-column label="核对日期" min-width="130" prop="check_date_text" />
-      <el-table-column label="景区核销金额" min-width="105" align="right">
+      <el-table-column label="核对日期" width="160" prop="check_date_text" />
+      <el-table-column label="景区核销金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.hexiao_amount) }}</template>
       </el-table-column>
       <!-- 景区待核销金额：本期合计行(多行)或独行(单行)显示 -->
-      <el-table-column label="景区待核销金额" min-width="110" align="right">
+      <el-table-column label="景区待核销金额" width="140" align="right">
         <template #default="{ row }"><span v-if="row.isTotal || row.isSoloPeriod" class="pending">{{ fmtMoney(row.pending_writeoff) }}</span></template>
       </el-table-column>
-      <el-table-column label="结算金额" min-width="105" align="right">
+      <el-table-column label="结算金额" width="130" align="right">
         <template #default="{ row }">{{ fmtMoney(row.jinying_amount) }}</template>
       </el-table-column>
-      <el-table-column label="服务费" min-width="90" align="right">
+      <el-table-column label="服务费" width="120" align="right">
         <template #default="{ row }">{{ fmtMoney(row.service_fee) }}</template>
       </el-table-column>
-      <el-table-column label="回款日期" min-width="100">
+      <el-table-column label="回款日期" width="110">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_date || '') : '' }}</template>
       </el-table-column>
-      <el-table-column label="回款金额" min-width="100" align="right">
+      <el-table-column label="回款金额" width="130" align="right">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
       </el-table-column>
-      <el-table-column label="操作" min-width="110">
+      <el-table-column label="操作" width="130" fixed="right">
         <template #default="{ row }">
           <template v-if="!row.isTotal && canEdit">
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
@@ -196,10 +161,10 @@
           </template>
         </template>
       </el-table-column>
-      <!-- 状态：本期合计行(多行)或独行(单行)有内容(总合计行不显示)；确认函仅业务复核+信息维护 -->
-      <el-table-column label="状态" min-width="200">
+      <!-- 状态：本期合计行(多行)或独行(单行)有内容；确认函仅业务复核+信息维护 -->
+      <el-table-column label="状态" width="300" fixed="right">
         <template #default="{ row }">
-          <template v-if="(row.isTotal || row.isSoloPeriod) && !row.isGrandTotal">
+          <template v-if="row.isTotal || row.isSoloPeriod">
             <template v-if="!row.confirm_stored">
               <el-tag type="info" size="small" effect="plain">未确认</el-tag>
               <el-upload
@@ -235,6 +200,9 @@
     <!-- 编辑单行弹窗（集中编辑：服务商佣金 / 核销率 / 服务费率 / 付款金额 / 回款） -->
     <el-dialog v-model="editVisible" title="编辑台账行" width="480px">
       <el-form label-width="120px" v-if="editRow">
+        <el-form-item label="付款日期">
+          <el-date-picker v-model="editForm.pay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        </el-form-item>
         <el-form-item label="平台">
           <el-select v-model="editForm.platform" style="width: 100%">
             <el-option v-for="p in PLATFORMS" :key="p" :label="p" :value="p" />
@@ -244,15 +212,8 @@
           <el-input-number v-model="editForm.supplier_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" @change="editForm.receivedEdited = true" />
           <div class="edit-hint">算法自动算出，可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
-        <!-- 服务商佣金算法仅对抖音生效：佣金率按台账快照显示并可动态调整 -->
-        <el-form-item v-if="editForm.platform === '抖音'" label="服务商佣金率">
-          <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width: 100%" @change="editForm.commissionEdited = false" />
-          <span class="pct-suffix">%</span>
-          <div class="edit-hint">仅抖音生效。改佣金率后，服务商佣金按新费率逐日重算(实收×佣金率−达人−团长)，保存后生效</div>
-        </el-form-item>
-        <el-form-item v-if="editForm.platform === '抖音'" label="服务商佣金">
-          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width: 100%" @change="editForm.commissionEdited = true" />
-          <div class="edit-hint">手工改佣金金额则以该值为准；否则随佣金率逐日重算</div>
+        <el-form-item label="服务商佣金">
+          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width: 100%" />
         </el-form-item>
         <el-form-item label="出版应得到账">
           <el-input :model-value="fmtMoney(editPublisherDue)" disabled style="width: 100%" />
@@ -277,9 +238,6 @@
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="付款日期">
-          <el-date-picker v-model="editForm.pay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
-        </el-form-item>
         <el-form-item label="回款日期">
           <el-date-picker v-model="editForm.repay_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
         </el-form-item>
@@ -300,30 +258,22 @@ import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Refresh, Download, Tickets, EditPen, Check } from '@element-plus/icons-vue'
 import {
-  parseTicketFile, getTicketLedger, getTicketScenicConfig, saveTicketLedger,
+  parseTicketFile, getTicketLedger, saveTicketLedger,
   updateTicketRow, deleteTicketRow, fetchTicketLedgerExportBlob,
   uploadTicketConfirm, approveTicketConfirm, deleteTicketConfirm, fetchTicketConfirmBlob
 } from '@/api/ticketLedger'
 import { downloadBlob } from '@/utils/file'
+import { getScenicById } from '@/constants/scenic'
 import { ROLES } from '@/constants/business'
-import { useScenicStore } from '@/store/scenic'
 import { useUserStore } from '@/store/user'
-import {
-  TICKET_RATE_FIELDS,
-  buildTicketRateOverrides,
-  normalizeTicketRates,
-  ticketRatesFromPercent,
-  ticketRatesToPercent
-} from '@/utils/ticketRates'
 
 const props = defineProps({
   scenicId: { type: String, required: true }
 })
 
 const userStore = useUserStore()
-const scenicStore = useScenicStore()
 // 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
-const scenicName = computed(() => scenicStore.getById(props.scenicId)?.name || props.scenicId)
+const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
 // 上传/编辑/删除台账：业务经办 + 信息维护(超管)
 const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 // 确认函 上传/重传/删除：业务经办 + 信息维护(超管)；「确认」：业务复核 + 信息维护(超管)
@@ -331,85 +281,16 @@ const canUploadConfirm = computed(() => userStore.isSuperuser || userStore.role 
 const canApproveConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
+// 默认比例（核销率/结算费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
+// 结算费率默认 0.94（= 旧核销率0.90 + 旧服务费率0.04）：结算金额=出版应得×结算费率，服务费=结算−核销。
+const DEFAULT_RATE_HEXIAO = 0.9
+const DEFAULT_RATE_SETTLE = 0.94
 
 const loading = ref(false)
 const parsing = ref(false)
 const saving = ref(false)
 const savedRows = ref([])
 const draftRows = ref([])
-const ticketConfig = ref(null)
-const configLoading = ref(false)
-const configLoadedFor = ref('')
-const ratePercent = reactive({
-  rate_hexiao: null,
-  rate_settle: null,
-  commission_rate: null
-})
-const rateModified = reactive({
-  rate_hexiao: false,
-  rate_settle: false,
-  commission_rate: false
-})
-const configReady = computed(() => configLoadedFor.value === props.scenicId)
-const hasRateChanges = computed(() => TICKET_RATE_FIELDS.some((field) => rateModified[field]))
-const configSourceText = computed(() => {
-  if (!configReady.value) return '配置加载中'
-  return ticketConfig.value?.configured ? '景区配置' : '系统默认配置'
-})
-const rateDescription = computed(() => {
-  if (!configReady.value) return '正在读取景区门票计算参数，完成后可上传对账明细。'
-  return `流程：上传 1 个对账明细（即 1 期）→ 按佣金率 ${ratePercent.commission_rate}% 计算服务商佣金 → 按核销率 ${ratePercent.rate_hexiao}%、结算率 ${ratePercent.rate_settle}% 生成新台账。`
-})
-
-function applyTicketConfig(config, preserveModified = false) {
-  const percent = ticketRatesToPercent(normalizeTicketRates(config))
-  for (const field of TICKET_RATE_FIELDS) {
-    if (!preserveModified || !rateModified[field]) ratePercent[field] = percent[field]
-    if (!preserveModified) rateModified[field] = false
-  }
-  ticketConfig.value = config
-  configLoadedFor.value = props.scenicId
-}
-
-async function loadTicketConfig(scenicId = props.scenicId, preserveModified = false) {
-  if (!scenicId) return
-  configLoading.value = true
-  try {
-    const config = await getTicketScenicConfig(scenicId)
-    if (scenicId === props.scenicId) applyTicketConfig(config, preserveModified)
-    return config
-  } catch (error) {
-    if (scenicId === props.scenicId) configLoadedFor.value = ''
-    throw error
-  } finally {
-    if (scenicId === props.scenicId) configLoading.value = false
-  }
-}
-
-function currentTicketRates() {
-  return ticketRatesFromPercent(ratePercent)
-}
-
-function currentRateOverrides() {
-  return buildTicketRateOverrides(ratePercent, rateModified)
-}
-
-function onRateChange(field) {
-  rateModified[field] = true
-  if (draftRows.value.length) {
-    draftRows.value = []
-    ElMessage.warning('费率已修改，请重新上传对账明细后再保存。')
-  }
-}
-
-function restoreConfigRates() {
-  const hadDraft = draftRows.value.length > 0
-  applyTicketConfig(ticketConfig.value)
-  if (hadDraft) {
-    draftRows.value = []
-    ElMessage.warning('已恢复景区配置，请重新上传对账明细。')
-  }
-}
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100
@@ -418,8 +299,8 @@ function round2(n) {
 function draftPublisherDue(row) {
   return round2((Number(row.supplier_received) || 0) - (Number(row.supplier_commission) || 0))
 }
-function calcHexiao(b) { return round2((Number(b) || 0) * currentTicketRates().rate_hexiao) }
-function calcJinying(b) { return round2((Number(b) || 0) * currentTicketRates().rate_settle) }
+function calcHexiao(b) { return round2((Number(b) || 0) * DEFAULT_RATE_HEXIAO) }
+function calcJinying(b) { return round2((Number(b) || 0) * DEFAULT_RATE_SETTLE) }
 function calcFee(b) { return round2(calcJinying(b) - calcHexiao(b)) }
 // 佣金未改动 → 展示后端「按日期粒度」算出的精准默认值；改动了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
@@ -485,8 +366,7 @@ async function onFileChange(file) {
   }
   parsing.value = true
   try {
-    await loadTicketConfig(props.scenicId, true)
-    const res = await parseTicketFile(props.scenicId, raw, currentRateOverrides())
+    const res = await parseTicketFile(props.scenicId, raw)
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
     // 本次上传仅生成本期一条待确认记录，替换旧草稿
     draftRows.value = (res.files || []).map((f) => ({
@@ -498,7 +378,7 @@ async function onFileChange(file) {
       period_start: f.period_start,
       period_end: f.period_end,
       supplier_received: f.supplier_received,
-      // 服务商佣金由后端按当前景区佣金率逐日算出，可手工修改金额
+      // 服务商佣金 = 订单实收×6% − 达人 − 团长（后端按日算出的建议值，可手工修改）
       supplier_commission: Number(f.suggested_commission) || 0,
       // 后端「按日期粒度」算出的精准默认值（未改佣金时直接展示/采用）
       def_commission: Number(f.suggested_commission) || 0,
@@ -529,7 +409,6 @@ async function onFileChange(file) {
 
 async function onSave() {
   if (!draftRows.value.length) return
-  const rateOverrides = currentRateOverrides()
   const rows = draftRows.value.map((r) => ({
     pay_date: r.pay_date,
     platform: r.platform,
@@ -541,6 +420,8 @@ async function onSave() {
     supplier_received: r.supplier_received,
     supplier_commission: r.supplier_commission || 0,
     payment_amount: r.payment_amount || 0,
+    rate_hexiao: DEFAULT_RATE_HEXIAO,
+    rate_settle: DEFAULT_RATE_SETTLE,
     daily_json: r.daily_json,
     // 结算金额仅在手工改过时上传(覆盖)，否则由后端逐日累加
     jinying_amount: r.jinyingEdited ? r.jinying_amount : null,
@@ -554,8 +435,7 @@ async function onSave() {
     repay_amount: r.repay_amount,
     source_file: r.source_file,
     detail_stored: r.detail_stored,
-    detail_name: r.detail_name,
-    ...rateOverrides
+    detail_name: r.detail_name
   }))
   saving.value = true
   try {
@@ -579,18 +459,15 @@ const editForm = reactive({
   pay_date: null, platform: '',
   supplier_received: 0, receivedEdited: false,   // 服务商到账(可人工改)
   supplier_commission: 0,
-  commissionRatePct: null, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
-  ratePctHexiao: null, ratePctSettle: null,
+  ratePctHexiao: 90, ratePctSettle: 94,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false, payment_amount: 0,
   repay_date: null, repay_amount: null
 })
 
-// 出版应得到账 = 服务商到账(可编辑) − 服务商佣金；佣金仅抖音计入
-const editPublisherDue = computed(() => {
-  const comm = editForm.platform === '抖音' ? (Number(editForm.supplier_commission) || 0) : 0
-  return round2((Number(editForm.supplier_received) || 0) - comm)
-})
+// 出版应得到账 = 服务商到账(可编辑) − 服务商佣金
+const editPublisherDue = computed(() =>
+  round2((Number(editForm.supplier_received) || 0) - (Number(editForm.supplier_commission) || 0)))
 // 景区核销金额默认 = 出版应得 × 核销率；结算金额默认 = 出版应得 × 结算费率
 const editHexiao = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctHexiao) || 0) / 100))
 const editJinying = computed(() => round2(editPublisherDue.value * (Number(editForm.ratePctSettle) || 0) / 100))
@@ -615,14 +492,8 @@ function openEdit(row) {
   editForm.supplier_received = Number(row.supplier_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
-  const rateOrConfig = (value, field) => {
-    const rate = value === null || value === undefined || value === '' ? Number.NaN : Number(value)
-    return Number.isFinite(rate) ? rate : currentTicketRates()[field]
-  }
-  editForm.commissionRatePct = round2(rateOrConfig(row.commission_rate, 'commission_rate') * 100)
-  editForm.commissionEdited = false
-  editForm.ratePctHexiao = round2(rateOrConfig(row.rate_hexiao, 'rate_hexiao') * 100)
-  editForm.ratePctSettle = round2(rateOrConfig(row.rate_settle, 'rate_settle') * 100)
+  editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
+  editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
   editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0
@@ -641,16 +512,13 @@ async function onSaveEdit() {
     const payload = {
       pay_date: editForm.pay_date,
       platform: editForm.platform,
+      supplier_commission: editForm.supplier_commission,
       rate_hexiao: round2(Number(editForm.ratePctHexiao) / 100),
       rate_settle: round2(Number(editForm.ratePctSettle) / 100),
       payment_amount: editForm.payment_amount,
       repay_date: editForm.repay_date,
       repay_amount: editForm.repay_amount
     }
-    // 服务商佣金率(仅抖音)：动态可调，改后佣金按新率逐日重算
-    if (editForm.platform === '抖音') payload.commission_rate = round2(Number(editForm.commissionRatePct) / 100)
-    // 手工改过佣金金额才覆盖上传；否则佣金随佣金率逐日重算
-    if (editForm.commissionEdited) payload.supplier_commission = editForm.supplier_commission
     // 人工改过才上传覆盖：服务商到账 / 景区核销金额 / 结算金额；否则由后端按算法(逐日)重算
     if (editForm.receivedEdited) payload.supplier_received = editForm.supplier_received
     if (editForm.hexiaoEdited) payload.hexiao_amount = editForm.hexiao_amount
@@ -733,27 +601,9 @@ const displayRows = computed(() => {
     t.confirmed = b.rows[0]?.confirmed || false
     out.push(...b.rows, t)
   }
-  // 总合计（所有期汇总）：核销/结算/服务费逐行累加；待核销取末期滚动余额；回款各行累加
-  if (savedRows.value.length) {
-    const g = {
-      isGrandTotal: true, isTotal: true, platform: '总合计', ticket_product: '', check_date_text: '',
-      hexiao_amount: 0, jinying_amount: 0, service_fee: 0, pending_writeoff: 0,
-      repay_date: '', repay_amount: null
-    }
-    let gRepay = 0
-    for (const r of savedRows.value) {
-      g.hexiao_amount += Number(r.hexiao_amount) || 0
-      g.jinying_amount += Number(r.jinying_amount) || 0
-      g.service_fee += Number(r.service_fee) || 0
-      gRepay += Number(r.repay_amount) || 0
-    }
-    g.pending_writeoff = Number(savedRows.value[savedRows.value.length - 1].pending_writeoff) || 0
-    g.repay_amount = gRepay || null
-    out.push(g)
-  }
   return out
 })
-function rowClass({ row }) { return row.isGrandTotal ? 'grand-total-row' : row.isTotal ? 'total-row' : '' }
+function rowClass({ row }) { return row.isTotal ? 'total-row' : '' }
 
 // —— 本期确认函（业务复核/信息维护）——
 async function onConfirmPick(row, file) {
@@ -809,21 +659,7 @@ async function onConfirmDelete(row) {
   }
 }
 
-watch(
-  () => props.scenicId,
-  (scenicId) => {
-    draftRows.value = []
-    ticketConfig.value = null
-    configLoadedFor.value = ''
-    for (const field of TICKET_RATE_FIELDS) {
-      ratePercent[field] = null
-      rateModified[field] = false
-    }
-    loadSaved()
-    loadTicketConfig(scenicId).catch(() => {})
-  },
-  { immediate: true }
-)
+watch(() => props.scenicId, loadSaved, { immediate: true })
 </script>
 
 <style scoped lang="scss">
@@ -847,19 +683,6 @@ watch(
 }
 .tl-ops { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .tl-tip { margin-bottom: 12px; }
-.rate-card { margin-bottom: 12px; }
-.rate-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-  font-weight: 600;
-  > div { display: flex; align-items: center; gap: 8px; }
-}
-.rate-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
-.rate-form :deep(.el-form-item) { margin: 0; }
-.rate-hint { margin-top: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
 .tl-draft { margin-bottom: 16px; border: 1px solid var(--el-color-primary-light-5); }
 .draft-header {
   display: flex;
@@ -885,9 +708,6 @@ watch(
 .pending { color: #f59e0b; font-weight: 700; }
 .saved-table { margin-top: 4px; }
 .saved-table :deep(.total-row) { background: var(--el-fill-color-light) !important; font-weight: 700; }
-/* 总合计：更深底色 + 主色文字，区别于「本期合计」 */
-.saved-table :deep(.grand-total-row) { background: var(--el-color-primary-light-9) !important; font-weight: 800; }
-.saved-table :deep(.grand-total-row .cell) { color: var(--el-color-primary); }
 .total-label { font-weight: 700; color: var(--el-color-primary); }
 
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }

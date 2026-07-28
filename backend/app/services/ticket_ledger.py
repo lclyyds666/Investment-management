@@ -123,13 +123,7 @@ def _period_from_filename(filename: str) -> tuple[date | None, date | None]:
         return None, None
 
 
-def parse_reconciliation(
-    content: bytes,
-    filename: str = "",
-    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-    commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-) -> dict:
+def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     """解析一个对账明细 xlsx，返回汇总。
 
     返回:
@@ -224,7 +218,7 @@ def parse_reconciliation(
         period_text = f"{p_start.year}/{p_start.month}/{p_start.day}-{p_end.year}/{p_end.month}/{p_end.day}"
 
     # **按日期粒度**逐日计算并舍入,再累加为期合计（精准默认值,供前端预填/可改）
-    defs = daily_defaults(daily, rate_hexiao, rate_settle, commission_rate)
+    defs = daily_defaults(daily)
 
     return {
         "supplier_received": _q(supplier_received),
@@ -281,13 +275,10 @@ def _days_from_json(daily_json: str) -> list[dict]:
     return days
 
 
-def _distribute_commission(days: list[dict], commission_override,
-                           commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> tuple[list, Decimal]:
-    """逐日自动佣金 = 实收×佣金率−达人−团长；若传入总额 override 且≠自动总额，
-    则把差额按各天订单实收占比分摊到各天（微调场景，未改动时结果不变）。
-    佣金率可动态调整（默认 6%）。"""
-    rate = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
-    comm_auto = [_q(d["shishou"] * rate + d["daren"] + d["tuanzhang"]) for d in days]
+def _distribute_commission(days: list[dict], commission_override) -> tuple[list, Decimal]:
+    """逐日自动佣金 = 实收×6%−达人−团长；若传入总额 override 且≠自动总额，
+    则把差额按各天订单实收占比分摊到各天（微调场景，未改动时结果不变）。"""
+    comm_auto = [_q(d["shishou"] * DEFAULT_COMMISSION_RATE + d["daren"] + d["tuanzhang"]) for d in days]
     c0 = _q(sum(comm_auto, Decimal("0")))
     if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
         return comm_auto, c0
@@ -304,19 +295,12 @@ def _distribute_commission(days: list[dict], commission_override,
 def recompute_from_days(days: list[dict],
                         rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
                         rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-                        commission_override=None,
-                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-                        platform: str = "抖音") -> dict | None:
+                        commission_override=None) -> dict | None:
     """门票逐日重算并累加（逐日舍入到分）：出版应得B_day=到账−佣金；
-    核销=B_day×核销率、结算=B_day×结算费率、服务费=结算−核销，各自逐日累加。
-    服务商佣金算法仅对抖音生效（其它平台佣金恒 0）；佣金率可动态调整（默认 6%）。"""
+    核销=B_day×核销率、结算=B_day×结算费率、服务费=结算−核销，各自逐日累加。"""
     if not days:
         return None
-    if platform == "抖音":
-        comm_day, c_total = _distribute_commission(days, commission_override, commission_rate)
-    else:
-        comm_day = [Decimal("0")] * len(days)
-        c_total = Decimal("0")
+    comm_day, c_total = _distribute_commission(days, commission_override)
     hexiao = jinying = pub = Decimal("0")
     for i, d in enumerate(days):
         b = d["recv"] - comm_day[i]
@@ -335,21 +319,15 @@ def recompute_from_days(days: list[dict],
 def recompute_from_json(daily_json: str,
                         rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
                         rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-                        commission_override=None,
-                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-                        platform: str = "抖音") -> dict | None:
-    return recompute_from_days(_days_from_json(daily_json), rate_hexiao, rate_settle,
-                               commission_override, commission_rate, platform)
+                        commission_override=None) -> dict | None:
+    return recompute_from_days(_days_from_json(daily_json), rate_hexiao, rate_settle, commission_override)
 
 
 def daily_defaults(daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-                   rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-                   commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict:
+                   rate_settle: Decimal = DEFAULT_RATE_SETTLE) -> dict:
     """解析时的按日精准默认值（佣金取逐日自动值）。"""
-    res = recompute_from_days(
-        _days_from_daily(daily), rate_hexiao, rate_settle, None, commission_rate
-    )
+    res = recompute_from_days(_days_from_daily(daily), rate_hexiao, rate_settle, None)
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
                 "service_fee": Decimal("0"), "jinying": Decimal("0")}
@@ -362,18 +340,16 @@ def compute_row(
     supplier_commission: Decimal = Decimal("0"),
     rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
     rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-    platform: str = "抖音",
 ) -> dict:
-    """由服务商到账、服务商佣金与比例计算台账计算列（无逐日明细时的期级兜底）。
+    """由服务商到账、服务商佣金与比例计算台账计算列。
 
       出版应得到账金额 B = 服务商到账 - 服务商佣金
       景区核销金额 = B × 核销率
       结算金额     = B × 结算费率
       服务费       = 结算金额 − 景区核销金额
-    服务商佣金仅对抖音生效（其它平台佣金恒 0）。
     """
     received = supplier_received or Decimal("0")
-    commission = (supplier_commission or Decimal("0")) if platform == "抖音" else Decimal("0")
+    commission = supplier_commission or Decimal("0")
     b = received - commission
     hexiao = _q(b * rate_hexiao)
     jinying = _q(b * rate_settle)

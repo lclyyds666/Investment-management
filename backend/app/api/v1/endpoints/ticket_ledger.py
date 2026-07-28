@@ -18,7 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
@@ -40,7 +40,6 @@ from app.schemas.ticket_ledger import (
     TicketLedgerTotals,
     TicketLedgerUpdateIn,
 )
-from app.services import scenic_config as scenic_config_svc
 from app.services import ticket_ledger as tl_svc
 
 router = APIRouter()
@@ -81,27 +80,6 @@ def _valid_scenic_id(scenic_id: str) -> str:
     if not sid or len(sid) > 64:
         raise HTTPException(status_code=400, detail="景区标识(scenic_id)非法")
     return sid
-
-
-def _effective_ticket_rates(
-    db: Session,
-    scenic_id: str,
-    rate_hexiao: Decimal | None = None,
-    rate_settle: Decimal | None = None,
-    commission_rate: Decimal | None = None,
-) -> tuple[Decimal, Decimal, Decimal]:
-    """按“请求显式值 > 景区配置 > 系统常量”解析新台账计算参数。"""
-    config = scenic_config_svc.get_effective_scenic_config(db, scenic_id)
-    config_hexiao = config.rate_hexiao if config.configured else tl_svc.DEFAULT_RATE_HEXIAO
-    config_settle = config.rate_settle if config.configured else tl_svc.DEFAULT_RATE_SETTLE
-    config_commission = (
-        config.commission_rate if config.configured else tl_svc.DEFAULT_COMMISSION_RATE
-    )
-    return (
-        rate_hexiao if rate_hexiao is not None else config_hexiao,
-        rate_settle if rate_settle is not None else config_settle,
-        commission_rate if commission_rate is not None else config_commission,
-    )
 
 
 def _row_out(r: TicketLedger) -> TicketLedgerRow:
@@ -168,9 +146,6 @@ def _detail_dir(sid: str) -> Path:
 async def parse_files(
     scenic_id: str,
     files: list[UploadFile] = File(..., description="对账明细 Excel(.xlsx/.xls)，每次仅限 1 个"),
-    rate_hexiao: Decimal | None = Query(default=None, ge=0, le=1),
-    rate_settle: Decimal | None = Query(default=None, ge=0, le=1),
-    commission_rate: Decimal | None = Query(default=None, ge=0, le=1),
     db: Session = Depends(get_db),
     _: User = Depends(_edit_guard),
 ):
@@ -191,9 +166,6 @@ async def parse_files(
     content = await f.read()
     if len(content) > _MAX_BYTES:
         raise HTTPException(status_code=400, detail="文件超过 30MB 上限")
-    effective_hexiao, effective_settle, effective_commission = _effective_ticket_rates(
-        db, sid, rate_hexiao, rate_settle, commission_rate
-    )
 
     # 源文件落盘（供预览/下载）：即使后续解析失败也保留，方便排查
     detail_stored = ""
@@ -210,12 +182,7 @@ async def parse_files(
         # 且同一时刻只跑一个解析，避免重叠上传在小内存机上叠加 OOM。
         async with _PARSE_SEMAPHORE:
             info = await run_in_threadpool(
-                tl_svc.parse_reconciliation,
-                content,
-                filename=fname,
-                rate_hexiao=effective_hexiao,
-                rate_settle=effective_settle,
-                commission_rate=effective_commission,
+                tl_svc.parse_reconciliation, content, filename=fname
             )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"解析失败：{exc}")
@@ -233,9 +200,7 @@ async def parse_files(
         def_hexiao=info["def_hexiao"],
         def_service_fee=info["def_service_fee"],
         def_jinying=info["def_jinying"],
-        daily_json=info["daily_json"],
         order_count=info["order_count"],
-        positive_count=info["positive_count"],
         period_text=info["period_text"],
         check_date_text=info["check_date_text"],
         period_start=info["period_start"],
@@ -293,7 +258,6 @@ def save_ledger(
     current_user: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    config_hexiao, config_settle, config_commission = _effective_ticket_rates(db, sid)
 
     if payload.mode == "replace":
         db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))
@@ -307,18 +271,11 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
-        rate_hexiao = r.rate_hexiao if r.rate_hexiao is not None else config_hexiao
-        rate_settle = r.rate_settle if r.rate_settle is not None else config_settle
-        commission_rate = (
-            r.commission_rate if r.commission_rate is not None else config_commission
-        )
         # 逐日重算：有逐日明细则按天累加(核销/结算/服务费逐日舍入再相加)，否则回退期级公式
         calc = tl_svc.recompute_from_json(
-            r.daily_json, rate_hexiao, rate_settle, r.supplier_commission,
-            commission_rate, r.platform or "抖音"
+            r.daily_json, r.rate_hexiao, r.rate_settle, r.supplier_commission
         ) or tl_svc.compute_row(
-            r.supplier_received, r.supplier_commission, rate_hexiao, rate_settle,
-            r.platform or "抖音"
+            r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_settle
         )
         # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
         if r.jinying_amount is not None:
@@ -339,14 +296,13 @@ def save_ledger(
             period_end=r.period_end,
             supplier_received=r.supplier_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
-            commission_rate=commission_rate,
             publisher_due=calc["publisher_due"],
             hexiao_amount=calc["hexiao_amount"],
             payment_amount=r.payment_amount or Decimal("0"),
             jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
             service_fee=fee_val,                     # 服务费=结算−核销
-            rate_hexiao=rate_hexiao,
-            rate_settle=rate_settle,
+            rate_hexiao=r.rate_hexiao,
+            rate_settle=r.rate_settle,
             rate_fee=r.rate_fee,
             daily_json=r.daily_json or "",
             order_count=r.order_count or 0,
@@ -411,10 +367,8 @@ def update_row(
     if payload.repay_amount is not None:
         row.repay_amount = payload.repay_amount
 
-    # 服务商到账 / 佣金 / 佣金率 / 比例「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
+    # 服务商到账 / 佣金 / 比例「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
     calc_dirty = False
-    # 佣金 override：手工传入佣金金额 → 该值为准；否则 None（佣金随佣金率逐日重算）
-    comm_override = None
     if payload.supplier_received is not None:
         if abs(payload.supplier_received - (row.supplier_received or Decimal("0"))) > Decimal("0.005"):
             row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
@@ -424,11 +378,6 @@ def update_row(
         if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
             calc_dirty = True
         row.supplier_commission = payload.supplier_commission
-        comm_override = payload.supplier_commission   # 手工佣金金额覆盖
-    if payload.commission_rate is not None:
-        if abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
-        row.commission_rate = payload.commission_rate
     if payload.rate_hexiao is not None:
         if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
             calc_dirty = True
@@ -440,15 +389,11 @@ def update_row(
     if payload.rate_fee is not None:
         row.rate_fee = payload.rate_fee
     if calc_dirty:
-        # 逐日重算：改费率/佣金率/佣金也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认。
-        # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
+        # 逐日重算：改费率/佣金也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认
         calc = tl_svc.recompute_from_json(
-            row.daily_json, row.rate_hexiao, row.rate_settle, comm_override,
-            row.commission_rate, row.platform or "抖音"
+            row.daily_json, row.rate_hexiao, row.rate_settle, row.supplier_commission
         ) or tl_svc.compute_row(
-            row.supplier_received,
-            comm_override if comm_override is not None else row.supplier_commission,
-            row.rate_hexiao, row.rate_settle, row.platform or "抖音"
+            row.supplier_received, row.supplier_commission, row.rate_hexiao, row.rate_settle
         )
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]

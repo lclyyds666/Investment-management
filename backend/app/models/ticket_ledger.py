@@ -41,10 +41,6 @@ class TicketLedger(Base):
     supplier_commission: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="服务商佣金(手工录入,默认0)"
     )
-    commission_rate: Mapped[Decimal] = mapped_column(
-        Numeric(6, 4), default=Decimal("0.0600"),
-        comment="服务商佣金率(仅抖音;默认0.06,佣金=订单实收×佣金率−达人−团长,可编辑)",
-    )
     publisher_due: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="出版应得到账金额 B = 服务商到账 - 服务商佣金(计算基数)"
     )

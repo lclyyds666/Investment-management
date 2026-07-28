@@ -47,11 +47,7 @@ class HotelLedger(Base):
         Numeric(18, 2), default=0, comment="平台结算原值(抖音=服务商到账;美团/携程=平台结算毛额)"
     )
     supplier_commission: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2), default=0, comment="服务商佣金(仅抖音;默认订单实收×佣金率−达人−团长,可编辑)"
-    )
-    commission_rate: Mapped[Decimal] = mapped_column(
-        Numeric(6, 4), default=Decimal("0.0600"),
-        comment="服务商佣金率(仅抖音;默认0.06,佣金=订单实收×佣金率−达人−团长,可编辑)",
+        Numeric(18, 2), default=0, comment="服务商佣金(仅抖音;默认订单实收×6%−达人−团长,可编辑)"
     )
     settle_base: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="结算基数=base_received−佣金(抖音=出版应得;美团/携程=毛额)"
