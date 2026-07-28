@@ -161,7 +161,7 @@ const metricCards = computed(() => {
   const f = fin.value || {}
   return [
     { label: '已实现业务规模', value: Number(f.total_realized_scale || 0), color: '#2de1c2', ico: '📊', prefix: '¥' },
-    { label: '已实现毛收入(回款)', value: Number(f.total_gross_income || 0), color: '#39c5ff', ico: '💰', prefix: '¥' },
+    { label: '已实现业务毛利润', value: Number(f.total_gross_income || 0), color: '#39c5ff', ico: '💰', prefix: '¥' },
     { label: '可用资金', value: Number(f.available_funds || 0), color: '#ffd34e', ico: '💵', prefix: '¥' },
     { label: '待审批合同', value: pendingCount.value, color: '#ff7ac6', ico: '📝' }
   ]

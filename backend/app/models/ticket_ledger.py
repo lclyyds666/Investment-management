@@ -55,6 +55,9 @@ class TicketLedger(Base):
     payment_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="付款金额(手工录入,期次递推输入)"
     )
+    co_investment_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, nullable=False, comment="跟投金额(手工录入,默认0)"
+    )
     pending_writeoff: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0,
         comment="景区待核销金额(滚动余额)=上期余额+本期付款金额-本期景区核销金额",

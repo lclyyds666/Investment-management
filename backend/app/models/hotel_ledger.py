@@ -82,6 +82,9 @@ class HotelLedger(Base):
     payment_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="付款金额(手工,隐藏,参与递推)"
     )
+    co_investment_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=0, nullable=False, comment="跟投金额(手工,每期各平台共享,默认0)"
+    )
     payment_date: Mapped[date | None] = mapped_column(
         Date, nullable=True, comment="付款日期(手工填写,每期各平台共享)"
     )

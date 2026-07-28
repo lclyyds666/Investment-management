@@ -229,6 +229,8 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260729_ticket_confirm.sql
 mysql -u root -p sd_publish_scm < backend/migrations/20260730_ledger_positive.sql       # 台账核销率分子 positive_count(门票+酒店)
 mysql -u root -p sd_publish_scm < backend/migrations/20260731_ledger_confirm_status.sql # 确认函两步状态 confirmed(门票+酒店)
 mysql -u root -p sd_publish_scm < backend/migrations/20260802_hotel_payment_date.sql    # 酒店台账付款日期 payment_date
+mysql -u root -p sd_publish_scm < backend/migrations/20260803_ledger_commission_rate.sql # 门票/酒店服务商佣金率 commission_rate
+mysql -u root -p sd_publish_scm < backend/migrations/20260804_ledger_co_investment.sql   # 门票/酒店跟投金额 co_investment_amount
 ```
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。

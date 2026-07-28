@@ -1,15 +1,16 @@
 """财务对账单处理服务。
 
 职责：
-1. 解析多 Sheet 的平台对账单 xlsx（抖音/美团/携程），提取每平台的
-   「出版应得到账金额」(已实现业务规模) 与「应扣出版预付」(已实现业务毛收入/回款)，
+1. 解析多 Sheet 的平台对账单 xlsx（抖音/美团/携程），保留独立的历史财务数据源。
    并从明细 Sheet 统计订单数与间夜。
 2. UPSERT 写入 biz_financial_metrics（按平台+账期覆盖，幂等）。
-3. 汇总构建经营页 / 大屏共用的财务看板视图（含收益率、资金占用、可用资金）。
+3. 从门票/酒店台账汇总经营核心指标、资金占用时长和逐期服务费图表。
 """
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
@@ -18,7 +19,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.financial import FinanceConfig, FinancialMetrics
+from app.models.hotel_ledger import HotelLedger
 from app.models.project import ProjectMetrics
+from app.models.ticket_ledger import TicketLedger
 
 PLATFORM_KEYWORDS = {
     "douyin": "抖音",
@@ -235,37 +238,178 @@ def _to_project_metric(row: ProjectMetrics) -> dict:
     }
 
 
+_LEDGER_DATE_RE = re.compile(r"(20\d{2})\D{0,3}(\d{1,2})(?:\D{0,3}(\d{1,2}))?")
+
+
+def _decimal(value) -> Decimal:
+    return value if isinstance(value, Decimal) else Decimal(str(value or 0))
+
+
+def _period_date(row) -> date | None:
+    """取台账归属期日期，缺少结构化日期时再从期次文本中兜底解析。"""
+    for value in (getattr(row, "period_start", None), getattr(row, "period_end", None)):
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+    text = getattr(row, "period_text", "") or getattr(row, "check_date_text", "") or ""
+    match = _LEDGER_DATE_RE.search(text)
+    if match:
+        try:
+            return date(int(match.group(1)), int(match.group(2)), int(match.group(3) or 1))
+        except ValueError:
+            pass
+    created = getattr(row, "created_at", None)
+    if isinstance(created, datetime):
+        return created.date()
+    return created if isinstance(created, date) else None
+
+
+def _period_label(row) -> str:
+    label = getattr(row, "period_text", "") or getattr(row, "check_date_text", "")
+    if label:
+        return label
+    start = getattr(row, "period_start", None)
+    end = getattr(row, "period_end", None)
+    if start or end:
+        return f"{start or ''}~{end or ''}".strip("~")
+    return f"台账#{getattr(row, 'id', '')}"
+
+
+def _profit_point(scenic_id: str, business_type: str, row, service_fee: Decimal) -> dict:
+    period_date = _period_date(row)
+    period = _period_label(row)
+    date_key = period_date.isoformat() if period_date else "undated"
+    return {
+        "scenic_id": scenic_id,
+        "business_type": business_type,
+        "period": period,
+        "period_key": f"{date_key}::{period}",
+        "year": period_date.year if period_date else None,
+        "month": period_date.month if period_date else None,
+        "service_fee": service_fee,
+    }
+
+
+def _hotel_period_key(row) -> tuple[str, str]:
+    period = (
+        getattr(row, "source_file", "")
+        or getattr(row, "detail_name", "")
+        or getattr(row, "period_text", "")
+        or getattr(row, "check_date_text", "")
+        or f"row:{getattr(row, 'id', '')}"
+    )
+    return row.scenic_id, period
+
+
+def build_ledger_metrics(
+    ticket_rows: list[TicketLedger],
+    hotel_rows: list[HotelLedger],
+    *,
+    today: date | None = None,
+) -> dict:
+    """按台账快照计算经营指标；不回写台账，也不重新执行业务计算算法。"""
+    today = today or date.today()
+    total_invested = Decimal("0")
+    total_realized = Decimal("0")
+    total_gross = Decimal("0")
+    total_repaid = Decimal("0")
+    occupation_weight = Decimal("0")
+    occupation_amount = Decimal("0")
+    ledger_profit: list[dict] = []
+
+    def add_occupation(net_investment: Decimal, start: date | None, end: date | None) -> None:
+        nonlocal occupation_weight, occupation_amount
+        if net_investment <= 0 or not start:
+            return
+        finish = end or today
+        days = max((finish - start).days, 0)
+        occupation_weight += net_investment * Decimal(days)
+        occupation_amount += net_investment
+
+    for row in ticket_rows:
+        payment = _decimal(row.payment_amount)
+        co_investment = _decimal(getattr(row, "co_investment_amount", 0))
+        net_investment = payment - co_investment
+        total_invested += net_investment
+        total_realized += _decimal(row.jinying_amount)
+        total_gross += _decimal(row.service_fee)
+        total_repaid += _decimal(row.repay_amount)
+        add_occupation(net_investment, row.pay_date, row.repay_date)
+        ledger_profit.append(
+            _profit_point(row.scenic_id, "ticket", row, _decimal(row.service_fee))
+        )
+
+    hotel_groups: dict[tuple[str, str], list[HotelLedger]] = defaultdict(list)
+    for row in hotel_rows:
+        hotel_groups[_hotel_period_key(row)].append(row)
+        total_realized += _decimal(row.jinying_amount)
+        total_gross += _decimal(row.service_fee)
+
+    for (scenic_id, _), rows in hotel_groups.items():
+        # 同期共享字段只计算一次；取付款金额最大的代表行兼容迁移前可能存在的同期不一致数据。
+        representative = max(rows, key=lambda item: _decimal(item.payment_amount))
+        payment = _decimal(representative.payment_amount)
+        co_investment = _decimal(getattr(representative, "co_investment_amount", 0))
+        net_investment = payment - co_investment
+        total_invested += net_investment
+        payment_date = next((r.payment_date for r in rows if r.payment_date), None)
+        repay_date = next((r.repay_date for r in rows if r.repay_date), None)
+        repay_amount = next((r.repay_amount for r in rows if r.repay_amount is not None), None)
+        total_repaid += _decimal(repay_amount)
+        add_occupation(net_investment, payment_date, repay_date)
+        total_fee = sum((_decimal(r.service_fee) for r in rows), Decimal("0"))
+        ledger_profit.append(_profit_point(scenic_id, "hotel", representative, total_fee))
+
+    ledger_profit.sort(
+        key=lambda item: (
+            item["year"] is None,
+            item["year"] or 9999,
+            item["month"] or 99,
+            item["period_key"],
+            item["scenic_id"],
+            item["business_type"],
+        )
+    )
+    years = sorted({item["year"] for item in ledger_profit if item["year"] is not None}, reverse=True)
+    scenic_ids = sorted({row.scenic_id for row in [*ticket_rows, *hotel_rows]})
+    occupation_days = (
+        round(float(occupation_weight / occupation_amount), 1) if occupation_amount else None
+    )
+    profit_rate = (
+        round(float(total_gross / total_invested * 100), 2) if total_invested > 0 else None
+    )
+    return {
+        "existing_scale": total_invested,
+        "total_realized_scale": total_realized,
+        "total_gross_income": total_gross,
+        "profit_rate": profit_rate,
+        "capital_occupation_days": occupation_days,
+        "capital_occupied": total_invested - total_repaid,
+        "ledger_profit": ledger_profit,
+        "available_years": years,
+        "scenic_ids": scenic_ids,
+    }
+
+
 def build_dashboard(db: Session) -> dict:
-    """构建财务经营看板聚合视图（项目维度驱动，经营页 & 大屏共用）。"""
-    # —— 项目维度（Sheet2 驱动）——
+    """构建财务经营看板：核心指标由门票/酒店台账驱动。"""
+    ticket_rows = db.scalars(
+        select(TicketLedger).order_by(TicketLedger.period_start, TicketLedger.id)
+    ).all()
+    hotel_rows = db.scalars(
+        select(HotelLedger).order_by(HotelLedger.period_start, HotelLedger.id)
+    ).all()
+    ledger_metrics = build_ledger_metrics(ticket_rows, hotel_rows)
+
+    # 项目统计表和平台对账单继续作为独立数据源返回，兼容现有上传与大屏调用。
     projects = db.scalars(select(ProjectMetrics).order_by(ProjectMetrics.seq)).all()
-    total_invested = sum((p.invested_amount or Decimal("0") for p in projects), Decimal("0"))
-    total_realized = sum((p.realized_scale or Decimal("0") for p in projects), Decimal("0"))
-    total_gross = sum((p.gross_profit or Decimal("0") for p in projects), Decimal("0"))
-
-    # 业务收益率 = 投入加权平均（仅统计有收益率的项目）
-    rate_num = Decimal("0")
-    rate_den = Decimal("0")
-    for p in projects:
-        if p.profit_rate is not None and p.invested_amount:
-            rate_num += p.profit_rate * p.invested_amount
-            rate_den += p.invested_amount
-    profit_rate = float(rate_num / rate_den * 100) if rate_den else None
-
-    capital_occupied = total_invested - total_realized  # 资金占用 = 投入 - 回款
-
     cfg = get_or_create_config(db)
-
-    # —— 对账单平台明细（独立数据源，保留）——
     fm_rows = db.scalars(select(FinancialMetrics).order_by(FinancialMetrics.platform)).all()
     platforms = [_to_platform_metric(r) for r in fm_rows]
 
     return {
-        "existing_scale": total_invested,           # 现存业务规模 = Σ投入(已投入本金)
-        "total_realized_scale": total_realized,
-        "total_gross_income": total_gross,
-        "profit_rate": round(profit_rate, 2) if profit_rate is not None else None,
-        "capital_occupied": capital_occupied,
+        **ledger_metrics,
         "available_funds": cfg.available_funds or Decimal("0"),
         "projects": [_to_project_metric(p) for p in projects],
         "invested_cost": cfg.total_invested_cost or Decimal("0"),

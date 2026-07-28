@@ -251,6 +251,9 @@
         <el-form-item label="回款金额">
           <el-input-number v-model="editForm.repay_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
         </el-form-item>
+        <el-form-item label="跟投金额">
+          <el-input-number v-model="editForm.co_investment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
@@ -470,7 +473,7 @@ const editForm = reactive({
   ratePctHexiao: 90, ratePctSettle: 94,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false, payment_amount: 0,
-  repay_date: null, repay_amount: null
+  repay_date: null, repay_amount: null, co_investment_amount: 0
 })
 
 // 出版应得到账 = 服务商到账(可编辑) − 服务商佣金；佣金仅抖音计入
@@ -514,6 +517,7 @@ function openEdit(row) {
   editForm.payment_amount = Number(row.payment_amount) || 0
   editForm.repay_date = row.repay_date
   editForm.repay_amount = row.repay_amount != null ? Number(row.repay_amount) : null
+  editForm.co_investment_amount = Number(row.co_investment_amount) || 0
   editVisible.value = true
   nextTick(() => { suppressJinyingWatch = false })
 }
@@ -526,7 +530,8 @@ function buildEditPayload() {
     rate_settle: round2(Number(editForm.ratePctSettle) / 100),
     payment_amount: editForm.payment_amount,
     repay_date: editForm.repay_date,
-    repay_amount: editForm.repay_amount
+    repay_amount: editForm.repay_amount,
+    co_investment_amount: editForm.co_investment_amount
   }
   if (editForm.platform === '抖音') payload.commission_rate = round2(Number(editForm.commissionRatePct) / 100)
   if (editForm.commissionEdited) payload.supplier_commission = editForm.supplier_commission

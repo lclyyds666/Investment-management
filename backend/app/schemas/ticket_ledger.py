@@ -54,6 +54,7 @@ class TicketLedgerSaveRow(BaseModel):
     supplier_commission: Decimal = Decimal("0")     # 服务商佣金（手工，默认0）
     commission_rate: Decimal = Field(default=Decimal("0.06"))  # 服务商佣金率（仅抖音，默认0.06）
     payment_amount: Decimal = Decimal("0")          # 付款金额（手工，期次递推输入）
+    co_investment_amount: Decimal = Field(default=Decimal("0"), ge=0)  # 跟投金额
     rate_hexiao: Decimal = Field(default=Decimal("0.90"))
     rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率（结算金额=B×结算费率）
     rate_fee: Decimal = Field(default=Decimal("0.04"))     # 旧服务费率（已弃用，兼容保留）
@@ -91,6 +92,7 @@ class TicketLedgerUpdateIn(BaseModel):
     supplier_commission: Optional[Decimal] = None
     commission_rate: Optional[Decimal] = None    # 服务商佣金率(仅抖音;改后佣金按新率逐日重算)
     payment_amount: Optional[Decimal] = None
+    co_investment_amount: Optional[Decimal] = Field(default=None, ge=0)
     rate_hexiao: Optional[Decimal] = None
     rate_settle: Optional[Decimal] = None      # 结算费率(可编辑)
     rate_fee: Optional[Decimal] = None         # 旧服务费率(已弃用,兼容保留)
@@ -128,6 +130,7 @@ class TicketLedgerRow(BaseModel):
     publisher_due: Decimal = Decimal("0")
     hexiao_amount: Decimal = Decimal("0")
     payment_amount: Decimal = Decimal("0")
+    co_investment_amount: Decimal = Decimal("0")
     pending_writeoff: Decimal = Decimal("0")
     jinying_amount: Decimal = Decimal("0")
     service_fee: Decimal = Decimal("0")
@@ -151,6 +154,7 @@ class TicketLedgerTotals(BaseModel):
 
     hexiao_amount: Decimal = Decimal("0")
     payment_amount: Decimal = Decimal("0")
+    co_investment_amount: Decimal = Decimal("0")
     pending_writeoff: Decimal = Decimal("0")   # 末期滚动余额
     jinying_amount: Decimal = Decimal("0")
     service_fee: Decimal = Decimal("0")

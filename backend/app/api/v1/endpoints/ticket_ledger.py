@@ -184,6 +184,7 @@ def _totals(rows: list[TicketLedger]) -> TicketLedgerTotals:
     return TicketLedgerTotals(
         hexiao_amount=s("hexiao_amount"),
         payment_amount=s("payment_amount"),
+        co_investment_amount=s("co_investment_amount"),
         # 景区待核销金额为滚动余额 → 合计取末期(最后一行)余额，而非逐行相加
         pending_writeoff=(rows[-1].pending_writeoff or Decimal("0")) if rows else Decimal("0"),
         jinying_amount=s("jinying_amount"),
@@ -396,6 +397,7 @@ def save_ledger(
             publisher_due=calc["publisher_due"],
             hexiao_amount=calc["hexiao_amount"],
             payment_amount=r.payment_amount or Decimal("0"),
+            co_investment_amount=r.co_investment_amount or Decimal("0"),
             jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
             service_fee=fee_val,                     # 服务费=结算−核销
             rate_hexiao=r.rate_hexiao,
@@ -556,6 +558,8 @@ def update_row(
     if payload.payment_amount is not None:
         row.payment_amount = payload.payment_amount
         balance_dirty = True
+    if payload.co_investment_amount is not None:
+        row.co_investment_amount = payload.co_investment_amount
 
     db.flush()
     if balance_dirty:

@@ -178,11 +178,11 @@ def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
 @router.get(
     "/financial",
     response_model=Response[FinancialDashboard],
-    summary="财务经营指标看板（真实回款）",
+    summary="经营核心指标与台账服务费图表",
     dependencies=[Depends(_view_guard)],
 )
 def financial_dashboard(db: Session = Depends(get_db)):
-    """返回分平台已实现业务规模/毛收入 + 收益率/资金占用/可用资金聚合，供经营页与大屏共用。"""
+    """返回台账净投入、销售额、毛利润、占用时长及逐期服务费，供经营页与大屏共用。"""
     return Response.ok(financial_svc.build_dashboard(db))
 
 

@@ -59,6 +59,7 @@ class HotelSaveRow(BaseModel):
     def_jinying: Optional[Decimal] = None
     daily_json: str = ""                            # 逐日明细(透传持久化，供编辑逐日重算)
     payment_amount: Decimal = Decimal("0")          # 付款金额(隐藏,参与递推)
+    co_investment_amount: Decimal = Field(default=Decimal("0"), ge=0)  # 跟投金额(每期共享)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
     order_count: int = 0
@@ -89,6 +90,7 @@ class HotelUpdateIn(BaseModel):
     hexiao_amount: Optional[Decimal] = None    # 景区核销金额(人工覆盖;服务费=结算−核销)
     jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
     payment_amount: Optional[Decimal] = None
+    co_investment_amount: Optional[Decimal] = Field(default=None, ge=0)
     payment_date: Optional[date] = None        # 付款日期(手工,每期共享)
     repay_date: Optional[date] = None
     repay_amount: Optional[Decimal] = None
@@ -128,6 +130,7 @@ class HotelLedgerRow(BaseModel):
     service_fee: Decimal = Decimal("0")
     jinying_amount: Decimal = Decimal("0")
     payment_amount: Decimal = Decimal("0")
+    co_investment_amount: Decimal = Decimal("0")
     payment_date: Optional[date] = None
     pending_writeoff: Decimal = Decimal("0")
     repay_date: Optional[date] = None
@@ -147,6 +150,7 @@ class HotelTotals(BaseModel):
     jinying_amount: Decimal = Decimal("0")
     service_fee: Decimal = Decimal("0")
     payment_amount: Decimal = Decimal("0")
+    co_investment_amount: Decimal = Decimal("0")
     pending_writeoff: Decimal = Decimal("0")     # 末期各平台待核销之和
     room_nights: int = 0
     repay_amount: Decimal = Decimal("0")

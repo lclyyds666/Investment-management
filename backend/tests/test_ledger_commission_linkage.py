@@ -66,6 +66,7 @@ def _ticket_row():
         publisher_due=Decimal("144"),
         hexiao_amount=Decimal("129.60"),
         payment_amount=Decimal("100"),
+        co_investment_amount=Decimal("0"),
         pending_writeoff=Decimal("-29.60"),
         jinying_amount=Decimal("135.36"),
         service_fee=Decimal("5.76"),
@@ -109,6 +110,7 @@ def _hotel_row():
         service_fee=Decimal("132"),
         jinying_amount=Decimal("261.60"),
         payment_amount=Decimal("200"),
+        co_investment_amount=Decimal("0"),
         payment_date=date(2026, 1, 1),
         pending_writeoff=Decimal("70.40"),
         repay_date=date(2026, 1, 2),
@@ -213,6 +215,47 @@ class CommissionLinkageTest(unittest.TestCase):
         self.assertEqual(preview.supplier_commission, Decimal("3.50"))
         self.assertEqual(row.supplier_commission, preview.supplier_commission)
         self.assertEqual(row.daily_json, _daily_json())
+
+    def test_ticket_co_investment_update_is_persisted_without_recalculation(self):
+        row = _ticket_row()
+        original = (row.hexiao_amount, row.jinying_amount, row.service_fee, row.pending_writeoff)
+        session = _Session(row)
+
+        ticket_api.update_row(
+            "test-scenic",
+            row.id,
+            TicketLedgerUpdateIn(co_investment_amount=Decimal("35.50")),
+            session,
+            None,
+        )
+
+        self.assertEqual(row.co_investment_amount, Decimal("35.50"))
+        self.assertEqual(
+            (row.hexiao_amount, row.jinying_amount, row.service_fee, row.pending_writeoff),
+            original,
+        )
+
+    def test_hotel_co_investment_update_is_shared_with_same_period(self):
+        row = _hotel_row()
+        sibling = _hotel_row()
+        sibling.id = 3
+        sibling.platform = "美团"
+
+        class _PeriodSession(_Session):
+            def scalars(self, _statement):
+                return _Rows([row, sibling])
+
+        session = _PeriodSession(row)
+        hotel_api.update_row(
+            "test-scenic",
+            row.id,
+            HotelUpdateIn(co_investment_amount=Decimal("88.00")),
+            session,
+            None,
+        )
+
+        self.assertEqual(row.co_investment_amount, Decimal("88.00"))
+        self.assertEqual(sibling.co_investment_amount, Decimal("88.00"))
 
 
 if __name__ == "__main__":
