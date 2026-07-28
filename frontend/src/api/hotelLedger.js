@@ -28,6 +28,14 @@ export function updateHotelRow(scenicId, rowId, payload) {
   return request.put(`/scenic-spots/${encodeURIComponent(scenicId)}/hotel-ledger/${rowId}`, payload)
 }
 
+/** 按后端逐日算法预览编辑结果，不写数据库 */
+export function previewHotelRow(scenicId, rowId, payload) {
+  return request.post(
+    `/scenic-spots/${encodeURIComponent(scenicId)}/hotel-ledger/${rowId}/preview`,
+    payload
+  )
+}
+
 /** 删除台账单行 */
 export function deleteHotelRow(scenicId, rowId) {
   return request.delete(`/scenic-spots/${encodeURIComponent(scenicId)}/hotel-ledger/${rowId}`)

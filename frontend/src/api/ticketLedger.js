@@ -34,6 +34,14 @@ export function updateTicketRow(scenicId, rowId, payload) {
   )
 }
 
+/** 按后端逐日算法预览编辑结果，不写数据库 */
+export function previewTicketRow(scenicId, rowId, payload) {
+  return request.post(
+    `/scenic-spots/${encodeURIComponent(scenicId)}/ticket-ledger/${rowId}/preview`,
+    payload
+  )
+}
+
 /** 删除台账单行 */
 export function deleteTicketRow(scenicId, rowId) {
   return request.delete(

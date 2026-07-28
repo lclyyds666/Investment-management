@@ -27,6 +27,7 @@ from app.models.hotel_ledger import HotelLedger
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.hotel_ledger import (
+    HotelCalculationPreview,
     HotelLedgerOut,
     HotelLedgerRow,
     HotelSaveIn,
@@ -75,6 +76,69 @@ def _detail_dir(sid: str) -> Path:
 
 def _row_out(r: HotelLedger) -> HotelLedgerRow:
     return HotelLedgerRow.model_validate(r)
+
+
+def _calculation_preview(
+    row: HotelLedger, payload: HotelUpdateIn
+) -> HotelCalculationPreview:
+    platform = payload.platform if payload.platform is not None else row.platform
+    base_received = (
+        payload.base_received
+        if payload.base_received is not None
+        else (row.base_received or Decimal("0"))
+    )
+    commission_rate = (
+        payload.commission_rate
+        if payload.commission_rate is not None
+        else (row.commission_rate or hl_svc.DEFAULT_COMMISSION_RATE)
+    )
+    rate_hexiao = payload.rate_hexiao if payload.rate_hexiao is not None else row.rate_hexiao
+    rate_settle = payload.rate_settle if payload.rate_settle is not None else row.rate_settle
+    fee_per_night = (
+        payload.fee_per_night if payload.fee_per_night is not None else row.fee_per_night
+    )
+    fee_algo = payload.fee_algo if payload.fee_algo is not None else row.fee_algo
+    room_nights = payload.room_nights if payload.room_nights is not None else row.room_nights
+    daily_json = row.daily_json
+    if (
+        payload.base_received is not None
+        and abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005")
+    ):
+        daily_json = ""
+    calc = hl_svc.recompute_from_json(
+        platform,
+        daily_json,
+        rate_hexiao,
+        rate_settle,
+        fee_per_night,
+        fee_algo,
+        payload.supplier_commission,
+        room_nights,
+        commission_rate,
+    ) or hl_svc.compute_row(
+        platform,
+        base_received,
+        payload.supplier_commission if payload.supplier_commission is not None else row.supplier_commission,
+        room_nights,
+        rate_hexiao,
+        fee_per_night,
+        fee_algo,
+        rate_settle,
+    )
+    hexiao_amount = (
+        payload.hexiao_amount if payload.hexiao_amount is not None else calc["hexiao_amount"]
+    )
+    jinying_amount = (
+        payload.jinying_amount if payload.jinying_amount is not None else calc["jinying_amount"]
+    )
+    return HotelCalculationPreview(
+        supplier_commission=calc["supplier_commission"],
+        commission_rate=commission_rate,
+        settle_base=calc["settle_base"],
+        hexiao_amount=hexiao_amount,
+        jinying_amount=jinying_amount,
+        service_fee=jinying_amount - hexiao_amount,
+    )
 
 
 def _load_rows(db: Session, sid: str) -> list[HotelLedger]:
@@ -255,6 +319,7 @@ def save_ledger(
         calc = hl_svc.recompute_from_json(
             r.platform, r.daily_json, r.rate_hexiao, r.rate_settle,
             r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
+            r.commission_rate,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
             r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
@@ -274,6 +339,7 @@ def save_ledger(
             room_nights=r.room_nights or 0,
             base_received=r.base_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
+            commission_rate=r.commission_rate,
             settle_base=calc["settle_base"],
             rate_hexiao=r.rate_hexiao,
             hexiao_amount=calc["hexiao_amount"],
@@ -306,6 +372,29 @@ def save_ledger(
 # --------------------------------------------------------------------------- #
 # 4) 编辑单行
 # --------------------------------------------------------------------------- #
+@router.post(
+    "/{scenic_id}/hotel-ledger/{row_id}/preview",
+    response_model=Response[HotelCalculationPreview],
+    summary="预览编辑后的酒店台账计算结果(不落库)",
+)
+def preview_update(
+    scenic_id: str,
+    row_id: int,
+    payload: HotelUpdateIn,
+    db: Session = Depends(get_db),
+    _: User = Depends(_edit_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    row = db.scalar(
+        select(HotelLedger).where(
+            HotelLedger.id == row_id, HotelLedger.scenic_id == sid
+        )
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
+    return Response.ok(_calculation_preview(row, payload))
+
+
 @router.put(
     "/{scenic_id}/hotel-ledger/{row_id}",
     response_model=Response[HotelLedgerRow],
@@ -320,11 +409,14 @@ def update_row(
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
 
+    fields_set = payload.model_fields_set
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
 
-    # 服务商到账 / 佣金 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
+    # 服务商到账 / 佣金 / 佣金率 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
     calc_dirty = False
+    # 佣金 override：手工传入佣金金额 → 该值为准；否则 None（佣金随佣金率逐日重算）
+    comm_override = None
     if payload.base_received is not None:
         if abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005"):
             row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
@@ -334,6 +426,11 @@ def update_row(
         if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
             calc_dirty = True
         row.supplier_commission = payload.supplier_commission
+        comm_override = payload.supplier_commission   # 手工佣金金额覆盖
+    if payload.commission_rate is not None:
+        if abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005"):
+            calc_dirty = True
+        row.commission_rate = payload.commission_rate
     if payload.rate_hexiao is not None:
         if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
             calc_dirty = True
@@ -355,12 +452,15 @@ def update_row(
             calc_dirty = True
         row.room_nights = payload.room_nights
     if calc_dirty:
-        # 逐日重算：改费率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认
+        # 逐日重算：改费率/佣金率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认。
+        # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
         calc = hl_svc.recompute_from_json(
             row.platform, row.daily_json, row.rate_hexiao, row.rate_settle,
-            row.fee_per_night, row.fee_algo, row.supplier_commission, row.room_nights,
+            row.fee_per_night, row.fee_algo, comm_override, row.room_nights,
+            row.commission_rate,
         ) or hl_svc.compute_row(
-            row.platform, row.base_received, row.supplier_commission,
+            row.platform, row.base_received,
+            comm_override if comm_override is not None else row.supplier_commission,
             row.room_nights, row.rate_hexiao, row.fee_per_night, row.fee_algo, row.rate_settle,
         )
         row.supplier_commission = calc["supplier_commission"]
@@ -379,19 +479,21 @@ def update_row(
 
     # 付款金额 / 付款日期 / 回款日期 / 回款金额：每期各平台共享 → 同步到本期所有平台行
     balance_dirty = calc_dirty or (payload.hexiao_amount is not None)
-    _shared = (payload.payment_amount is not None or payload.payment_date is not None
-               or payload.repay_date is not None or payload.repay_amount is not None)
+    _shared = any(
+        field in fields_set
+        for field in ("payment_amount", "payment_date", "repay_date", "repay_amount")
+    )
     if _shared:
         for sib in _load_rows(db, sid):
             if _period_key(sib) != _period_key(row):
                 continue
             if payload.payment_amount is not None:
                 sib.payment_amount = payload.payment_amount
-            if payload.payment_date is not None:
+            if "payment_date" in fields_set:
                 sib.payment_date = payload.payment_date
-            if payload.repay_date is not None:
+            if "repay_date" in fields_set:
                 sib.repay_date = payload.repay_date
-            if payload.repay_amount is not None:
+            if "repay_amount" in fields_set:
                 sib.repay_amount = payload.repay_amount
         if payload.payment_amount is not None:
             balance_dirty = True
