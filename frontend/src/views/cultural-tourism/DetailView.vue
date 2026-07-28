@@ -77,7 +77,7 @@
           </template>
 
           <el-tabs v-model="ledgerTab" class="ledger-tabs">
-            <el-tab-pane label="景区门票核销台账" name="ticket">
+            <el-tab-pane v-if="ticketEnabled" label="景区门票核销台账" name="ticket">
               <TicketLedger :scenic-id="scenicId" />
               <!-- 原始核销明细预览（对照/校验用）：仅展示已保存的对账明细源文件，点击查看/下载 -->
               <el-collapse class="raw-collapse">
@@ -91,7 +91,7 @@
               </el-collapse>
             </el-tab-pane>
 
-            <el-tab-pane label="景区酒店核销台账" name="scenic">
+            <el-tab-pane v-if="hotelEnabled" label="景区酒店核销台账" name="scenic">
               <HotelLedger :scenic-id="scenicId" />
               <!-- 原始核销明细预览（对照/校验用）：仅列源文件，可查看/下载 -->
               <el-collapse class="raw-collapse">
@@ -140,6 +140,14 @@ const router = useRouter()
 // 通过动态路由参数识别当前景区（数据作用域键）
 const scenicId = computed(() => String(route.params.scenicId || ''))
 const spot = computed(() => getScenicById(scenicId.value))
+const ticketEnabled = computed(() => spot.value?.ticketEnabled !== false)
+const hotelEnabled = computed(() => spot.value?.hotelEnabled === true)
+
+// 景区没有酒店业务时只显示门票台账；反之亦然，避免空模块触发无意义请求。
+watch([ticketEnabled, hotelEnabled], () => {
+  if (ticketEnabled.value) ledgerTab.value = 'ticket'
+  else if (hotelEnabled.value) ledgerTab.value = 'scenic'
+})
 
 // 经营数据（每景区独立，源自门票+酒店核销台账实时聚合）
 const metrics = ref({ sales: 0, writeoff_count: 0, positive_count: 0, rate: 0 })

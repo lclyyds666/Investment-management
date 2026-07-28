@@ -1,4 +1,4 @@
-"""文旅业务·景区酒店平台核销台账计算服务（泉州欧乐堡）。
+"""文旅业务·景区酒店平台核销台账 Excel 适配器。
 
 解析一份对账明细 xlsx（含抖音/美团/携程多平台、每平台多张周明细表），
 按平台聚合出「结算基数 / 间夜 / 服务商到账·佣金(抖音)」，供前端确认后生成台账。
@@ -19,16 +19,26 @@ from __future__ import annotations
 import json
 import re
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 import openpyxl
 
-DEFAULT_RATE_HEXIAO = Decimal("0.90")     # 景区核销率
-DEFAULT_FEE_PER_NIGHT = Decimal("44.00")  # 每间夜服务费(算法1)
-DEFAULT_RATE_SETTLE = Decimal("0.94")     # 结算费率(算法2:结算金额=结算基数×结算费率)
-DEFAULT_COMMISSION_RATE = Decimal("0.06")  # 抖音服务商佣金率(对订单实收)
-_CENT = Decimal("0.01")
+from app.services.ledger_calculator import (
+    DEFAULT_COMMISSION_RATE as CALC_DEFAULT_COMMISSION_RATE,
+    DEFAULT_FEE_PER_NIGHT as CALC_DEFAULT_FEE_PER_NIGHT,
+    DEFAULT_RATE_HEXIAO as CALC_DEFAULT_RATE_HEXIAO,
+    DEFAULT_RATE_SETTLE as CALC_DEFAULT_RATE_SETTLE,
+    calculate_running_balances,
+    calculate_hotel_ledger as _calculate_hotel_ledger,
+    quantize_money as _q,
+    running_pending as _running_pending,
+)
+
+DEFAULT_RATE_HEXIAO = CALC_DEFAULT_RATE_HEXIAO     # 景区核销率
+DEFAULT_FEE_PER_NIGHT = CALC_DEFAULT_FEE_PER_NIGHT  # 每间夜服务费(算法1)
+DEFAULT_RATE_SETTLE = CALC_DEFAULT_RATE_SETTLE     # 结算费率(算法2:结算金额=结算基数×结算费率)
+DEFAULT_COMMISSION_RATE = CALC_DEFAULT_COMMISSION_RATE  # 抖音服务商佣金率(对订单实收)
 
 # 平台识别（按 sheet 标题前缀）
 PLATFORMS = ("抖音", "美团", "携程")
@@ -66,10 +76,6 @@ def _num(v):
         return Decimal(s)
     except InvalidOperation:
         return None
-
-
-def _q(v: Decimal) -> Decimal:
-    return (v or Decimal("0")).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 def _to_date(v):
@@ -214,61 +220,15 @@ def recompute_from_days(platform: str, days: list[dict],
                         fee_algo: int = 1,
                         commission_override=None,
                         room_nights_override=None,
-                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict | None:
-    """酒店逐日重算并累加（逐日舍入到分）。结算基数=到账/毛额−佣金；核销=Σ(基数_day×核销率)；
-    算法1：服务费=间夜×每间夜服务费(间夜用行聚合值，×整数费率无逐日舍入差)、结算=核销+服务费；
-    算法2：结算=Σ(基数_day×结算费率)、服务费=结算−核销。
-    佣金（仅抖音）默认逐日自动=实收×佣金率−达人−团长；改总额时按各天实收占比分摊差额。
-    佣金率可动态调整（默认 6%）。"""
-    if not days:
-        return None
-    is_dy = platform == "抖音"
-    rate_comm = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
-    if is_dy:
-        comm_auto = [_q(d["shishou"] * rate_comm + d["daren"] + d["tuanzhang"]) for d in days]
-        c0 = _q(sum(comm_auto, Decimal("0")))
-        if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
-            comm_day, c_total = comm_auto, c0
-        else:
-            delta = commission_override - c0
-            s_total = sum((d["shishou"] for d in days), Decimal("0"))
-            n = len(days) or 1
-            comm_day = []
-            for i, d in enumerate(days):
-                share = (d["shishou"] / s_total) if s_total > 0 else (Decimal("1") / n)
-                comm_day.append(_q(comm_auto[i] + delta * share))
-            c_total = _q(commission_override)
-    else:
-        comm_day = [Decimal("0")] * len(days)
-        c_total = Decimal("0")
-
-    algo2 = int(fee_algo or 1) == 2
-    hexiao = jinying_a2 = fee_a2 = sbase = Decimal("0")
-    nights_sum = 0
-    for i, d in enumerate(days):
-        raw_base = d["recv"] if is_dy else d["base"]
-        b = raw_base - comm_day[i]
-        sbase += b
-        nights_sum += int(d["nights"] or 0)
-        hx = _q(b * rate_hexiao)
-        hexiao += hx
-        if algo2:
-            jy = _q(b * (rate_settle or Decimal("0")))
-            jinying_a2 += jy
-            fee_a2 += _q(jy - hx)
-    if algo2:
-        jinying, fee_sum = _q(jinying_a2), _q(fee_a2)
-    else:
-        nights = room_nights_override if room_nights_override is not None else nights_sum
-        fee_sum = _q(Decimal(int(nights or 0)) * (fee_per_night or Decimal("0")))
-        jinying = _q(hexiao + fee_sum)
-    return {
-        "supplier_commission": _q(c_total),
-        "settle_base": _q(sbase),
-        "hexiao_amount": _q(hexiao),
-        "service_fee": _q(fee_sum),
-        "jinying_amount": _q(jinying),
-    }
+                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+                        scenic_id: str = "legacy") -> dict | None:
+    return _calculate_hotel_ledger(
+        scenic_id, days, platform=platform, rate_hexiao=rate_hexiao,
+        rate_settle=rate_settle, fee_per_night=fee_per_night, fee_algo=fee_algo,
+        commission_override=commission_override,
+        room_nights_override=room_nights_override,
+        commission_rate=commission_rate,
+    )
 
 
 def recompute_from_json(platform: str, daily_json: str,
@@ -278,10 +238,19 @@ def recompute_from_json(platform: str, daily_json: str,
                         fee_algo: int = 1,
                         commission_override=None,
                         room_nights_override=None,
-                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> dict | None:
+                        commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+                        scenic_id: str = "legacy") -> dict | None:
     return recompute_from_days(platform, _days_from_json(daily_json), rate_hexiao,
                                rate_settle, fee_per_night, fee_algo, commission_override,
-                               room_nights_override, commission_rate)
+                               room_nights_override, commission_rate, scenic_id)
+
+
+def calculate_hotel_ledger(scenic_id: str, excel_data, **kwargs) -> dict | None:
+    """公共酒店计算入口；Excel 解析结果由调用方传入，计算本身无副作用。"""
+    return _calculate_hotel_ledger(scenic_id, excel_data, **kwargs)
+
+
+calculateHotelLedger = calculate_hotel_ledger
 
 
 def daily_defaults(platform: str, daily: dict[str, dict],
@@ -433,6 +402,7 @@ def compute_row(
     fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
     fee_algo: int = 1,
     rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+    scenic_id: str = "legacy",
 ) -> dict:
     """由平台原值/佣金/间夜与比例计算台账列。
 
@@ -441,33 +411,17 @@ def compute_row(
       算法1(默认)：服务费 = 间夜 × 每间夜服务费；结算金额 = 景区核销 + 服务费。
       算法2       ：结算金额 = 结算基数 × 结算费率；服务费 = 结算金额 − 景区核销。
     """
-    recv = base_received or Decimal("0")
-    comm = supplier_commission or Decimal("0")
-    if platform != "抖音":
-        comm = Decimal("0")  # 美团/携程无服务商佣金层
-    settle_base = recv - comm
-    hexiao = _q(settle_base * rate_hexiao)
-    if int(fee_algo or 1) == 2:
-        jinying = _q(settle_base * (rate_settle or Decimal("0")))
-        fee = _q(jinying - hexiao)
-    else:
-        fee = _q(Decimal(int(room_nights or 0)) * (fee_per_night or Decimal("0")))
-        jinying = _q(hexiao + fee)
-    return {
-        "supplier_commission": _q(comm),
-        "settle_base": _q(settle_base),
-        "hexiao_amount": hexiao,
-        "service_fee": fee,
-        "jinying_amount": jinying,
-    }
+    return _calculate_hotel_ledger(
+        scenic_id, [], platform=platform, base_received=base_received,
+        rate_hexiao=rate_hexiao, fee_per_night=fee_per_night,
+        fee_algo=fee_algo, rate_settle=rate_settle,
+        commission_override=supplier_commission, room_nights_override=room_nights,
+    )
 
 
 def running_pending(prev_balance: Decimal, payment_amount: Decimal, hexiao_amount: Decimal) -> Decimal:
     """期次递推：本期待核销 = 上期余额 + 本期付款 − 本期核销（首期 prev=0）。按平台各自滚动。"""
-    prev = prev_balance or Decimal("0")
-    pay = payment_amount or Decimal("0")
-    hexiao = hexiao_amount or Decimal("0")
-    return _q(prev + pay - hexiao)
+    return _running_pending(prev_balance, payment_amount, hexiao_amount)
 
 
 # —— 导出（台账列不含付款金额；含合计）——

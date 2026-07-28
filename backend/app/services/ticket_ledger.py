@@ -1,4 +1,4 @@
-"""文旅业务·门票平台核销台账计算服务（泉州欧乐堡专属逻辑）。
+"""文旅业务·门票平台核销台账 Excel 适配器。
 
 职责：
 1. 解析平台对账明细 xlsx（多个「周」明细 Sheet），逐单累加
@@ -23,16 +23,25 @@ from io import BytesIO
 
 import openpyxl
 
-# 台账固定字段（泉州欧乐堡门票平台）
+from app.services.ledger_calculator import (
+    DEFAULT_COMMISSION_RATE as CALC_DEFAULT_COMMISSION_RATE,
+    DEFAULT_RATE_HEXIAO as CALC_DEFAULT_RATE_HEXIAO,
+    DEFAULT_RATE_SETTLE as CALC_DEFAULT_RATE_SETTLE,
+    calculate_running_balances,
+    calculate_ticket_ledger as _calculate_ticket_ledger,
+    quantize_money as _q,
+    running_pending as _running_pending,
+)
+
+# 门票产品仅作为缺失产品名称时的系统兜底；实际景区由 scenic_id 作用域决定。
 DEFAULT_TICKET_PRODUCT = "水上世界/童话世界/海洋王国"
-DEFAULT_RATE_HEXIAO = Decimal("0.90")  # 景区核销率
+DEFAULT_RATE_HEXIAO = CALC_DEFAULT_RATE_HEXIAO  # 景区核销率
 # 结算费率：结算金额 = 出版应得B × 结算费率。默认 0.94（= 旧核销率0.90 + 旧服务费率0.04），
 # 保证历史/现有台账数值完全不变；服务费改为派生 = 结算金额 − 景区核销金额。
-DEFAULT_RATE_SETTLE = Decimal("0.94")
+DEFAULT_RATE_SETTLE = CALC_DEFAULT_RATE_SETTLE
 DEFAULT_RATE_FEE = Decimal("0.04")     # 旧服务费率（保留常量，仅历史/迁移回填参考）
 # 服务商佣金默认率(对订单实收金额)：服务商佣金 = 订单实收×6% − 达人服务费 − 团长服务费
-DEFAULT_COMMISSION_RATE = Decimal("0.06")
-_CENT = Decimal("0.01")
+DEFAULT_COMMISSION_RATE = CALC_DEFAULT_COMMISSION_RATE
 
 # 明细表关键列的表头名（按名定位，抗列数差异）
 COL_SHISHOU = "订单实收金额"
@@ -61,11 +70,6 @@ def _num(v):
         return Decimal(s)
     except InvalidOperation:
         return None
-
-
-def _q(v: Decimal) -> Decimal:
-    """金额统一四舍五入到分。"""
-    return (v or Decimal("0")).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 def _to_date(v):
@@ -275,55 +279,18 @@ def _days_from_json(daily_json: str) -> list[dict]:
     return days
 
 
-def _distribute_commission(days: list[dict], commission_override,
-                           commission_rate: Decimal = DEFAULT_COMMISSION_RATE) -> tuple[list, Decimal]:
-    """逐日自动佣金 = 实收×佣金率−达人−团长；若传入总额 override 且≠自动总额，
-    则把差额按各天订单实收占比分摊到各天（微调场景，未改动时结果不变）。
-    佣金率可动态调整（默认 6%）。"""
-    rate = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
-    comm_auto = [_q(d["shishou"] * rate + d["daren"] + d["tuanzhang"]) for d in days]
-    c0 = _q(sum(comm_auto, Decimal("0")))
-    if commission_override is None or abs((commission_override or Decimal("0")) - c0) < Decimal("0.005"):
-        return comm_auto, c0
-    delta = commission_override - c0
-    s_total = sum((d["shishou"] for d in days), Decimal("0"))
-    n = len(days) or 1
-    comm_day = []
-    for i, d in enumerate(days):
-        share = (d["shishou"] / s_total) if s_total > 0 else (Decimal("1") / n)
-        comm_day.append(_q(comm_auto[i] + delta * share))
-    return comm_day, _q(commission_override)
-
-
 def recompute_from_days(days: list[dict],
                         rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
                         rate_settle: Decimal = DEFAULT_RATE_SETTLE,
                         commission_override=None,
                         commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-                        platform: str = "抖音") -> dict | None:
-    """门票逐日重算并累加（逐日舍入到分）：出版应得B_day=到账−佣金；
-    核销=B_day×核销率、结算=B_day×结算费率、服务费=结算−核销，各自逐日累加。
-    服务商佣金算法仅对抖音生效（其它平台佣金恒 0）；佣金率可动态调整（默认 6%）。"""
-    if not days:
-        return None
-    if platform == "抖音":
-        comm_day, c_total = _distribute_commission(days, commission_override, commission_rate)
-    else:
-        comm_day = [Decimal("0")] * len(days)
-        c_total = Decimal("0")
-    hexiao = jinying = pub = Decimal("0")
-    for i, d in enumerate(days):
-        b = d["recv"] - comm_day[i]
-        pub += b
-        hexiao += _q(b * rate_hexiao)
-        jinying += _q(b * rate_settle)
-    return {
-        "supplier_commission": _q(c_total),
-        "publisher_due": _q(pub),
-        "hexiao_amount": _q(hexiao),
-        "service_fee": _q(jinying - hexiao),
-        "jinying_amount": _q(jinying),
-    }
+                        platform: str = "抖音",
+                        scenic_id: str = "legacy") -> dict | None:
+    return _calculate_ticket_ledger(
+        scenic_id, days, rate_hexiao=rate_hexiao, rate_settle=rate_settle,
+        commission_override=commission_override, commission_rate=commission_rate,
+        platform=platform,
+    )
 
 
 def recompute_from_json(daily_json: str,
@@ -331,9 +298,18 @@ def recompute_from_json(daily_json: str,
                         rate_settle: Decimal = DEFAULT_RATE_SETTLE,
                         commission_override=None,
                         commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
-                        platform: str = "抖音") -> dict | None:
+                        platform: str = "抖音",
+                        scenic_id: str = "legacy") -> dict | None:
     return recompute_from_days(_days_from_json(daily_json), rate_hexiao, rate_settle,
-                               commission_override, commission_rate, platform)
+                               commission_override, commission_rate, platform, scenic_id)
+
+
+def calculate_ticket_ledger(scenic_id: str, excel_data, **kwargs) -> dict | None:
+    """公共门票计算入口；Excel 解析结果由调用方传入，计算本身无副作用。"""
+    return _calculate_ticket_ledger(scenic_id, excel_data, **kwargs)
+
+
+calculateTicketLedger = calculate_ticket_ledger
 
 
 def daily_defaults(daily: dict[str, dict],
@@ -354,6 +330,7 @@ def compute_row(
     rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
     rate_settle: Decimal = DEFAULT_RATE_SETTLE,
     platform: str = "抖音",
+    scenic_id: str = "legacy",
 ) -> dict:
     """由服务商到账、服务商佣金与比例计算台账计算列（无逐日明细时的期级兜底）。
 
@@ -363,19 +340,11 @@ def compute_row(
       服务费       = 结算金额 − 景区核销金额
     服务商佣金仅对抖音生效（其它平台佣金恒 0）。
     """
-    received = supplier_received or Decimal("0")
-    commission = (supplier_commission or Decimal("0")) if platform == "抖音" else Decimal("0")
-    b = received - commission
-    hexiao = _q(b * rate_hexiao)
-    jinying = _q(b * rate_settle)
-    fee = _q(jinying - hexiao)
-    return {
-        "supplier_commission": _q(commission),
-        "publisher_due": _q(b),        # 出版应得到账金额 = 服务商到账 - 服务商佣金
-        "hexiao_amount": hexiao,       # 景区核销金额
-        "service_fee": fee,            # 服务费 = 结算金额 − 景区核销金额
-        "jinying_amount": jinying,     # 结算金额 = B × 结算费率
-    }
+    return _calculate_ticket_ledger(
+        scenic_id, [], supplier_received=supplier_received,
+        commission_override=supplier_commission, rate_hexiao=rate_hexiao,
+        rate_settle=rate_settle, platform=platform,
+    )
 
 
 def running_pending(prev_balance: Decimal, payment_amount: Decimal, hexiao_amount: Decimal) -> Decimal:
@@ -383,10 +352,7 @@ def running_pending(prev_balance: Decimal, payment_amount: Decimal, hexiao_amoun
 
     首期时 prev_balance 传 0 即为「首期付款金额 - 首期景区核销金额」。
     """
-    prev = prev_balance or Decimal("0")
-    pay = payment_amount or Decimal("0")
-    hexiao = hexiao_amount or Decimal("0")
-    return _q(prev + pay - hexiao)
+    return _running_pending(prev_balance, payment_amount, hexiao_amount)
 
 
 # 导出台账列顺序（对齐手工业务台账样表；景区待核销金额紧邻景区核销金额右侧）

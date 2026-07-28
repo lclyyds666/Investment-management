@@ -115,6 +115,7 @@ def _calculation_preview(
         payload.supplier_commission,
         room_nights,
         commission_rate,
+        scenic_id=row.scenic_id,
     ) or hl_svc.compute_row(
         platform,
         base_received,
@@ -124,6 +125,7 @@ def _calculation_preview(
         fee_per_night,
         fee_algo,
         rate_settle,
+        scenic_id=row.scenic_id,
     )
     hexiao_amount = (
         payload.hexiao_amount if payload.hexiao_amount is not None else calc["hexiao_amount"]
@@ -206,16 +208,13 @@ def _recompute_running_balance(rows: list[HotelLedger]) -> None:
 
     本期待核销 = 上期待核销 + 本期付款(每期共享) − 本期各平台核销合计；写回该期各行。
     """
-    groups, order = _group_periods(rows)
-    prev = Decimal("0")
-    for k in order:
-        grp = groups[k]
-        pay = max((g.payment_amount or Decimal("0") for g in grp), default=Decimal("0"))
-        hexiao_sum = sum((g.hexiao_amount or Decimal("0") for g in grp), Decimal("0"))
-        cur = hl_svc.running_pending(prev, pay, hexiao_sum)
-        for g in grp:
-            g.pending_writeoff = cur
-        prev = cur
+    if not rows:
+        return
+    balances = hl_svc.calculate_running_balances(
+        rows[0].scenic_id, rows, group_by=_period_key
+    )
+    for row, balance in zip(rows, balances):
+        row.pending_writeoff = balance
 
 
 # --------------------------------------------------------------------------- #
@@ -319,10 +318,11 @@ def save_ledger(
         calc = hl_svc.recompute_from_json(
             r.platform, r.daily_json, r.rate_hexiao, r.rate_settle,
             r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
-            r.commission_rate,
+            r.commission_rate, sid,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
             r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
+            scenic_id=sid,
         )
         # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
         if r.jinying_amount is not None:
@@ -457,11 +457,12 @@ def update_row(
         calc = hl_svc.recompute_from_json(
             row.platform, row.daily_json, row.rate_hexiao, row.rate_settle,
             row.fee_per_night, row.fee_algo, comm_override, row.room_nights,
-            row.commission_rate,
+            row.commission_rate, sid,
         ) or hl_svc.compute_row(
             row.platform, row.base_received,
             comm_override if comm_override is not None else row.supplier_commission,
             row.room_nights, row.rate_hexiao, row.fee_per_night, row.fee_algo, row.rate_settle,
+            scenic_id=sid,
         )
         row.supplier_commission = calc["supplier_commission"]
         row.settle_base = calc["settle_base"]

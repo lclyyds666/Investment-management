@@ -61,15 +61,19 @@ function makeEntries(name, items) {
 const SCENIC_DEFS = [
   {
     id: 'quancheng-ouleb', name: '泉城欧乐堡', ext: 'png',
+    ticketEnabled: true, hotelEnabled: true,
     scenic: [
       { key: 'douyin', url: 'https://life.douyin.com' },
       { key: 'ctrip', url: 'https://ebooking.ctrip.com' },
       { key: 'meituan', url: 'https://me.meituan.com' }
     ],
-    ticket: []
+    ticket: [
+      { key: 'douyin', url: 'https://life.douyin.com' }
+    ]
   },
   {
     id: 'quanzhou-ouleb', name: '泉州欧乐堡', ext: 'jpg',
+    ticketEnabled: true, hotelEnabled: true,
     scenic: [
       { key: 'douyin', url: 'https://life.douyin.com' },
       { key: 'ctrip', url: 'https://ebooking.ctrip.com' },
@@ -81,6 +85,7 @@ const SCENIC_DEFS = [
   },
   {
     id: 'fuzhou-ouleb', name: '福州欧乐堡', ext: 'jpg',
+    ticketEnabled: true, hotelEnabled: true,
     scenic: [
       { key: 'douyin', url: 'https://life.douyin.com' },
       { key: 'meituan', url: 'https://me.meituan.com/login/index.html' }
@@ -92,6 +97,7 @@ const SCENIC_DEFS = [
   },
   {
     id: 'zunyi-zoo', name: '遵义动物园', ext: 'jpg',
+    ticketEnabled: true, hotelEnabled: false,
     scenic: [],
     ticket: [
       { key: 'douyin', url: 'https://life.douyin.com' },
@@ -102,6 +108,7 @@ const SCENIC_DEFS = [
   },
   {
     id: 'nanyang-wildlife', name: '南阳森林野生动物世界', ext: 'jpg',
+    ticketEnabled: true, hotelEnabled: false,
     scenic: [],
     ticket: [
       { key: 'douyin', url: 'https://life.douyin.com' },
@@ -112,6 +119,7 @@ const SCENIC_DEFS = [
   },
   {
     id: 'guanquelou', name: '鹳雀楼', ext: 'png',
+    ticketEnabled: true, hotelEnabled: false,
     scenic: [],
     ticket: [
       { key: 'douyin', url: 'https://life.douyin.com' },
@@ -127,7 +135,9 @@ export const scenicSpots = SCENIC_DEFS.map((s) => ({
   name: s.name,
   imagePath: `/scenic/${s.id}.${s.ext}`,
   scenicPlatforms: makeEntries(s.name, s.scenic),
-  ticketPlatforms: makeEntries(s.name, s.ticket)
+  ticketPlatforms: makeEntries(s.name, s.ticket),
+  ticketEnabled: s.ticketEnabled !== false,
+  hotelEnabled: s.hotelEnabled === true
 }))
 
 /** 按 id 取景区配置；未知 id 返回 null。 */

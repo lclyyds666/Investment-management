@@ -152,12 +152,14 @@ def _calculation_preview(
         payload.supplier_commission,
         commission_rate,
         platform,
+        scenic_id=row.scenic_id,
     ) or tl_svc.compute_row(
         supplier_received,
         payload.supplier_commission if payload.supplier_commission is not None else row.supplier_commission,
         rate_hexiao,
         rate_settle,
         platform,
+        scenic_id=row.scenic_id,
     )
     hexiao_amount = (
         payload.hexiao_amount if payload.hexiao_amount is not None else calc["hexiao_amount"]
@@ -213,10 +215,11 @@ def _recompute_running_balance(rows: list[TicketLedger]) -> None:
     首期：付款金额 - 景区核销金额；续期：上期余额 + 本期付款 - 本期核销。
     传入 rows 须按 row_no 升序；就地写回每行 pending_writeoff（调用方负责 commit）。
     """
-    prev = Decimal("0")
-    for r in rows:
-        prev = tl_svc.running_pending(prev, r.payment_amount, r.hexiao_amount)
-        r.pending_writeoff = prev
+    if not rows:
+        return
+    balances = tl_svc.calculate_running_balances(rows[0].scenic_id, rows)
+    for r, balance in zip(rows, balances):
+        r.pending_writeoff = balance
 
 
 def _detail_dir(sid: str) -> Path:
@@ -365,10 +368,10 @@ def save_ledger(
         # 逐日重算：有逐日明细则按天累加(核销/结算/服务费逐日舍入再相加)，否则回退期级公式
         calc = tl_svc.recompute_from_json(
             r.daily_json, r.rate_hexiao, r.rate_settle, r.supplier_commission,
-            r.commission_rate, r.platform or "抖音"
+            r.commission_rate, r.platform or "抖音", scenic_id=sid
         ) or tl_svc.compute_row(
             r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_settle,
-            r.platform or "抖音"
+            r.platform or "抖音", scenic_id=sid
         )
         # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
         if r.jinying_amount is not None:
@@ -528,11 +531,11 @@ def update_row(
         # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
         calc = tl_svc.recompute_from_json(
             row.daily_json, row.rate_hexiao, row.rate_settle, comm_override,
-            row.commission_rate, row.platform or "抖音"
+            row.commission_rate, row.platform or "抖音", scenic_id=sid
         ) or tl_svc.compute_row(
             row.supplier_received,
             comm_override if comm_override is not None else row.supplier_commission,
-            row.rate_hexiao, row.rate_settle, row.platform or "抖音"
+            row.rate_hexiao, row.rate_settle, row.platform or "抖音", scenic_id=sid
         )
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]
