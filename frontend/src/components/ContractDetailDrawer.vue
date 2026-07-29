@@ -231,6 +231,6 @@ watch(
   margin-top: 6px;
   height: 44px;
   display: block;
-  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.2));
+  filter: drop-shadow(0 0 0.5px var(--el-mask-color-extra-light));
 }
 </style>

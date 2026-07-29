@@ -122,9 +122,9 @@ def _recover_daily_json(row: TicketLedger) -> str:
     return daily_json
 
 
-def _calculation_preview(
+def _effective_ticket_calculation(
     row: TicketLedger, payload: TicketLedgerUpdateIn
-) -> TicketLedgerCalculationPreview:
+) -> tuple[dict, str]:
     platform = payload.platform if payload.platform is not None else (row.platform or "抖音")
     supplier_received = (
         payload.supplier_received
@@ -134,40 +134,105 @@ def _calculation_preview(
     commission_rate = (
         payload.commission_rate
         if payload.commission_rate is not None
-        else (row.commission_rate or tl_svc.DEFAULT_COMMISSION_RATE)
+        else (
+            row.commission_rate
+            if row.commission_rate is not None
+            else tl_svc.DEFAULT_COMMISSION_RATE
+        )
     )
     rate_hexiao = payload.rate_hexiao if payload.rate_hexiao is not None else row.rate_hexiao
     rate_settle = payload.rate_settle if payload.rate_settle is not None else row.rate_settle
+    received_changed = (
+        payload.supplier_received is not None
+        and abs(payload.supplier_received - (row.supplier_received or Decimal("0"))) > Decimal("0.005")
+    )
     commission_rate_changed = (
         payload.commission_rate is not None
         and abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005")
     )
-    daily_json = (
-        _recover_daily_json(row)
-        if platform == "抖音" and commission_rate_changed
-        else row.daily_json
-    )
-    if (
-        payload.supplier_received is not None
-        and abs(payload.supplier_received - (row.supplier_received or Decimal("0"))) > Decimal("0.005")
-    ):
-        daily_json = ""
-    calc = tl_svc.recompute_from_json(
+    platform_changed = payload.platform is not None and payload.platform != row.platform
+    daily_json = row.daily_json or ""
+    if platform == "抖音" and (commission_rate_changed or platform_changed) and not daily_json:
+        daily_json = _recover_daily_json(row)
+
+    snapshot_calc = tl_svc.recompute_from_json(
         daily_json,
         rate_hexiao,
         rate_settle,
-        payload.supplier_commission,
+        None,
         commission_rate,
         platform,
         scenic_id=row.scenic_id,
-    ) or tl_svc.compute_row(
-        supplier_received,
-        payload.supplier_commission if payload.supplier_commission is not None else row.supplier_commission,
-        rate_hexiao,
-        rate_settle,
-        platform,
-        scenic_id=row.scenic_id,
     )
+    daily_calc = snapshot_calc
+    commission_override = payload.supplier_commission
+    if (
+        commission_override is None
+        and platform == "抖音"
+        and not commission_rate_changed
+        and not platform_changed
+        and snapshot_calc is not None
+        and abs(snapshot_calc["supplier_commission"] - (row.supplier_commission or Decimal("0")))
+        > Decimal("0.005")
+    ):
+        commission_override = row.supplier_commission
+    if commission_override is not None:
+        daily_calc = tl_svc.recompute_from_json(
+            daily_json,
+            rate_hexiao,
+            rate_settle,
+            commission_override,
+            commission_rate,
+            platform,
+            scenic_id=row.scenic_id,
+        )
+    snapshot_matches_received = False
+    if snapshot_calc is not None:
+        snapshot_received = snapshot_calc["publisher_due"] + snapshot_calc["supplier_commission"]
+        snapshot_matches_received = (
+            abs(snapshot_received - supplier_received) <= Decimal("0.005")
+        )
+    if daily_calc is not None and snapshot_matches_received and not received_changed:
+        return daily_calc, daily_json
+
+    commission = (
+        payload.supplier_commission
+        if payload.supplier_commission is not None
+        else (row.supplier_commission or Decimal("0"))
+    )
+    if (
+        platform == "抖音"
+        and commission_rate_changed
+        and payload.supplier_commission is None
+        and snapshot_calc is not None
+    ):
+        commission = snapshot_calc["supplier_commission"]
+    return (
+        tl_svc.compute_row(
+            supplier_received,
+            commission,
+            rate_hexiao,
+            rate_settle,
+            platform,
+            scenic_id=row.scenic_id,
+        ),
+        "" if received_changed or snapshot_calc is not None else daily_json,
+    )
+
+
+def _calculation_preview(
+    row: TicketLedger, payload: TicketLedgerUpdateIn
+) -> TicketLedgerCalculationPreview:
+    commission_rate = (
+        payload.commission_rate
+        if payload.commission_rate is not None
+        else (
+            row.commission_rate
+            if row.commission_rate is not None
+            else tl_svc.DEFAULT_COMMISSION_RATE
+        )
+    )
+    calc, _ = _effective_ticket_calculation(row, payload)
     hexiao_amount = (
         payload.hexiao_amount if payload.hexiao_amount is not None else calc["hexiao_amount"]
     )
@@ -518,21 +583,12 @@ def update_row(
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
 
-    incoming_platform = payload.platform if payload.platform is not None else row.platform
-    commission_rate_changed = (
-        payload.commission_rate is not None
-        and abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005")
-    )
-    if incoming_platform == "抖音" and commission_rate_changed and not row.daily_json:
-        row.daily_json = _recover_daily_json(row)
-
     fields_set = payload.model_fields_set
     if "pay_date" in fields_set:
         row.pay_date = payload.pay_date
     platform_changed = False
     if payload.platform is not None:
         platform_changed = payload.platform != row.platform
-        row.platform = payload.platform
     if payload.ticket_product is not None:
         row.ticket_product = payload.ticket_product
     if "repay_date" in fields_set:
@@ -541,44 +597,54 @@ def update_row(
         row.repay_amount = payload.repay_amount
 
     # 服务商到账 / 佣金 / 佣金率 / 比例「实际变化」才重算（保证仅改结算金额/回款时不冲掉手工结算）
-    calc_dirty = platform_changed
+    received_changed = (
+        payload.supplier_received is not None
+        and abs(payload.supplier_received - (row.supplier_received or Decimal("0"))) > Decimal("0.005")
+    )
+    commission_changed = (
+        payload.supplier_commission is not None
+        and abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005")
+    )
+    commission_rate_changed = (
+        payload.commission_rate is not None
+        and abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005")
+    )
+    rate_hexiao_changed = (
+        payload.rate_hexiao is not None
+        and abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005")
+    )
+    rate_settle_changed = (
+        payload.rate_settle is not None
+        and abs(payload.rate_settle - (row.rate_settle or Decimal("0"))) > Decimal("0.00005")
+    )
+    calc_dirty = any((
+        platform_changed,
+        received_changed,
+        commission_changed,
+        commission_rate_changed,
+        rate_hexiao_changed,
+        rate_settle_changed,
+    ))
+    calc = effective_daily_json = None
+    if calc_dirty:
+        calc, effective_daily_json = _effective_ticket_calculation(row, payload)
+    if payload.platform is not None:
+        row.platform = payload.platform
     # 佣金 override：手工传入佣金金额 → 该值为准；否则 None（佣金随佣金率逐日重算）
-    comm_override = None
     if payload.supplier_received is not None:
-        if abs(payload.supplier_received - (row.supplier_received or Decimal("0"))) > Decimal("0.005"):
-            row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
-            calc_dirty = True
         row.supplier_received = payload.supplier_received
     if payload.supplier_commission is not None:
-        if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
-            calc_dirty = True
         row.supplier_commission = payload.supplier_commission
-        comm_override = payload.supplier_commission   # 手工佣金金额覆盖
     if payload.commission_rate is not None:
-        if abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
         row.commission_rate = payload.commission_rate
     if payload.rate_hexiao is not None:
-        if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
         row.rate_hexiao = payload.rate_hexiao
     if payload.rate_settle is not None:
-        if abs(payload.rate_settle - (row.rate_settle or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
         row.rate_settle = payload.rate_settle
     if payload.rate_fee is not None:
         row.rate_fee = payload.rate_fee
     if calc_dirty:
-        # 逐日重算：改费率/佣金率/佣金也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认。
-        # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
-        calc = tl_svc.recompute_from_json(
-            row.daily_json, row.rate_hexiao, row.rate_settle, comm_override,
-            row.commission_rate, row.platform or "抖音", scenic_id=sid
-        ) or tl_svc.compute_row(
-            row.supplier_received,
-            comm_override if comm_override is not None else row.supplier_commission,
-            row.rate_hexiao, row.rate_settle, row.platform or "抖音", scenic_id=sid
-        )
+        row.daily_json = effective_daily_json
         row.supplier_commission = calc["supplier_commission"]
         row.publisher_due = calc["publisher_due"]
         row.hexiao_amount = calc["hexiao_amount"]

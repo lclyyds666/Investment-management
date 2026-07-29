@@ -1,10 +1,18 @@
 <template>
   <div class="operation" v-loading="loading">
+    <header class="page-intro">
+      <div>
+        <p class="page-eyebrow">TRAVEL LEDGER INSIGHTS</p>
+        <h1 class="page-title">经营数据中心</h1>
+        <p class="page-subtitle">所有指标均由文旅门票与酒店台账实时汇总，金额、期次和景区维度保持同源。</p>
+      </div>
+    </header>
+
     <el-row :gutter="16" class="kpi-row">
       <el-col v-for="kpi in kpiCards" :key="kpi.label" :xs="24" :sm="12" :lg="6">
-        <el-card shadow="hover" class="kpi-card" :style="{ borderTopColor: kpi.color }">
+        <el-card shadow="hover" class="kpi-card" :class="`is-${kpi.tone}`">
           <div class="kpi-label">{{ kpi.label }}</div>
-          <div class="kpi-value" :style="{ color: kpi.color }">{{ kpi.value }}</div>
+          <div class="kpi-value">{{ kpi.value }}</div>
           <div class="kpi-foot">{{ kpi.hint }}</div>
         </el-card>
       </el-col>
@@ -27,7 +35,7 @@
     </div>
 
     <el-row :gutter="16" class="mt chart-row">
-      <el-col :xs="24" :xl="14">
+      <el-col :xs="24" :lg="14">
         <el-card shadow="never" class="chart-card">
           <template #header>
             <div class="chart-header">
@@ -38,7 +46,7 @@
           <BaseChart :option="barOption" />
         </el-card>
       </el-col>
-      <el-col :xs="24" :xl="10">
+      <el-col :xs="24" :lg="10">
         <el-card shadow="never" class="chart-card pie-card">
           <template #header>
             <div class="pie-header">
@@ -73,6 +81,7 @@ import BaseChart from '@/components/BaseChart.vue'
 import { getFinancial } from '@/api/operation'
 import { getScenicById } from '@/constants/scenic'
 import { getScenicColor } from '@/utils/scenicColors'
+import { chartVisualTokens } from '@/utils/visualTokens'
 
 const loading = ref(false)
 const selectedYear = ref('')
@@ -138,17 +147,17 @@ watch([selectedYear, selectedScenicIds, selectedMonth], () => {
 const kpiCards = computed(() => {
   const d = dash.value
   return [
-    { label: '已投入业务规模', value: yuan(d.existing_scale), color: '#4b5563', hint: '门票及酒店付款金额减跟投金额；酒店同期只计一次' },
-    { label: '已实现业务规模', value: yuan(d.total_realized_scale), color: '#2563eb', hint: '所有景区门票及酒店销售额合计' },
-    { label: '已实现业务毛利润', value: yuan(d.total_gross_income), color: '#15803d', hint: '所有景区门票及酒店服务费合计' },
-    { label: '资金占用时长', value: d.capital_occupation_days != null ? d.capital_occupation_days + ' 天' : '—', color: '#be123c', hint: '按净投入金额加权的平均占用天数' }
+    { label: '已投入业务规模', value: yuan(d.existing_scale), tone: 'invested', hint: '门票及酒店付款金额减跟投金额；酒店同期只计一次' },
+    { label: '已实现业务规模', value: yuan(d.total_realized_scale), tone: 'realized', hint: '所有景区门票及酒店销售额合计' },
+    { label: '已实现业务毛利润', value: yuan(d.total_gross_income), tone: 'profit', hint: '所有景区门票及酒店服务费合计' },
+    { label: '资金占用时长', value: d.capital_occupation_days != null ? d.capital_occupation_days + ' 天' : '—', tone: 'duration', hint: '按净投入金额加权的平均占用天数' }
   ]
 })
 
 function emptyGraphic(show) {
   return show ? [{
     type: 'text', left: 'center', top: 'middle',
-    style: { text: '暂无服务费数据', fill: '#909399', fontSize: 14 }
+    style: { text: '暂无服务费数据', fill: chartVisualTokens.emptyText, fontSize: 14 }
   }] : []
 }
 
@@ -211,7 +220,7 @@ const pieOption = computed(() => {
     graphic: emptyGraphic(!data.length),
     series: [{
       name: '业务毛利润占比', type: 'pie', radius: ['42%', '68%'], center: ['50%', '43%'],
-      itemStyle: { borderColor: '#fff', borderWidth: 2 },
+      itemStyle: { borderColor: 'transparent', borderWidth: 2 },
       label: { formatter: '{b}\n{d}%' },
       data
     }]
@@ -235,26 +244,29 @@ onMounted(load)
 
 <style scoped lang="scss">
 .operation {
-  .kpi-row { margin-bottom: 4px; row-gap: 16px; }
+  .kpi-row { margin-bottom: 6px; row-gap: 16px; }
   .kpi-card {
-    border-top: 3px solid var(--el-border-color);
-    transition: box-shadow .3s ease, transform .3s ease;
-    &:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(31,41,55,.12) !important; }
-    .kpi-label { color: var(--el-text-color-secondary); font-size: 14px; }
-    .kpi-value { margin-top: 8px; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .kpi-foot { margin-top: 6px; font-size: 12px; color: var(--el-text-color-placeholder); min-height: 32px; }
+    height: 100%;
+    --kpi-color: var(--metric-invested);
+    &.is-realized { --kpi-color: var(--metric-realized); }
+    &.is-profit { --kpi-color: var(--metric-profit); }
+    &.is-duration { --kpi-color: var(--metric-duration); }
+    :deep(.el-card__body) { min-height: 170px; display: flex; flex-direction: column; }
+    .kpi-label { color: var(--el-text-color-secondary); font-size: 13px; font-weight: 650; letter-spacing: .02em; }
+    .kpi-value { margin-top: 14px; color: var(--kpi-color); font-size: clamp(25px, 2vw, 34px); font-weight: 800; line-height: 1.1; overflow-wrap: anywhere; }
+    .kpi-foot { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--el-border-color-extra-light); font-size: 12px; line-height: 1.55; color: var(--el-text-color-placeholder); min-height: 50px; }
   }
-  .mt { margin-top: 16px; }
-  .card-title { font-weight: 700; }
+  .mt { margin-top: 20px; }
+  .card-title { font-family: var(--font-display); font-weight: 750; }
   .chart-filters {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 12px 0; border-top: 1px solid var(--el-border-color-lighter); border-bottom: 1px solid var(--el-border-color-lighter);
+    padding: 14px 16px; border: 1px solid var(--surface-border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--surface-shadow);
   }
   .filter-title { font-size: 14px; font-weight: 700; margin-right: 4px; }
   .filter-control { width: 140px; }
   .scenic-filter { width: min(420px, 100%); }
   .chart-row { row-gap: 16px; }
-  .chart-card { min-height: 460px; }
+  .chart-card { min-height: 460px; height: 100%; }
   .chart-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .chart-subtitle { color: var(--el-text-color-secondary); font-size: 12px; }
   .pie-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }

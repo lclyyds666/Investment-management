@@ -172,23 +172,27 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="服务商到账">
-          <el-input-number v-model="editForm.base_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @change="editForm.receivedEdited = true" />
+          <el-input-number v-model="editForm.base_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @update:model-value="markReceivedEdited" />
           <div class="edit-hint">算法自动算出（美团/携程为平台结算毛额），可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
         <!-- 服务商佣金算法仅对抖音生效：佣金率可动态调整(默认6%) -->
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金率">
-          <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width:100%" @change="onCommissionRateChange" /><span class="pct-suffix">%</span>
+          <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width:100%" @update:model-value="onCommissionRateInput" @change="onCommissionRateChange" /><span class="pct-suffix">%</span>
           <div class="edit-hint">仅抖音生效。改佣金率后立即按后端逐日算法刷新佣金及关联金额，点击保存后写入数据库</div>
         </el-form-item>
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金">
-          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width:100%" @change="editForm.commissionEdited = true" />
+          <el-input-number v-model="editForm.supplier_commission" :min="0" :precision="2" :step="100" controls-position="right" style="width:100%" @update:model-value="markCommissionEdited" />
           <div class="edit-hint">手工改佣金金额则以该值为准；否则随佣金率逐日重算</div>
+        </el-form-item>
+        <el-form-item label="结算基数">
+          <el-input :model-value="fmtMoney(editSettleBase)" disabled style="width:100%" />
+          <div class="edit-hint">结算基数 = 服务商到账 − 服务商佣金（自动）</div>
         </el-form-item>
         <el-form-item label="核销率">
           <el-input-number v-model="editForm.ratePctHexiao" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="景区核销金额">
-          <el-input-number v-model="editForm.hexiao_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @change="editForm.hexiaoEdited = true" />
+          <el-input-number v-model="editForm.hexiao_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @update:model-value="markHexiaoEdited" />
           <div class="edit-hint">默认 = 结算基数 × 核销率，可人工修改（服务费 = 结算 − 核销）</div>
         </el-form-item>
         <el-form-item v-if="editForm.fee_algo === 1" label="间夜">
@@ -201,11 +205,19 @@
           <el-input-number v-model="editForm.ratePctSettle" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="结算金额">
-          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @change="editForm.jinyingEdited = true" />
+          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @update:model-value="markJinyingEdited" />
           <div class="edit-hint">{{ editForm.fee_algo === 2 ? '默认 = 结算基数 × 结算费率' : '默认 = 景区核销 + 服务费（间夜 × 每间夜服务费）' }}（改佣金/费率/算法自动跟随、逐日累加）；可手工改，服务费 = 结算 − 核销</div>
+        </el-form-item>
+        <el-form-item label="服务费">
+          <el-input :model-value="fmtMoney(editServiceFee)" disabled style="width:100%" />
+          <div class="edit-hint">服务费 = 结算金额 − 景区核销金额（自动）</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="预计本期待核销">
+          <el-input :model-value="fmtMoney(editPendingWriteoff)" disabled style="width:100%" />
+          <div class="edit-hint">保存后当前及后续期次由后端按原滚动规则统一重算</div>
         </el-form-item>
         <el-form-item label="付款日期">
           <el-date-picker v-model="editForm.payment_date" type="date" value-format="YYYY-MM-DD" style="width:100%" placeholder="手工填写付款日期" />
@@ -267,6 +279,11 @@ const savedRows = ref([])
 const draftRows = ref([])
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
+function numberOr(value, fallback = 0) {
+  if (value === null || value === undefined || value === '') return fallback
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
 function settleBase(row) {
   const comm = row.platform === '抖音' ? (Number(row.supplier_commission) || 0) : 0
   return round2((Number(row.base_received) || 0) - comm)
@@ -521,8 +538,36 @@ const editJinying = computed(() => {
   const fee = round2((Number(editForm.room_nights) || 0) * (Number(editForm.fee_per_night) || 0))
   return round2(editHexiao.value + fee)
 })
+const editServiceFee = computed(() => round2(
+  numberOr(editForm.jinying_amount) - numberOr(editForm.hexiao_amount)
+))
+const editPendingWriteoff = computed(() => {
+  if (!editRow.value) return 0
+  const paymentDelta = numberOr(editForm.payment_amount) - numberOr(editRow.value.payment_amount)
+  const hexiaoDelta = numberOr(editForm.hexiao_amount) - numberOr(editRow.value.hexiao_amount)
+  return round2(numberOr(editRow.value.pending_writeoff) + paymentDelta - hexiaoDelta)
+})
 // 改到账/佣金/核销率/算法/间夜/结算费率 → 核销、结算金额回到默认(跟随)并清手工标记；openEdit 期间抑制
 let suppressJinyingWatch = false
+let commissionPreviewSequence = 0
+let calculationPreviewTimer = null
+
+function cancelCalculationPreview() {
+  commissionPreviewSequence += 1
+  if (calculationPreviewTimer) clearTimeout(calculationPreviewTimer)
+  calculationPreviewTimer = null
+}
+
+function scheduleCalculationPreview() {
+  if (suppressJinyingWatch || !editRow.value || !editVisible.value) return
+  const sequence = ++commissionPreviewSequence
+  if (calculationPreviewTimer) clearTimeout(calculationPreviewTimer)
+  calculationPreviewTimer = setTimeout(() => {
+    calculationPreviewTimer = null
+    refreshCalculationPreview(sequence, false)
+  }, 180)
+}
+
 watch(
   () => [editForm.base_received, editForm.supplier_commission, editForm.ratePctHexiao, editForm.fee_algo,
     editForm.fee_per_night, editForm.room_nights, editForm.ratePctSettle],
@@ -532,23 +577,24 @@ watch(
     editForm.hexiaoEdited = false
     editForm.jinying_amount = editJinying.value
     editForm.jinyingEdited = false
+    scheduleCalculationPreview()
   }
 )
 function openEdit(row) {
-  commissionPreviewSequence += 1
+  cancelCalculationPreview()
   suppressJinyingWatch = true   // 载入既有值期间不触发跟随
   editRow.value = row
   editForm.hotel_name = row.hotel_name
   editForm.base_received = Number(row.base_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
-  editForm.commissionRatePct = round2((Number(row.commission_rate) || 0.06) * 100)
+  editForm.commissionRatePct = round2(numberOr(row.commission_rate, 0.06) * 100)
   editForm.commissionEdited = false
   editForm.room_nights = Number(row.room_nights) || 0
-  editForm.ratePctHexiao = round2((Number(row.rate_hexiao) || DEFAULT_RATE_HEXIAO) * 100)
+  editForm.ratePctHexiao = round2(numberOr(row.rate_hexiao, DEFAULT_RATE_HEXIAO) * 100)
   editForm.fee_algo = Number(row.fee_algo) || 1
-  editForm.fee_per_night = Number(row.fee_per_night) || DEFAULT_FEE_PER_NIGHT
-  editForm.ratePctSettle = round2((Number(row.rate_settle) || DEFAULT_RATE_SETTLE) * 100)
+  editForm.fee_per_night = numberOr(row.fee_per_night, DEFAULT_FEE_PER_NIGHT)
+  editForm.ratePctSettle = round2(numberOr(row.rate_settle, DEFAULT_RATE_SETTLE) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
   editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0
@@ -560,6 +606,31 @@ function openEdit(row) {
   editForm.co_investment_amount = Number(row.co_investment_amount) || 0
   editVisible.value = true
   nextTick(() => { suppressJinyingWatch = false })
+}
+
+function markReceivedEdited() {
+  editForm.receivedEdited = true
+}
+
+function markCommissionEdited() {
+  editForm.commissionEdited = true
+}
+
+function markHexiaoEdited() {
+  editForm.hexiaoEdited = true
+  cancelCalculationPreview()
+}
+
+function markJinyingEdited() {
+  editForm.jinyingEdited = true
+  cancelCalculationPreview()
+}
+
+function onCommissionRateInput() {
+  editForm.commissionEdited = false
+  editForm.hexiaoEdited = false
+  editForm.jinyingEdited = false
+  scheduleCalculationPreview()
 }
 
 function buildEditPayload() {
@@ -584,13 +655,8 @@ function buildEditPayload() {
   return payload
 }
 
-let commissionPreviewSequence = 0
-async function onCommissionRateChange() {
-  if (!editRow.value || editRow.value.platform !== '抖音') return
-  editForm.commissionEdited = false
-  editForm.hexiaoEdited = false
-  editForm.jinyingEdited = false
-  const sequence = ++commissionPreviewSequence
+async function refreshCalculationPreview(sequence, showError) {
+  if (!editRow.value) return
   try {
     const result = await previewHotelRow(
       props.scenicId,
@@ -605,15 +671,24 @@ async function onCommissionRateChange() {
     await nextTick()
     suppressJinyingWatch = false
   } catch {
-    if (sequence === commissionPreviewSequence) {
+    if (showError && sequence === commissionPreviewSequence) {
       ElMessage.error('佣金率精算失败，请重试')
     }
   }
 }
 
+function onCommissionRateChange() {
+  if (!editRow.value || editRow.value.platform !== '抖音') return
+  onCommissionRateInput()
+  if (calculationPreviewTimer) clearTimeout(calculationPreviewTimer)
+  calculationPreviewTimer = null
+  const sequence = ++commissionPreviewSequence
+  refreshCalculationPreview(sequence, true)
+}
+
 async function onSaveEdit() {
   if (!editRow.value) return
-  commissionPreviewSequence += 1
+  cancelCalculationPreview()
   savingEdit.value = true
   try {
     const payload = buildEditPayload()
@@ -710,15 +785,15 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 </script>
 
 <style scoped lang="scss">
-.hotel-ledger { margin-top: 6px; }
-.hl-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
-.hl-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--el-text-color-primary); .el-icon { color: var(--el-color-primary); } }
+.hotel-ledger { min-width: 0; margin-top: 8px; }
+.hl-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.hl-title { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 18px; font-weight: 750; color: var(--el-text-color-primary); .el-icon { color: var(--el-color-primary); } }
 .hl-ops { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.hl-tip { margin-bottom: 12px; }
-.hl-draft { margin-bottom: 16px; border: 1px solid var(--el-color-primary-light-5); }
-.draft-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-weight: 600; > div { display: flex; align-items: center; gap: 8px; } }
+.hl-tip { margin-bottom: 16px; line-height: 1.65; }
+.hl-draft { margin-bottom: 20px; border-color: var(--surface-border-strong) !important; }
+.draft-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-weight: 700; > div { display: flex; align-items: center; gap: 8px; } }
 /* 表格自适应宽度(100%) + 行高加高、字号加大，便于阅读 */
-.draft-table, .saved-table { width: 100%; }
+.draft-table, .saved-table { width: 100%; border: 1px solid var(--el-border-color-lighter); border-radius: var(--radius-sm); }
 .draft-table :deep(.el-table__cell),
 .saved-table :deep(.el-table__cell) { padding: 12px 0; font-size: 14px; }
 .saved-table :deep(.el-table__cell .cell) { line-height: 24px; }
@@ -730,8 +805,8 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 }
 .draft-note { margin-top: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
-.calc { color: var(--el-color-primary); font-weight: 600; }
-.pending { color: #f59e0b; font-weight: 700; }
+.calc { color: var(--metric-realized); font-weight: 700; }
+.pending { color: var(--metric-warning); font-weight: 750; }
 .muted { color: var(--el-text-color-secondary); }
 .saved-table { margin-top: 4px; }
 .saved-table :deep(.total-row) { background: var(--el-fill-color-light) !important; font-weight: 700; }
@@ -740,4 +815,11 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .saved-table :deep(.grand-total-row .cell) { color: var(--el-color-primary); }
 .total-label { font-weight: 700; color: var(--el-color-primary); }
 .pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }
+
+@media (max-width: 760px) {
+  .hl-head { align-items: flex-start; flex-direction: column; }
+  .hl-ops { width: 100%; }
+  .hl-ops :deep(.el-button) { flex: 1 1 auto; }
+  .draft-header { align-items: flex-start; flex-direction: column; }
+}
 </style>

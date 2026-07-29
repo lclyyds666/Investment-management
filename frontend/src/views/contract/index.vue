@@ -674,7 +674,7 @@ onMounted(() => { load(); loadCustomers() })
 }
 .search-input { max-width: 340px; }
 .toolbar-right { display: flex; gap: 8px; }
-.cur-role { margin-top: 4px; font-size: 12px; color: #e6a23c; }
+.cur-role { margin-top: 4px; font-size: 12px; color: var(--el-color-warning); }
 /* 操作栏:填充按钮(白色字体)+ 自动换行,避免拥挤/看不清 */
 .op-cell { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .op-cell :deep(.el-button) { margin: 0; }
@@ -686,7 +686,7 @@ onMounted(() => { load(); loadCustomers() })
   :deep(.el-upload-dragger) { padding: 16px; }
 }
 .upload-tip { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
-.upload-tip .picked { color: #67c23a; margin-left: 8px; }
+.upload-tip .picked { color: var(--el-color-success); margin-left: 8px; }
 .ledger-toolbar {
   display: flex;
   align-items: center;

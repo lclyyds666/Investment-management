@@ -106,8 +106,8 @@ async function diagnose() {
 .m-box { background: var(--el-fill-color-light); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 10px 12px; text-align: center; }
 .m-label { font-size: 12px; color: var(--el-text-color-secondary); }
 .m-val { margin-top: 4px; font-size: 20px; font-weight: 700; color: var(--el-text-color-primary); }
-.m-val.blue { color: #409eff; }
-.m-val.warn { color: #e6a23c; }
+.m-val.blue { color: var(--el-color-primary); }
+.m-val.warn { color: var(--el-color-warning); }
 .ai-cols { display: flex; gap: 16px; margin-top: 14px; }
 .ai-col { flex: 1; min-width: 0; }
 .col-title { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 10px; color: var(--el-text-color-primary); }
@@ -115,9 +115,9 @@ async function diagnose() {
 .risk-item {
   border: 1px solid var(--el-border-color-light); border-left: 3px solid var(--el-border-color);
   border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; background: var(--el-fill-color-light);
-  &.lv-高 { border-left-color: #f56c6c; }
-  &.lv-中 { border-left-color: #e6a23c; }
-  &.lv-低 { border-left-color: #67c23a; }
+  &.lv-高 { border-left-color: var(--el-color-danger); }
+  &.lv-中 { border-left-color: var(--el-color-warning); }
+  &.lv-低 { border-left-color: var(--el-color-success); }
 }
 .risk-head { display: flex; align-items: center; gap: 8px; }
 .risk-title { font-weight: 600; color: var(--el-text-color-primary); }

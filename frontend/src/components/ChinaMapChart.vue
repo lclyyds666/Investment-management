@@ -8,6 +8,7 @@
 <script setup>
 import { ref, shallowRef, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
+import { chartVisualTokens as visual } from '@/utils/visualTokens'
 
 const props = defineProps({
   data: { type: Array, default: () => [] }, // [{name:'山东省', value: 1234}]
@@ -49,13 +50,13 @@ function mapOption() {
     tooltip: { trigger: 'item', formatter: (p) => `${p.name}<br/>业务额：¥${Number(p.value || 0).toLocaleString()}` },
     visualMap: {
       min: 0, max, left: 16, bottom: 16, calculable: true,
-      inRange: { color: ['#e6f0ff', '#7aa7f0', '#3f6ad8', '#1f3a93'] },
-      text: ['高', '低'], textStyle: { color: '#606266' }
+      inRange: { color: visual.mapRamp },
+      text: ['高', '低'], textStyle: { color: visual.emptyText }
     },
     series: [{
       name: '业务概况', type: 'map', map: 'china', roam: true,
-      emphasis: { label: { show: true }, itemStyle: { areaColor: '#f5c542' } },
-      itemStyle: { borderColor: '#c9d4ea' },
+      emphasis: { label: { show: true }, itemStyle: { areaColor: visual.mapEmphasis } },
+      itemStyle: { borderColor: visual.mapBorder },
       data: props.data
     }]
   }
@@ -69,7 +70,7 @@ function barOption() {
     yAxis: { type: 'category', data: sorted.map((d) => d.name) },
     series: [{
       type: 'bar', data: sorted.map((d) => d.value),
-      itemStyle: { color: '#3f6ad8', borderRadius: [0, 4, 4, 0] }, barMaxWidth: 18
+      itemStyle: { color: visual.mapRamp[3], borderRadius: [0, 4, 4, 0] }, barMaxWidth: 18
     }]
   }
 }
@@ -93,5 +94,5 @@ watch(() => props.data, render, { deep: true })
 <style scoped>
 .china-map { width: 100%; }
 .map-el { width: 100%; }
-.map-tip { margin-top: 6px; font-size: 12px; color: #e6a23c; text-align: center; }
+.map-tip { margin-top: 6px; font-size: 12px; color: var(--el-color-warning); text-align: center; }
 </style>

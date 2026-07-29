@@ -78,9 +78,44 @@ def _row_out(r: HotelLedger) -> HotelLedgerRow:
     return HotelLedgerRow.model_validate(r)
 
 
-def _calculation_preview(
+def _recover_daily_json(row: HotelLedger) -> str:
+    if row.daily_json:
+        return row.daily_json
+    stored = Path(row.detail_stored or "").name
+    if not stored:
+        raise HTTPException(
+            status_code=409,
+            detail="该酒店台账缺少逐日明细和原始文件，无法按新佣金率精确重算",
+        )
+    source_path = _detail_dir(row.scenic_id) / stored
+    if not source_path.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="该酒店台账的原始明细文件不存在，无法按新佣金率精确重算",
+        )
+    try:
+        info = hl_svc.parse_hotel_file(
+            source_path.read_bytes(),
+            row.detail_name or row.source_file or stored,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=f"恢复逐日明细失败：{exc}") from exc
+    platform_info = next(
+        (
+            item for item in info.get("platforms", [])
+            if item.get("platform") == row.platform
+        ),
+        None,
+    )
+    daily_json = (platform_info or {}).get("daily_json") or ""
+    if not daily_json:
+        raise HTTPException(status_code=409, detail="原始文件未解析出逐日明细，无法精确重算")
+    return daily_json
+
+
+def _effective_hotel_calculation(
     row: HotelLedger, payload: HotelUpdateIn
-) -> HotelCalculationPreview:
+) -> tuple[dict, str]:
     platform = payload.platform if payload.platform is not None else row.platform
     base_received = (
         payload.base_received
@@ -90,7 +125,11 @@ def _calculation_preview(
     commission_rate = (
         payload.commission_rate
         if payload.commission_rate is not None
-        else (row.commission_rate or hl_svc.DEFAULT_COMMISSION_RATE)
+        else (
+            row.commission_rate
+            if row.commission_rate is not None
+            else hl_svc.DEFAULT_COMMISSION_RATE
+        )
     )
     rate_hexiao = payload.rate_hexiao if payload.rate_hexiao is not None else row.rate_hexiao
     rate_settle = payload.rate_settle if payload.rate_settle is not None else row.rate_settle
@@ -99,34 +138,102 @@ def _calculation_preview(
     )
     fee_algo = payload.fee_algo if payload.fee_algo is not None else row.fee_algo
     room_nights = payload.room_nights if payload.room_nights is not None else row.room_nights
-    daily_json = row.daily_json
-    if (
+    received_changed = (
         payload.base_received is not None
         and abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005")
-    ):
-        daily_json = ""
-    calc = hl_svc.recompute_from_json(
+    )
+    commission_rate_changed = (
+        payload.commission_rate is not None
+        and abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005")
+    )
+    daily_json = row.daily_json or ""
+    if platform == "抖音" and commission_rate_changed and not daily_json:
+        daily_json = _recover_daily_json(row)
+
+    snapshot_calc = hl_svc.recompute_from_json(
         platform,
         daily_json,
         rate_hexiao,
         rate_settle,
         fee_per_night,
         fee_algo,
-        payload.supplier_commission,
+        None,
         room_nights,
         commission_rate,
         scenic_id=row.scenic_id,
-    ) or hl_svc.compute_row(
-        platform,
-        base_received,
-        payload.supplier_commission if payload.supplier_commission is not None else row.supplier_commission,
-        room_nights,
-        rate_hexiao,
-        fee_per_night,
-        fee_algo,
-        rate_settle,
-        scenic_id=row.scenic_id,
     )
+    daily_calc = snapshot_calc
+    commission_override = payload.supplier_commission
+    if (
+        commission_override is None
+        and platform == "抖音"
+        and not commission_rate_changed
+        and snapshot_calc is not None
+        and abs(snapshot_calc["supplier_commission"] - (row.supplier_commission or Decimal("0")))
+        > Decimal("0.005")
+    ):
+        commission_override = row.supplier_commission
+    if commission_override is not None:
+        daily_calc = hl_svc.recompute_from_json(
+            platform,
+            daily_json,
+            rate_hexiao,
+            rate_settle,
+            fee_per_night,
+            fee_algo,
+            commission_override,
+            room_nights,
+            commission_rate,
+            scenic_id=row.scenic_id,
+        )
+    snapshot_matches_received = False
+    if snapshot_calc is not None:
+        snapshot_received = snapshot_calc["settle_base"] + snapshot_calc["supplier_commission"]
+        snapshot_matches_received = abs(snapshot_received - base_received) <= Decimal("0.005")
+    if daily_calc is not None and snapshot_matches_received and not received_changed:
+        return daily_calc, daily_json
+
+    commission = (
+        payload.supplier_commission
+        if payload.supplier_commission is not None
+        else (row.supplier_commission or Decimal("0"))
+    )
+    if (
+        platform == "抖音"
+        and commission_rate_changed
+        and payload.supplier_commission is None
+        and snapshot_calc is not None
+    ):
+        commission = snapshot_calc["supplier_commission"]
+    return (
+        hl_svc.compute_row(
+            platform,
+            base_received,
+            commission,
+            room_nights,
+            rate_hexiao,
+            fee_per_night,
+            fee_algo,
+            rate_settle,
+            scenic_id=row.scenic_id,
+        ),
+        "" if received_changed or snapshot_calc is not None else daily_json,
+    )
+
+
+def _calculation_preview(
+    row: HotelLedger, payload: HotelUpdateIn
+) -> HotelCalculationPreview:
+    commission_rate = (
+        payload.commission_rate
+        if payload.commission_rate is not None
+        else (
+            row.commission_rate
+            if row.commission_rate is not None
+            else hl_svc.DEFAULT_COMMISSION_RATE
+        )
+    )
+    calc, _ = _effective_hotel_calculation(row, payload)
     hexiao_amount = (
         payload.hexiao_amount if payload.hexiao_amount is not None else calc["hexiao_amount"]
     )
@@ -419,57 +526,69 @@ def update_row(
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
 
+    received_changed = (
+        payload.base_received is not None
+        and abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005")
+    )
+    commission_changed = (
+        payload.supplier_commission is not None
+        and abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005")
+    )
+    commission_rate_changed = (
+        payload.commission_rate is not None
+        and abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005")
+    )
+    rate_hexiao_changed = (
+        payload.rate_hexiao is not None
+        and abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005")
+    )
+    fee_algo_changed = payload.fee_algo is not None and (payload.fee_algo or 1) != (row.fee_algo or 1)
+    fee_per_night_changed = (
+        payload.fee_per_night is not None
+        and abs(payload.fee_per_night - (row.fee_per_night or Decimal("0"))) > Decimal("0.005")
+    )
+    rate_settle_changed = (
+        payload.rate_settle is not None
+        and abs(payload.rate_settle - (row.rate_settle or Decimal("0"))) > Decimal("0.00005")
+    )
+    room_nights_changed = (
+        payload.room_nights is not None
+        and int(payload.room_nights) != int(row.room_nights or 0)
+    )
+    calc_dirty = any((
+        received_changed,
+        commission_changed,
+        commission_rate_changed,
+        rate_hexiao_changed,
+        fee_algo_changed,
+        fee_per_night_changed,
+        rate_settle_changed,
+        room_nights_changed,
+    ))
+    calc = effective_daily_json = None
+    if calc_dirty:
+        calc, effective_daily_json = _effective_hotel_calculation(row, payload)
+
     # 服务商到账 / 佣金 / 佣金率 / 费率 / 算法 / 间夜「实际变化」才重算（保证仅改结算/回款时不冲掉手工值）
-    calc_dirty = False
     # 佣金 override：手工传入佣金金额 → 该值为准；否则 None（佣金随佣金率逐日重算）
-    comm_override = None
     if payload.base_received is not None:
-        if abs(payload.base_received - (row.base_received or Decimal("0"))) > Decimal("0.005"):
-            row.daily_json = ""   # 人工改到账 → 逐日明细失效，走期级公式重算
-            calc_dirty = True
         row.base_received = payload.base_received
     if payload.supplier_commission is not None:
-        if abs(payload.supplier_commission - (row.supplier_commission or Decimal("0"))) > Decimal("0.005"):
-            calc_dirty = True
         row.supplier_commission = payload.supplier_commission
-        comm_override = payload.supplier_commission   # 手工佣金金额覆盖
     if payload.commission_rate is not None:
-        if abs(payload.commission_rate - (row.commission_rate or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
         row.commission_rate = payload.commission_rate
     if payload.rate_hexiao is not None:
-        if abs(payload.rate_hexiao - (row.rate_hexiao or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
         row.rate_hexiao = payload.rate_hexiao
     if payload.fee_algo is not None:
-        if (payload.fee_algo or 1) != (row.fee_algo or 1):
-            calc_dirty = True
         row.fee_algo = payload.fee_algo
     if payload.fee_per_night is not None:
-        if abs(payload.fee_per_night - (row.fee_per_night or Decimal("0"))) > Decimal("0.005"):
-            calc_dirty = True
         row.fee_per_night = payload.fee_per_night
     if payload.rate_settle is not None:
-        if abs(payload.rate_settle - (row.rate_settle or Decimal("0"))) > Decimal("0.00005"):
-            calc_dirty = True
         row.rate_settle = payload.rate_settle
     if payload.room_nights is not None:
-        if int(payload.room_nights) != int(row.room_nights or 0):
-            calc_dirty = True
         row.room_nights = payload.room_nights
     if calc_dirty:
-        # 逐日重算：改费率/佣金率/佣金/算法也按天累加(有逐日明细时)，否则回退期级公式；结算金额随之回到默认。
-        # comm_override=None → 佣金按新佣金率逐日重算；手工传佣金金额 → 以该值为准。
-        calc = hl_svc.recompute_from_json(
-            row.platform, row.daily_json, row.rate_hexiao, row.rate_settle,
-            row.fee_per_night, row.fee_algo, comm_override, row.room_nights,
-            row.commission_rate, sid,
-        ) or hl_svc.compute_row(
-            row.platform, row.base_received,
-            comm_override if comm_override is not None else row.supplier_commission,
-            row.room_nights, row.rate_hexiao, row.fee_per_night, row.fee_algo, row.rate_settle,
-            scenic_id=sid,
-        )
+        row.daily_json = effective_daily_json
         row.supplier_commission = calc["supplier_commission"]
         row.settle_base = calc["settle_base"]
         row.hexiao_amount = calc["hexiao_amount"]

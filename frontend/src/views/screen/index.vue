@@ -33,6 +33,6 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 3000;
   overflow: auto;
-  background: #000a1f;
+  background: var(--screen-bg);
 }
 </style>

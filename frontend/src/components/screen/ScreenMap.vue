@@ -12,6 +12,7 @@
 import { ref, shallowRef, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { getProjectsGeo } from '@/api/operation'
+import { chartVisualTokens as visual } from '@/utils/visualTokens'
 
 const props = defineProps({
   hub: { type: String, default: '山东省' },
@@ -104,7 +105,7 @@ function buildOption() {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'item',
-      backgroundColor: 'rgba(4,20,48,0.9)', borderColor: '#1c9be6', textStyle: { color: '#cfe8ff' },
+      backgroundColor: visual.screenTooltip, borderColor: visual.screenPrimary, textStyle: { color: visual.screenText },
       formatter: (p) => {
         if (p.seriesType === 'effectScatter') {
           const projs = (p.data.projects || []).join('、') || '—'
@@ -118,37 +119,37 @@ function buildOption() {
     geo: {
       map: 'china', roam: true, zoom: 1.15,
       label: { show: false },
-      itemStyle: { areaColor: 'rgba(9,34,74,0.75)', borderColor: 'rgba(44,225,192,0.35)', borderWidth: 1 },
-      emphasis: { label: { show: true, color: '#eafcff' }, itemStyle: { areaColor: 'rgba(28,155,230,0.45)' } }
+      itemStyle: { areaColor: visual.screenMapArea, borderColor: visual.screenBorder, borderWidth: 1 },
+      emphasis: { label: { show: true, color: visual.screenText }, itemStyle: { areaColor: visual.screenMapAreaEmphasis } }
     },
     visualMap: {
       show: provinceData.length > 0, min: 0, max: provMax, calculable: false,
       left: 12, bottom: 12, itemWidth: 10, itemHeight: 60,
-      inRange: { color: ['rgba(9,34,74,0.4)', 'rgba(28,155,230,0.55)', 'rgba(45,225,194,0.75)'] },
-      text: ['高', '低'], textStyle: { color: '#7fa8d0' }, seriesIndex: 0
+      inRange: { color: visual.screenMapRamp },
+      text: ['高', '低'], textStyle: { color: visual.screenTextMuted }, seriesIndex: 0
     },
     series: [
       { name: '业务额', type: 'map', map: 'china', geoIndex: 0, data: provinceData },
       {
         name: '物流飞线', type: 'lines', coordinateSystem: 'geo', zlevel: 2,
-        effect: { show: true, period: 5, trailLength: 0.55, symbol: 'arrow', symbolSize: 7, color: '#2de1c2' },
-        lineStyle: { color: '#39c5ff', curveness: 0.25 },
+        effect: { show: true, period: 5, trailLength: 0.55, symbol: 'arrow', symbolSize: 7, color: visual.screenSecondary },
+        lineStyle: { color: visual.screenPrimary, curveness: 0.25 },
         data: lines
       },
       {
         name: '业务节点', type: 'effectScatter', coordinateSystem: 'geo', zlevel: 3,
         rippleEffect: { brushType: 'stroke', scale: 4 },
         symbolSize: (val) => 8 + (val[2] / max) * 26,
-        itemStyle: { color: '#2de1c2', shadowBlur: 12, shadowColor: '#2de1c2' },
-        label: { show: true, formatter: '{b}', position: 'right', color: '#bfefff', fontSize: 10 },
+        itemStyle: { color: visual.screenSecondary, shadowBlur: 12, shadowColor: visual.screenSecondary },
+        label: { show: true, formatter: '{b}', position: 'right', color: visual.screenText, fontSize: 10 },
         data: scatter
       },
       {
         name: '中枢', type: 'effectScatter', coordinateSystem: 'geo', zlevel: 4,
         rippleEffect: { brushType: 'stroke', scale: 6 },
         symbolSize: 16,
-        itemStyle: { color: '#ffd34e', shadowBlur: 16, shadowColor: '#ffd34e' },
-        label: { show: true, formatter: props.hub, position: 'top', color: '#ffe89a', fontSize: 11 },
+        itemStyle: { color: visual.screenAccent, shadowBlur: 16, shadowColor: visual.screenAccent },
+        label: { show: true, formatter: props.hub, position: 'top', color: visual.screenAccent, fontSize: 11 },
         data: [{ name: props.hub, value: [...hubCoord, max] }]
       }
     ]
@@ -196,6 +197,6 @@ onBeforeUnmount(() => {
 .map-el { width: 100%; }
 .map-fallback, .map-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: #7fa8d0; font-size: 13px; text-align: center; padding: 0 24px; pointer-events: none;
+  color: var(--screen-text-muted); font-size: 13px; text-align: center; padding: 0 24px; pointer-events: none;
 }
 </style>

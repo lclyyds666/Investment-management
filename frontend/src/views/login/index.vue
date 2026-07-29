@@ -1,6 +1,6 @@
 <template>
   <div class="login-page">
-    <!-- 科技动态背景 -->
+    <!-- 品牌背景 -->
     <div class="bg-grid"></div>
     <div class="bg-orb orb1"></div>
     <div class="bg-orb orb2"></div>
@@ -114,18 +114,18 @@ onMounted(refreshCaptcha)
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(1000px 600px at 20% 10%, rgba(28, 155, 230, 0.25), transparent 60%),
-    radial-gradient(900px 500px at 85% 90%, rgba(34, 211, 238, 0.2), transparent 60%),
-    #030b1f;
+    radial-gradient(1000px 600px at 20% 10%, color-mix(in srgb, var(--screen-primary) 18%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 85% 90%, color-mix(in srgb, var(--screen-secondary) 15%, transparent), transparent 60%),
+    var(--screen-bg);
 }
-/* 动态网格 */
 .bg-grid {
   position: absolute;
   inset: -50%;
   background-image:
-    linear-gradient(rgba(34, 211, 238, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34, 211, 238, 0.08) 1px, transparent 1px);
-  background-size: 44px 44px;
+    linear-gradient(var(--screen-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--screen-border) 1px, transparent 1px);
+  background-size: 56px 56px;
+  opacity: .42;
   transform: perspective(400px) rotateX(60deg);
   animation: gridmove 18s linear infinite;
 }
@@ -138,22 +138,21 @@ onMounted(refreshCaptcha)
   opacity: 0.5;
   animation: float 12s ease-in-out infinite;
 }
-.orb1 { width: 340px; height: 340px; background: #1c9be6; top: 8%; left: 10%; }
-.orb2 { width: 300px; height: 300px; background: #22d3ee; bottom: 6%; right: 12%; animation-delay: -6s; }
+.orb1 { width: 340px; height: 340px; background: var(--screen-primary); top: 8%; left: 10%; }
+.orb2 { width: 300px; height: 300px; background: var(--screen-secondary); bottom: 6%; right: 12%; animation-delay: -6s; }
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-26px); } }
 
-/* 玻璃霓虹登录卡 */
 .login-card {
   position: relative;
   z-index: 2;
-  width: 400px;
-  padding: 14px 22px;
-  background: rgba(10, 28, 60, 0.55) !important;
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(34, 211, 238, 0.35) !important;
-  box-shadow: 0 0 40px rgba(28, 155, 230, 0.3), inset 0 0 30px rgba(28, 155, 230, 0.06) !important;
+  width: min(420px, calc(100vw - 32px));
+  padding: 20px 24px;
+  background: var(--screen-surface) !important;
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--screen-border) !important;
+  box-shadow: var(--screen-shadow) !important;
 }
-.login-card::before { background: linear-gradient(90deg, #22d3ee, #1c9be6) !important; }
+.login-card::before { background: var(--brand-vermilion) !important; }
 .brand {
   text-align: center;
   margin-bottom: 22px;
@@ -163,21 +162,21 @@ onMounted(refreshCaptcha)
     letter-spacing: 2px;
     font-size: 20px;
     padding: 6px 14px;
-    border-radius: 8px;
-    background: linear-gradient(135deg, #1c9be6, #22d3ee);
-    color: #021018;
-    box-shadow: 0 0 20px rgba(34, 211, 238, 0.5);
+    border: 1px solid color-mix(in srgb, var(--brand-vermilion) 76%, transparent);
+    border-radius: 12px 12px 12px 4px;
+    background: color-mix(in srgb, var(--brand-vermilion) 18%, transparent);
+    color: var(--screen-text);
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--brand-vermilion) 18%, transparent);
     margin-bottom: 12px;
   }
   h2 {
     margin: 0;
     font-size: 20px;
-    background: linear-gradient(90deg, #eafcff, #7fd8ff);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--screen-text);
+    font-family: var(--font-display);
+    letter-spacing: .04em;
   }
-  p { margin: 6px 0 0; color: #6f9dcf; font-size: 13px; letter-spacing: 1px; }
+  p { margin: 8px 0 0; color: var(--screen-text-muted); font-size: 12px; letter-spacing: .12em; }
 }
 .captcha-row {
   display: flex;
@@ -188,17 +187,17 @@ onMounted(refreshCaptcha)
 .captcha-img {
   width: 120px;
   height: 40px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   cursor: pointer;
   flex-shrink: 0;
-  border: 1px solid rgba(34, 211, 238, 0.25);
+  border: 1px solid var(--screen-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #06142e;
+  background: var(--screen-surface-strong);
   img { width: 100%; height: 100%; display: block; }
-  .captcha-loading { color: #5b82b3; font-size: 12px; }
+  .captcha-loading { color: var(--screen-text-muted); font-size: 12px; }
 }
 .login-btn {
   width: 100%;
@@ -208,13 +207,13 @@ onMounted(refreshCaptcha)
 .tips {
   text-align: center;
   font-size: 12px;
-  color: #5b82b3;
+  color: var(--screen-text-muted);
   line-height: 1.7;
 }
 :deep(.el-input__wrapper) {
-  background: rgba(6, 20, 46, 0.6);
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25) inset;
+  background: var(--screen-surface-strong);
+  box-shadow: 0 0 0 1px var(--screen-border) inset;
 }
-:deep(.el-input__inner) { color: #d7ecff; }
-:deep(.el-input__inner::placeholder) { color: #5b82b3; }
+:deep(.el-input__inner) { color: var(--screen-text); }
+:deep(.el-input__inner::placeholder) { color: var(--screen-text-muted); }
 </style>

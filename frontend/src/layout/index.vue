@@ -1,7 +1,13 @@
 <template>
   <el-container class="app-wrapper">
     <el-aside :width="collapsed ? '64px' : '220px'" class="sidebar" :class="{ collapsed }">
-      <div class="logo">{{ collapsed ? '供链' : '出版供应链平台' }}</div>
+      <div class="logo" aria-label="山东出版供应链平台">
+        <span class="logo-seal">SD</span>
+        <span v-show="!collapsed" class="logo-wordmark">
+          <strong>出版供应链平台</strong>
+          <small>SUPPLY CHAIN OPERATIONS</small>
+        </span>
+      </div>
       <el-menu
         :default-active="activeMenu"
         :collapse="collapsed"
@@ -43,7 +49,10 @@
 
     <el-container>
       <el-header class="header">
-        <span class="title">山东出版供应链管理公司业务平台</span>
+        <div class="title-block">
+          <span class="title">山东出版供应链管理公司</span>
+          <span class="title-subtitle">业务协同与经营决策工作台</span>
+        </div>
         <div class="header-right">
           <ThemeToggle />
           <UserDropdown />
@@ -134,38 +143,56 @@ const menus = computed(() => {
 <style scoped lang="scss">
 .app-wrapper {
   height: 100%;
+  min-width: 0;
 }
-/* 侧边栏(外壳变量驱动:明亮=白底、暗黑=科技霓虹) */
 .sidebar {
   background: var(--chrome-sidebar-bg);
   position: relative;
   border-right: 1px solid var(--chrome-sidebar-border);
-  /* 收起/展开平滑过渡 + 主题切换过渡 */
-  transition: width 0.28s ease, background-color 0.3s ease, border-color 0.3s ease;
+  transition: all var(--motion-base) ease;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   .logo {
-    height: 60px;
-    line-height: 60px;
-    text-align: center;
-    font-size: 16px;
-    font-weight: 800;
-    letter-spacing: 1px;
+    height: 72px;
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     white-space: nowrap;
     overflow: hidden;
-    background: var(--chrome-logo-gradient);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    text-shadow: var(--chrome-logo-shadow);
     border-bottom: 1px solid var(--chrome-sidebar-border);
+  }
+  .logo-seal {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid color-mix(in srgb, var(--brand-vermilion) 72%, transparent);
+    border-radius: 11px 11px 11px 3px;
+    color: var(--el-color-white);
+    background: color-mix(in srgb, var(--brand-vermilion) 18%, transparent);
+    font-family: var(--font-data);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+  }
+  .logo-wordmark {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    color: var(--el-color-white);
+    line-height: 1.25;
+    strong { font-size: 15px; font-weight: 750; letter-spacing: 0.04em; }
+    small { margin-top: 4px; color: var(--chrome-menu-text); font-family: var(--font-data); font-size: 8px; letter-spacing: 0.1em; }
   }
   /* 菜单区占满、可滚动；收起条固定底部 */
   :deep(.el-menu) {
     flex: 1;
     border-right: none;
-    padding: 8px;
+    padding: 14px 10px;
     overflow-x: hidden;
   }
   /* 收起态：菜单不再受 220px 约束，图标居中 */
@@ -177,7 +204,7 @@ const menus = computed(() => {
   }
   /* 收起条 */
   .collapse-bar {
-    height: 46px;
+    height: 52px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -185,16 +212,19 @@ const menus = computed(() => {
     cursor: pointer;
     color: var(--chrome-menu-text);
     border-top: 1px solid var(--chrome-sidebar-border);
-    transition: background 0.2s, color 0.2s;
+    font-size: 13px;
+    transition: all var(--motion-base) ease;
     &:hover {
       background: var(--chrome-menu-hover-bg);
       color: var(--chrome-menu-hover-text);
     }
   }
   :deep(.el-menu-item) {
-    height: 46px;
-    border-radius: 8px;
-    margin-bottom: 4px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 5px;
+    font-weight: 620;
+    transition: all var(--motion-base) ease;
   }
   /* 菜单标题文字占满剩余宽度，把角标推到行尾并与文字同基线 */
   .menu-label { flex: 1; }
@@ -210,7 +240,7 @@ const menus = computed(() => {
     margin-left: 8px;
     border-radius: 9px;
     background: var(--el-color-danger);
-    color: #fff;
+    color: var(--el-color-white);
     font-size: 12px;
     line-height: 1;
     font-weight: 600;
@@ -228,9 +258,11 @@ const menus = computed(() => {
   }
   /* 折叠子菜单：一级标题沿用外壳风格 */
   :deep(.el-sub-menu__title) {
-    height: 46px;
-    border-radius: 8px;
-    margin-bottom: 4px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 5px;
+    font-weight: 620;
+    transition: all var(--motion-base) ease;
   }
   :deep(.el-sub-menu__title:hover) {
     background: var(--chrome-menu-hover-bg) !important;
@@ -249,23 +281,37 @@ const menus = computed(() => {
     min-width: auto;
   }
 }
-/* 顶栏(外壳变量驱动) */
 .header {
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0 clamp(18px, 1.7vw, 30px);
   background: var(--chrome-header-bg);
   border-bottom: 1px solid var(--chrome-header-border);
   box-shadow: var(--chrome-header-shadow);
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  backdrop-filter: blur(16px);
+  transition: all var(--motion-base) ease;
+  .title-block {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .title {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    background: var(--chrome-title-gradient);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    overflow: hidden;
+    color: var(--chrome-title-color);
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .title-subtitle {
+    margin-top: 3px;
+    color: var(--el-text-color-secondary);
+    font-size: 11px;
+    letter-spacing: 0.08em;
   }
   .user {
     display: flex;
@@ -280,5 +326,14 @@ const menus = computed(() => {
     align-items: center;
     gap: 12px;
   }
+}
+
+@media (max-width: 1100px) {
+  .header .title-subtitle { display: none; }
+}
+
+@media (max-width: 760px) {
+  .header .title { font-size: 14px; }
+  .header .header-right { gap: 6px; }
 }
 </style>

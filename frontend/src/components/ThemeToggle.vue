@@ -34,16 +34,16 @@ function onToggle() {
   height: 36px;
   padding: 0;
   border: 1px solid var(--chrome-header-border, var(--el-border-color));
-  border-radius: 50%;
-  background: transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
   color: var(--chrome-title-color, var(--el-text-color-primary));
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--motion-base) ease;
 }
 .theme-toggle:hover {
-  color: var(--tech-cyan);
-  border-color: var(--tech-cyan);
-  box-shadow: 0 0 12px rgba(34, 211, 238, 0.35);
-  transform: rotate(18deg);
+  color: var(--brand-vermilion);
+  border-color: var(--brand-vermilion);
+  box-shadow: var(--focus-ring);
+  transform: translateY(-1px) rotate(12deg);
 }
 </style>

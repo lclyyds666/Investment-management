@@ -151,10 +151,10 @@ async function onDelete(row) {
 <style scoped lang="scss">
 .stat-row { margin-bottom: 16px; }
 .stat-label { color: var(--el-text-color-secondary); font-size: 14px; }
-.stat-value { margin-top: 8px; font-size: 26px; font-weight: 700; color: var(--el-text-color-primary); }
-.stat-value.warn { color: #e6a23c; }
-.stat-value.ok { color: #67c23a; }
-.stat-value.blue { color: #409eff; }
+.stat-value { margin-top: 10px; font-size: clamp(26px, 2.2vw, 36px); font-weight: 800; color: var(--el-text-color-primary); }
+.stat-value.warn { color: var(--el-color-warning); }
+.stat-value.ok { color: var(--el-color-success); }
+.stat-value.blue { color: var(--el-color-primary); }
 /* 窄屏统计卡之间留出竖向间距 */
 @media (max-width: 768px) {
   .stat-row .el-col { margin-bottom: 12px; }

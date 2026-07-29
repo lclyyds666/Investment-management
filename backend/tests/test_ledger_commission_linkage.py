@@ -257,6 +257,129 @@ class CommissionLinkageTest(unittest.TestCase):
         self.assertEqual(row.co_investment_amount, Decimal("88.00"))
         self.assertEqual(sibling.co_investment_amount, Decimal("88.00"))
 
+    def test_zero_commission_rate_is_not_replaced_by_default(self):
+        ticket_row = _ticket_row()
+        ticket_row.commission_rate = Decimal("0")
+        ticket_preview = ticket_api._calculation_preview(
+            ticket_row,
+            TicketLedgerUpdateIn(rate_hexiao=Decimal("0.91")),
+        )
+        self.assertEqual(ticket_preview.commission_rate, Decimal("0"))
+
+        hotel_row = _hotel_row()
+        hotel_row.commission_rate = Decimal("0")
+        hotel_preview = hotel_api._calculation_preview(
+            hotel_row,
+            HotelUpdateIn(rate_hexiao=Decimal("0.91")),
+        )
+        self.assertEqual(hotel_preview.commission_rate, Decimal("0"))
+
+    def test_ticket_manual_received_then_rate_change_keeps_manual_base(self):
+        row = _ticket_row()
+        session = _Session(row)
+        ticket_api.update_row(
+            "test-scenic",
+            row.id,
+            TicketLedgerUpdateIn(supplier_received=Decimal("180")),
+            session,
+            None,
+        )
+        self.assertEqual(row.supplier_received, Decimal("180"))
+        self.assertEqual(row.daily_json, "")
+
+        rate_payload = TicketLedgerUpdateIn(commission_rate=Decimal("0.05"))
+        with patch.object(ticket_api, "_recover_daily_json", return_value=_daily_json()):
+            preview = ticket_api._calculation_preview(row, rate_payload)
+            ticket_api.update_row("test-scenic", row.id, rate_payload, session, None)
+
+        self.assertEqual(row.daily_json, "")
+        self.assertEqual(row.supplier_received, Decimal("180"))
+        self.assertEqual(row.supplier_commission, Decimal("3.50"))
+        self.assertEqual(row.publisher_due, Decimal("176.50"))
+        self.assertEqual(row.hexiao_amount, Decimal("158.85"))
+        self.assertEqual(row.jinying_amount, Decimal("165.91"))
+        self.assertEqual(row.service_fee, Decimal("7.06"))
+        self.assertEqual(row.hexiao_amount, preview.hexiao_amount)
+        self.assertEqual(row.jinying_amount, preview.jinying_amount)
+
+    def test_hotel_manual_received_then_rate_change_keeps_manual_base(self):
+        row = _hotel_row()
+        session = _Session(row)
+        hotel_api.update_row(
+            "test-scenic",
+            row.id,
+            HotelUpdateIn(base_received=Decimal("180")),
+            session,
+            None,
+        )
+        self.assertEqual(row.base_received, Decimal("180"))
+        self.assertEqual(row.daily_json, "")
+
+        rate_payload = HotelUpdateIn(commission_rate=Decimal("0.05"))
+        with patch.object(hotel_api, "_recover_daily_json", return_value=_daily_json()):
+            preview = hotel_api._calculation_preview(row, rate_payload)
+            hotel_api.update_row("test-scenic", row.id, rate_payload, session, None)
+
+        self.assertEqual(row.daily_json, "")
+        self.assertEqual(row.base_received, Decimal("180"))
+        self.assertEqual(row.supplier_commission, Decimal("3.50"))
+        self.assertEqual(row.settle_base, Decimal("176.50"))
+        self.assertEqual(row.hexiao_amount, Decimal("158.85"))
+        self.assertEqual(row.service_fee, Decimal("132.00"))
+        self.assertEqual(row.jinying_amount, Decimal("290.85"))
+        self.assertEqual(row.hexiao_amount, preview.hexiao_amount)
+        self.assertEqual(row.jinying_amount, preview.jinying_amount)
+
+    def test_manual_hexiao_updates_service_fee_and_running_balance(self):
+        ticket_row = _ticket_row()
+        ticket_session = _Session(ticket_row)
+        ticket_api.update_row(
+            "test-scenic",
+            ticket_row.id,
+            TicketLedgerUpdateIn(hexiao_amount=Decimal("120")),
+            ticket_session,
+            None,
+        )
+        self.assertEqual(ticket_row.service_fee, Decimal("15.36"))
+        self.assertEqual(ticket_row.pending_writeoff, Decimal("-20.00"))
+
+        hotel_row = _hotel_row()
+        hotel_session = _Session(hotel_row)
+        hotel_api.update_row(
+            "test-scenic",
+            hotel_row.id,
+            HotelUpdateIn(hexiao_amount=Decimal("120")),
+            hotel_session,
+            None,
+        )
+        self.assertEqual(hotel_row.service_fee, Decimal("141.60"))
+        self.assertEqual(hotel_row.pending_writeoff, Decimal("80.00"))
+
+    def test_manual_commission_survives_unrelated_rate_change(self):
+        ticket_row = _ticket_row()
+        ticket_row.supplier_commission = Decimal("7.25")
+        ticket_session = _Session(ticket_row)
+        ticket_api.update_row(
+            "test-scenic",
+            ticket_row.id,
+            TicketLedgerUpdateIn(rate_hexiao=Decimal("0.91")),
+            ticket_session,
+            None,
+        )
+        self.assertEqual(ticket_row.supplier_commission, Decimal("7.25"))
+
+        hotel_row = _hotel_row()
+        hotel_row.supplier_commission = Decimal("7.25")
+        hotel_session = _Session(hotel_row)
+        hotel_api.update_row(
+            "test-scenic",
+            hotel_row.id,
+            HotelUpdateIn(rate_hexiao=Decimal("0.91")),
+            hotel_session,
+            None,
+        )
+        self.assertEqual(hotel_row.supplier_commission, Decimal("7.25"))
+
 
 if __name__ == "__main__":
     unittest.main()

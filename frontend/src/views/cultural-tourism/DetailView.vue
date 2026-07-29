@@ -2,8 +2,16 @@
   <div class="ct-detail">
     <!-- 返回 + 标题 -->
     <div class="ct-detail-head">
-      <el-button :icon="ArrowLeft" @click="goBack">返回文旅业务</el-button>
-      <h2 v-if="spot" class="ct-detail-title">{{ spot.name }}</h2>
+      <div class="head-copy">
+        <el-button class="back-button" text :icon="ArrowLeft" @click="goBack">返回文旅业务</el-button>
+        <p class="page-eyebrow">SCENIC LEDGER</p>
+        <h1 v-if="spot" class="page-title ct-detail-title">{{ spot.name }}</h1>
+        <p v-if="spot" class="page-subtitle">平台入口、经营指标与核销台账均按当前景区独立归集。</p>
+      </div>
+      <div v-if="spot" class="module-tags">
+        <el-tag v-if="ticketEnabled" effect="plain" round>门票业务</el-tag>
+        <el-tag v-if="hotelEnabled" type="success" effect="plain" round>酒店业务</el-tag>
+      </div>
     </div>
 
     <template v-if="spot">
@@ -54,13 +62,14 @@
               target="_blank"
               rel="noopener noreferrer"
               :title="`前往 ${p.name}·${spot.name}`"
+              :style="{ '--platform-color': p.color }"
             >
               <img class="platform-logo" :src="p.logo" :alt="p.name" loading="lazy" />
               <span class="platform-name">{{ p.name }}</span>
               <el-icon class="platform-go"><TopRight /></el-icon>
             </a>
           </div>
-          <div v-else class="entry-empty">暂无入口</div>
+          <el-empty v-else class="entry-empty" :image-size="46" description="当前景区暂未配置平台入口" />
         </div>
       </el-card>
       </div>
@@ -84,7 +93,7 @@
                 <el-collapse-item name="raw">
                   <template #title>
                     <el-icon><Files /></el-icon>
-                    <span style="margin-left: 6px">原始核销明细预览（对照/校验用）</span>
+                    <span class="raw-title">原始核销明细预览（对照/校验用）</span>
                   </template>
                   <TicketDetailFiles :scenic-id="scenicId" />
                 </el-collapse-item>
@@ -98,7 +107,7 @@
                 <el-collapse-item name="raw-hotel">
                   <template #title>
                     <el-icon><Files /></el-icon>
-                    <span style="margin-left: 6px">原始核销明细预览（对照/校验用）</span>
+                    <span class="raw-title">原始核销明细预览（对照/校验用）</span>
                   </template>
                   <HotelDetailFiles :scenic-id="scenicId" />
                 </el-collapse-item>
@@ -179,29 +188,43 @@ function goBack() {
 </script>
 
 <style scoped lang="scss">
-.ct-detail { padding: 4px; }
+.ct-detail { padding: 2px; }
 .ct-detail-head {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
+  padding: 4px 4px 20px 20px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  &::before {
+    position: absolute;
+    top: 36px;
+    bottom: 20px;
+    left: 0;
+    width: 4px;
+    border-radius: var(--radius-xs);
+    background: var(--divider-rail);
+    content: '';
+  }
 }
+.head-copy { min-width: 0; }
+.back-button { margin: 0 0 var(--space-4) -12px; color: var(--el-text-color-secondary); }
 .ct-detail-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--el-text-color-primary);
+  max-width: 860px;
 }
+.module-tags { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; padding-bottom: 4px; }
 .ct-section { margin-bottom: 16px; }
 /* 经营数据 + 平台入口 左右两栏：等高（align-items:stretch 使两栏同高=较高者，较矮者底部留白） */
 .ct-cols {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   align-items: stretch;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 .ct-col {
-  flex: 1 1 0;
   min-width: 0;
   margin-bottom: 0;
 }
@@ -215,29 +238,28 @@ function goBack() {
 
 /* ① 经营数据·指标卡：竖排铺满栏宽（数字再长也不溢出） */
 .biz-grid {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 .biz-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 18px 20px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 12px;
-  background: var(--el-fill-color-blank);
-  transition: all 0.2s ease;
+  min-width: 0;
+  padding: clamp(18px, 2vw, 28px);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  transition: all var(--motion-base) ease;
   &:hover {
-    border-color: var(--el-color-primary);
-    box-shadow: 0 4px 16px rgba(34, 211, 238, 0.14);
-    transform: translateY(-2px);
+    border-color: var(--surface-border-strong);
+    box-shadow: var(--surface-shadow);
+    transform: translateY(-3px);
   }
 }
 .biz-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: 42px;
+  height: 42px;
+  margin-bottom: var(--space-5);
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -245,12 +267,12 @@ function goBack() {
   background: var(--el-color-primary-light-9);
   .el-icon { font-size: 24px; color: var(--el-color-primary); }
 }
-.biz-card.sales .biz-icon { background: rgba(245, 158, 11, 0.14); .el-icon { color: #f59e0b; } }
-.biz-card.rate .biz-icon  { background: rgba(16, 185, 129, 0.14); .el-icon { color: #10b981; } }
-.biz-card.month .biz-icon { background: rgba(139, 92, 246, 0.14); .el-icon { color: #8b5cf6; } }
+.biz-card.sales .biz-icon { background: color-mix(in srgb, var(--metric-warning) 14%, transparent); .el-icon { color: var(--metric-warning); } }
+.biz-card.rate .biz-icon  { background: color-mix(in srgb, var(--metric-profit) 14%, transparent); .el-icon { color: var(--metric-profit); } }
+.biz-card.month .biz-icon { background: color-mix(in srgb, var(--metric-realized) 14%, transparent); .el-icon { color: var(--metric-realized); } }
 .biz-body { min-width: 0; flex: 1; }
 .biz-value {
-  font-size: 24px;
+  font-size: clamp(25px, 2.3vw, 38px);
   font-weight: 800;
   line-height: 1.2;
   color: var(--el-text-color-primary);
@@ -300,13 +322,11 @@ function goBack() {
   border-radius: 50%;
   flex-shrink: 0;
   &.scenic { background: var(--el-color-primary); }
-  &.ticket { background: #f59e0b; }
+  &.ticket { background: var(--brand-vermilion); }
 }
 .entry-empty {
-  color: var(--el-text-color-secondary);
-  font-style: italic;
-  font-size: 13px;
-  padding: 6px 2px;
+  padding: 0;
+  :deep(.el-empty__description) { margin-top: 4px; }
 }
 
 /* 平台入口：两列等大网格；所有平台卡尺寸/高度一致（同栏同 grid + 固定最小高度） */
@@ -323,14 +343,15 @@ function goBack() {
   min-width: 0;
   min-height: 68px;
   box-sizing: border-box;
-  border: 1px solid var(--el-border-color);
-  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
   text-decoration: none;
   color: var(--el-text-color-primary);
-  transition: all 0.2s ease;
+  transition: all var(--motion-base) ease;
   &:hover {
-    border-color: var(--el-color-primary);
-    box-shadow: 0 6px 20px rgba(34, 211, 238, 0.22);
+    border-color: var(--platform-color, var(--el-color-primary));
+    box-shadow: var(--surface-shadow);
     transform: translateY(-3px);
     .platform-logo { transform: scale(1.12); }
     .platform-go { color: var(--el-color-primary); }
@@ -342,7 +363,8 @@ function goBack() {
   flex-shrink: 0;
   display: block;
   object-fit: contain;
-  transition: transform 0.2s ease;
+  filter: drop-shadow(0 5px 8px color-mix(in srgb, var(--platform-color, var(--el-color-primary)) 18%, transparent));
+  transition: transform var(--motion-base) ease;
 }
 .platform-name {
   flex: 1;
@@ -357,13 +379,13 @@ function goBack() {
   color: var(--el-text-color-secondary);
   font-size: 18px;
   flex-shrink: 0;
-  transition: color 0.2s ease;
+  transition: color var(--motion-base) ease;
 }
 
 /* ③ 核销数据台账·折叠面板 */
 .ledger-collapse {
-  border: 1px solid var(--el-border-color);
-  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--el-fill-color-blank);
   :deep(.el-collapse-item__header) {
@@ -376,6 +398,7 @@ function goBack() {
   :deep(.el-collapse-item__wrap) { border-bottom: none; }
   :deep(.el-collapse-item__content) { padding: 4px 18px 18px; }
 }
+.raw-title { margin-left: 6px; }
 .ledger-title {
   display: flex;
   align-items: center;
@@ -385,10 +408,13 @@ function goBack() {
 
 /* 响应式：窄屏两栏改上下堆叠；平台卡改单列 */
 @media (max-width: 900px) {
-  .ct-cols { flex-direction: column; }
+  .ct-detail-head { align-items: flex-start; flex-direction: column; }
+  .module-tags { justify-content: flex-start; }
+  .ct-cols { grid-template-columns: 1fr; }
   .ct-col { margin-bottom: 0; }
 }
 @media (max-width: 640px) {
+  .biz-grid { grid-template-columns: 1fr; }
   .platform-grid { grid-template-columns: 1fr; }
 }
 </style>
