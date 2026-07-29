@@ -5,7 +5,7 @@
       <div class="tl-title">
         <el-icon><Tickets /></el-icon>
         <span>景区门票核销台账</span>
-        <el-tag size="small" effect="plain">共 {{ savedRows.length }} 期</el-tag>
+        <el-tag size="small" effect="plain">共 {{ savedPeriodCount }} 期</el-tag>
       </div>
       <div class="tl-ops">
         <el-upload
@@ -66,6 +66,7 @@
             <el-input-number
               v-model="row.supplier_commission" :min="0" :precision="2" :step="100"
               size="small" controls-position="right" style="width: 130px"
+              :disabled="row.platform !== '抖音'"
               @change="onDraftCommChange(row)"
             />
           </template>
@@ -301,6 +302,9 @@ const parsing = ref(false)
 const saving = ref(false)
 const savedRows = ref([])
 const draftRows = ref([])
+const savedPeriodCount = computed(() => new Set(
+  savedRows.value.map((row) => row.source_file || row.detail_name || row.period_text || row.check_date_text || row.id)
+).size)
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100
@@ -325,6 +329,7 @@ function rowJinyingDefault(row) {
 }
 // 改服务商佣金 → 结算金额回到默认(跟随)，清除手工标记
 function onDraftCommChange(row) {
+  if (row.platform !== '抖音') row.supplier_commission = 0
   row.jinying_amount = rowJinyingDefault(row)
   row.jinyingEdited = false
 }
@@ -338,10 +343,11 @@ const lastSavedPending = computed(() => {
   const n = savedRows.value.length
   return n ? (Number(savedRows.value[n - 1].pending_writeoff) || 0) : 0
 })
-// 草稿期景区待核销金额预览：上期余额 + 本期付款 − 本期核销
-function draftPending(row) {
-  const hexiao = rowHexiao(row)
-  return round2(lastSavedPending.value + (Number(row.payment_amount) || 0) - hexiao)
+// 一个源文件是一整期：多平台共享付款，核销金额按本期所有平台合计。
+function draftPending() {
+  const payment = Math.max(0, ...draftRows.value.map((row) => Number(row.payment_amount) || 0))
+  const hexiao = draftRows.value.reduce((sum, row) => sum + rowHexiao(row), 0)
+  return round2(lastSavedPending.value + payment - hexiao)
 }
 
 function fmtMoney(n) {
@@ -378,10 +384,10 @@ async function onFileChange(file) {
   try {
     const res = await parseTicketFile(props.scenicId, raw)
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
-    // 本次上传仅生成本期一条待确认记录，替换旧草稿
+    // 同一文件按平台生成多条草稿，但仍属于同一期。
     draftRows.value = (res.files || []).map((f) => ({
       pay_date: null,
-      platform: '抖音',
+      platform: f.platform || '抖音',
       ticket_product: f.ticket_product || '水上世界/童话世界/海洋王国',
       check_date_text: f.check_date_text,
       period_text: f.period_text,
@@ -409,7 +415,7 @@ async function onFileChange(file) {
       detail_stored: f.detail_stored,
       detail_name: f.detail_name
     }))
-    ElMessage.success('解析完成（本期），请录入「服务商佣金」与「付款金额」后保存。')
+    ElMessage.success(`解析完成（本期识别 ${draftRows.value.length} 个平台），请确认后保存。`)
   } catch {
     ElMessage.error('解析失败，请检查文件内容')
   } finally {

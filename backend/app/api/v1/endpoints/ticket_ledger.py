@@ -109,7 +109,14 @@ def _recover_daily_json(row: TicketLedger) -> str:
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"恢复逐日明细失败：{exc}") from exc
-    daily_json = info.get("daily_json") or ""
+    platform_info = next(
+        (
+            item for item in info.get("platforms", [])
+            if item.get("platform") == (row.platform or "抖音")
+        ),
+        info,
+    )
+    daily_json = platform_info.get("daily_json") or ""
     if not daily_json:
         raise HTTPException(status_code=409, detail="原始文件未解析出逐日明细，无法精确重算")
     return daily_json
@@ -181,16 +188,41 @@ def _totals(rows: list[TicketLedger]) -> TicketLedgerTotals:
     def s(attr):
         return sum((getattr(x, attr) or Decimal("0") for x in rows), Decimal("0"))
 
+    groups: dict[str, list[TicketLedger]] = {}
+    order: list[str] = []
+    for row in rows:
+        key = _period_key(row)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(row)
+    payment = sum(
+        (max((row.payment_amount or Decimal("0") for row in groups[key]), default=Decimal("0")) for key in order),
+        Decimal("0"),
+    )
+    co_investment = sum(
+        (max((row.co_investment_amount or Decimal("0") for row in groups[key]), default=Decimal("0")) for key in order),
+        Decimal("0"),
+    )
+    repay = Decimal("0")
+    for key in order:
+        values = [row.repay_amount for row in groups[key] if row.repay_amount is not None]
+        if values:
+            repay += values[0]
+    pending = (
+        groups[order[-1]][0].pending_writeoff or Decimal("0") if order else Decimal("0")
+    )
+
     return TicketLedgerTotals(
         hexiao_amount=s("hexiao_amount"),
-        payment_amount=s("payment_amount"),
-        co_investment_amount=s("co_investment_amount"),
-        # 景区待核销金额为滚动余额 → 合计取末期(最后一行)余额，而非逐行相加
-        pending_writeoff=(rows[-1].pending_writeoff or Decimal("0")) if rows else Decimal("0"),
+        payment_amount=payment,
+        co_investment_amount=co_investment,
+        # 同一期可能有多个平台；待核销是整期滚动余额，取末期共享值。
+        pending_writeoff=pending,
         jinying_amount=s("jinying_amount"),
         service_fee=s("service_fee"),
         publisher_due=s("publisher_due"),
-        repay_amount=s("repay_amount"),
+        repay_amount=repay,
     )
 
 
@@ -211,14 +243,15 @@ def _load_rows(db: Session, sid: str) -> list[TicketLedger]:
 
 
 def _recompute_running_balance(rows: list[TicketLedger]) -> None:
-    """按行序集中重算「景区待核销金额」滚动余额，避免多期数据重算混乱。
+    """按整期集中重算「景区待核销金额」滚动余额。
 
-    首期：付款金额 - 景区核销金额；续期：上期余额 + 本期付款 - 本期核销。
-    传入 rows 须按 row_no 升序；就地写回每行 pending_writeoff（调用方负责 commit）。
+    同一源文件中的多个平台共享一期余额：付款只取一次，核销金额按平台求和。
     """
     if not rows:
         return
-    balances = tl_svc.calculate_running_balances(rows[0].scenic_id, rows)
+    balances = tl_svc.calculate_running_balances(
+        rows[0].scenic_id, rows, group_by=_period_key
+    )
     for r, balance in zip(rows, balances):
         r.pending_writeoff = balance
 
@@ -282,26 +315,33 @@ async def parse_files(
     finally:
         del content  # 尽快释放大文件内存
 
-    if info["order_count"] == 0:
+    platform_results = info.get("platforms", [])
+    if not platform_results:
         warnings.append(f"{fname}：未解析到有效核销明细，请确认文件内容")
-    parsed.append(ParsedFile(
-        source_file=fname,
-        detail_stored=detail_stored,
-        detail_name=fname,
-        supplier_received=info["supplier_received"],
-        suggested_commission=info["suggested_commission"],
-        def_hexiao=info["def_hexiao"],
-        def_service_fee=info["def_service_fee"],
-        def_jinying=info["def_jinying"],
-        daily_json=info["daily_json"],
-        order_count=info["order_count"],
-        positive_count=info["positive_count"],
-        period_text=info["period_text"],
-        check_date_text=info["check_date_text"],
-        period_start=info["period_start"],
-        period_end=info["period_end"],
-        sheets=info["sheets"],
-    ))
+    for platform_info in platform_results:
+        if platform_info["order_count"] == 0:
+            warnings.append(
+                f"{fname}（{platform_info['platform']}）：未解析到有效核销明细"
+            )
+        parsed.append(ParsedFile(
+            platform=platform_info["platform"],
+            source_file=fname,
+            detail_stored=detail_stored,
+            detail_name=fname,
+            supplier_received=platform_info["supplier_received"],
+            suggested_commission=platform_info["suggested_commission"],
+            def_hexiao=platform_info["def_hexiao"],
+            def_service_fee=platform_info["def_service_fee"],
+            def_jinying=platform_info["def_jinying"],
+            daily_json=platform_info["daily_json"],
+            order_count=platform_info["order_count"],
+            positive_count=platform_info["positive_count"],
+            period_text=platform_info["period_text"],
+            check_date_text=platform_info["check_date_text"],
+            period_start=platform_info["period_start"],
+            period_end=platform_info["period_end"],
+            sheets=platform_info["sheets"],
+        ))
 
     return Response.ok(
         ParseResult(
@@ -311,7 +351,7 @@ async def parse_files(
             failed=failed,
             warnings=warnings,
         ),
-        message="解析完成：本期 1 个文件",
+        message=f"解析完成：本期识别 {len(parsed)} 个平台",
     )
 
 

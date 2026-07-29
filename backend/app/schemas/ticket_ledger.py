@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ParsedFile(BaseModel):
     """单个对账明细文件解析结果（上传即算，不落库；供前端录入服务商佣金/付款金额等）。"""
 
+    platform: str = ""
     source_file: str = ""
     # 明细源文件已落盘，供预览/下载；保存台账时随行持久化
     detail_stored: str = ""

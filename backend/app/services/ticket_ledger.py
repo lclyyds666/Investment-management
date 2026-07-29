@@ -49,6 +49,13 @@ COL_RUANJIAN = "软件服务费"
 COL_DAREN = "达人服务费"
 COL_TUANZHANG = "团长服务费"
 COL_HEXIAO_TIME = "核销时间"
+# 携程门票对账明细。携程没有抖音的订单实收/佣金列，结算价即服务商到账口径。
+COL_XC_JIESUAN = "结算价金额"
+COL_XC_FLOW_TYPE = "流水类型"
+COL_XC_SERVICE_DATE = "服务完成日期"
+COL_XC_DEPARTURE_DATE = "出发时间"
+COL_XC_PAYMENT_DATE = "付款日期"
+XC_ORDER_COST = "订单成本"
 # 服务商到账金额 = 订单实收 − 软件 − 达人 − 团长（明细中费用列为负数，直接相加）。
 # 注意：明细里的「服务商服务费」列其实是 -(服务商到账金额)，若一并相加会把结果抵消为 0，故不纳入。
 _FEE_COLS = (COL_RUANJIAN, COL_DAREN, COL_TUANZHANG)
@@ -147,14 +154,29 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     # read_only=True 流式读取，内存可控；用 try/finally 保证异常时也释放工作簿
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
 
-    supplier_received = Decimal("0")
-    order_count = 0
-    positive_count = 0   # 订单实收金额为正数的订单数（核销率分子）
-    min_dt: date | None = None
-    max_dt: date | None = None
-    used_sheets: list[str] = []
-    # 按日期分组：核销时间 → 当日 {received, shishou, daren, tuanzhang}
-    daily: dict[str, dict] = {}
+    # 同一文件可同时包含抖音和携程；每个平台独立生成一条台账草稿。
+    aggregates: dict[str, dict] = {}
+
+    def platform_aggregate(platform: str) -> dict:
+        return aggregates.setdefault(platform, {
+            "supplier_received": Decimal("0"),
+            "order_count": 0,
+            "positive_count": 0,
+            "min_dt": None,
+            "max_dt": None,
+            "sheets": [],
+            "daily": {},
+        })
+
+    def add_date(aggregate: dict, value: date | None) -> None:
+        if value is None:
+            return
+        aggregate["min_dt"] = (
+            value if aggregate["min_dt"] is None else min(aggregate["min_dt"], value)
+        )
+        aggregate["max_dt"] = (
+            value if aggregate["max_dt"] is None else max(aggregate["max_dt"], value)
+        )
 
     try:
         for ws in wb.worksheets:
@@ -171,74 +193,126 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                 continue
 
             i_shishou = _header_index(header, COL_SHISHOU)
-            if i_shishou < 0:
-                continue  # 非核销明细表结构，跳过
-            i_fees = [_header_index(header, c) for c in _FEE_COLS]
-            i_time = _header_index(header, COL_HEXIAO_TIME)
+            i_xc_jiesuan = _header_index(header, COL_XC_JIESUAN)
 
-            used_sheets.append(ws.title)
-            for raw in rows_iter:
-                if not raw:
-                    continue
-                shishou = _num(raw[i_shishou]) if i_shishou < len(raw) else None
-                fee_vals = [
-                    (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
-                ]
-                # 空行 / 小计行：实收与全部费用都无值 → 跳过
-                if shishou is None and all(f is None for f in fee_vals):
-                    continue
-                base = (shishou or Decimal("0"))
-                for f in fee_vals:
-                    base += (f or Decimal("0"))  # 费用在明细中为负数，直接相加
-                supplier_received += base
-                order_count += 1
-                if shishou is not None and shishou > 0:
-                    positive_count += 1
+            if i_shishou >= 0:
+                aggregate = platform_aggregate("抖音")
+                aggregate["sheets"].append(ws.title)
+                i_fees = [_header_index(header, c) for c in _FEE_COLS]
+                i_time = _header_index(header, COL_HEXIAO_TIME)
+                for raw in rows_iter:
+                    if not raw:
+                        continue
+                    shishou = _num(raw[i_shishou]) if i_shishou < len(raw) else None
+                    fee_vals = [
+                        (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
+                    ]
+                    # 空行 / 小计行：实收与全部费用都无值 → 跳过
+                    if shishou is None and all(f is None for f in fee_vals):
+                        continue
+                    base = (shishou or Decimal("0"))
+                    for fee in fee_vals:
+                        base += (fee or Decimal("0"))  # 费用为负数，直接相加
+                    aggregate["supplier_received"] += base
+                    aggregate["order_count"] += 1
+                    if shishou is not None and shishou > 0:
+                        aggregate["positive_count"] += 1
 
-                d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
-                if d:
-                    min_dt = d if (min_dt is None or d < min_dt) else min_dt
-                    max_dt = d if (max_dt is None or d > max_dt) else max_dt
-                # 按日归集（fee_vals 顺序 = 软件/达人/团长）
-                key = d.isoformat() if d else "NA"
-                dd = daily.setdefault(key, {
-                    "received": Decimal("0"), "shishou": Decimal("0"),
-                    "daren": Decimal("0"), "tuanzhang": Decimal("0"),
-                })
-                dd["received"] += base
-                dd["shishou"] += (shishou or Decimal("0"))
-                dd["daren"] += (fee_vals[1] or Decimal("0"))       # 达人(负)
-                dd["tuanzhang"] += (fee_vals[2] or Decimal("0"))   # 团长(负)
+                    d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
+                    add_date(aggregate, d)
+                    key = d.isoformat() if d else "NA"
+                    dd = aggregate["daily"].setdefault(key, {
+                        "received": Decimal("0"), "shishou": Decimal("0"),
+                        "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                    })
+                    dd["received"] += base
+                    dd["shishou"] += (shishou or Decimal("0"))
+                    dd["daren"] += (fee_vals[1] or Decimal("0"))
+                    dd["tuanzhang"] += (fee_vals[2] or Decimal("0"))
+                continue
+
+            if i_xc_jiesuan >= 0:
+                aggregate = platform_aggregate("携程")
+                aggregate["sheets"].append(ws.title)
+                i_flow = _header_index(header, COL_XC_FLOW_TYPE)
+                i_service = _header_index(header, COL_XC_SERVICE_DATE)
+                i_departure = _header_index(header, COL_XC_DEPARTURE_DATE)
+                i_payment = _header_index(header, COL_XC_PAYMENT_DATE)
+                for raw in rows_iter:
+                    if not raw:
+                        continue
+                    # 携程账单可能混有调账等流水，只将订单成本计入核销台账。
+                    if 0 <= i_flow < len(raw):
+                        flow_type = str(raw[i_flow] or "").strip()
+                        if flow_type and flow_type != XC_ORDER_COST:
+                            continue
+                    base = _num(raw[i_xc_jiesuan]) if i_xc_jiesuan < len(raw) else None
+                    if base is None:
+                        continue
+                    d = None
+                    for idx in (i_service, i_departure, i_payment):
+                        if 0 <= idx < len(raw):
+                            d = _to_date(raw[idx])
+                            if d is not None:
+                                break
+                    aggregate["supplier_received"] += base
+                    aggregate["order_count"] += 1
+                    if base > 0:
+                        aggregate["positive_count"] += 1
+                    add_date(aggregate, d)
+                    key = d.isoformat() if d else "NA"
+                    dd = aggregate["daily"].setdefault(key, {
+                        "received": Decimal("0"), "shishou": Decimal("0"),
+                        "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                    })
+                    dd["received"] += base
     finally:
         wb.close()
 
-    # 周期优先取文件名；否则回退核销时间跨度
+    # 周期优先取文件名；否则各平台分别回退到有效业务日期跨度。
     fn_start, fn_end = _period_from_filename(filename)
-    p_start = fn_start or min_dt
-    p_end = fn_end or max_dt
+    platforms = []
+    for platform in ("抖音", "携程"):
+        if platform not in aggregates:
+            continue
+        aggregate = aggregates[platform]
+        p_start = fn_start or aggregate["min_dt"]
+        p_end = fn_end or aggregate["max_dt"]
+        period_text = ""
+        if p_start and p_end:
+            period_text = (
+                f"{p_start.year}/{p_start.month}/{p_start.day}-"
+                f"{p_end.year}/{p_end.month}/{p_end.day}"
+            )
+        defs = daily_defaults(aggregate["daily"], platform=platform)
+        platforms.append({
+            "platform": platform,
+            "supplier_received": _q(aggregate["supplier_received"]),
+            "suggested_commission": defs["commission"],
+            "def_hexiao": defs["hexiao"],
+            "def_service_fee": defs["service_fee"],
+            "def_jinying": defs["jinying"],
+            "daily_json": serialize_daily(aggregate["daily"]),
+            "order_count": aggregate["order_count"],
+            "positive_count": aggregate["positive_count"],
+            "period_start": p_start,
+            "period_end": p_end,
+            "period_text": period_text,
+            "check_date_text": period_text,
+            "sheets": aggregate["sheets"],
+        })
 
-    period_text = ""
-    if p_start and p_end:
-        period_text = f"{p_start.year}/{p_start.month}/{p_start.day}-{p_end.year}/{p_end.month}/{p_end.day}"
-
-    # **按日期粒度**逐日计算并舍入,再累加为期合计（精准默认值,供前端预填/可改）
-    defs = daily_defaults(daily)
-
-    return {
-        "supplier_received": _q(supplier_received),
-        "suggested_commission": defs["commission"],
-        "def_hexiao": defs["hexiao"],
-        "def_service_fee": defs["service_fee"],
-        "def_jinying": defs["jinying"],
-        "daily_json": serialize_daily(daily),
-        "order_count": order_count,
-        "positive_count": positive_count,
-        "period_start": p_start,
-        "period_end": p_end,
-        "period_text": period_text,
-        "check_date_text": period_text,
-        "sheets": used_sheets,
-    }
+    # 保留旧的顶层返回字段，避免只含抖音的既有调用和历史逐日明细恢复受影响。
+    legacy = next((item for item in platforms if item["platform"] == "抖音"), None)
+    legacy = legacy or (platforms[0] if platforms else {
+        "platform": "", "supplier_received": Decimal("0"),
+        "suggested_commission": Decimal("0"), "def_hexiao": Decimal("0"),
+        "def_service_fee": Decimal("0"), "def_jinying": Decimal("0"),
+        "daily_json": "", "order_count": 0, "positive_count": 0,
+        "period_start": fn_start, "period_end": fn_end, "period_text": "",
+        "check_date_text": "", "sheets": [],
+    })
+    return {**legacy, "platforms": platforms}
 
 
 # --------------------------------------------------------------------------- #
@@ -314,9 +388,12 @@ calculateTicketLedger = calculate_ticket_ledger
 
 def daily_defaults(daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-                   rate_settle: Decimal = DEFAULT_RATE_SETTLE) -> dict:
+                   rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+                   platform: str = "抖音") -> dict:
     """解析时的按日精准默认值（佣金取逐日自动值）。"""
-    res = recompute_from_days(_days_from_daily(daily), rate_hexiao, rate_settle, None)
+    res = recompute_from_days(
+        _days_from_daily(daily), rate_hexiao, rate_settle, None, platform=platform
+    )
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
                 "service_fee": Decimal("0"), "jinying": Decimal("0")}
