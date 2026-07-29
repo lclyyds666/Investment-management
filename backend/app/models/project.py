@@ -31,9 +31,6 @@ class ProjectMetrics(Base):
     gross_profit: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=0, comment="实现毛利(元) = 已实现业务毛收入"
     )
-    profit_rate: Mapped[Decimal | None] = mapped_column(
-        Numeric(9, 4), nullable=True, comment="收益率(小数，如 0.0473)"
-    )
     pay_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="付款日期")
     term_months: Mapped[str] = mapped_column(String(16), default="", comment="合同期限(月)")
     # —— 地理点位（由项目名自动解析并入库，驱动大屏地图；见 services/geo_gazetteer.py）——

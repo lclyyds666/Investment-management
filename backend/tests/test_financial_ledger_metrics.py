@@ -1,10 +1,13 @@
 import unittest
 from datetime import date
 from decimal import Decimal
+from unittest.mock import Mock
 
+from app.api.v1.endpoints.operation import router as operation_router
 from app.models.hotel_ledger import HotelLedger
 from app.models.ticket_ledger import TicketLedger
-from app.services.financial import build_ledger_metrics
+from app.schemas.financial import FinancialDashboard
+from app.services.financial import build_dashboard, build_ledger_metrics
 
 
 class FinancialLedgerMetricsTest(unittest.TestCase):
@@ -75,10 +78,13 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
         self.assertEqual(result["existing_scale"], Decimal("2800"))
         self.assertEqual(result["total_realized_scale"], Decimal("3500"))
         self.assertEqual(result["total_gross_income"], Decimal("650"))
-        self.assertEqual(result["profit_rate"], 23.21)
         self.assertEqual(result["capital_occupation_days"], 15.4)
         self.assertEqual(result["available_years"], [2026])
         self.assertEqual(result["scenic_ids"], ["quancheng-ouleb", "zunyi-zoo"])
+        self.assertNotIn("profit_rate", result)
+        self.assertNotIn("available_funds", result)
+        self.assertNotIn("projects", result)
+        self.assertNotIn("platforms", result)
 
         hotel_points = [
             point for point in result["ledger_profit"]
@@ -86,6 +92,34 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
         ]
         self.assertEqual(len(hotel_points), 1)
         self.assertEqual(hotel_points[0]["service_fee"], Decimal("500"))
+
+    def test_dashboard_only_queries_travel_ledgers(self):
+        db = Mock()
+        db.scalars.side_effect = [Mock(all=Mock(return_value=[])), Mock(all=Mock(return_value=[]))]
+
+        result = build_dashboard(db)
+
+        self.assertEqual(db.scalars.call_count, 2)
+        response = FinancialDashboard.model_validate(result).model_dump()
+        self.assertEqual(
+            set(response),
+            {
+                "existing_scale",
+                "total_realized_scale",
+                "total_gross_income",
+                "capital_occupation_days",
+                "ledger_profit",
+                "available_years",
+                "scenic_ids",
+            },
+        )
+
+    def test_independent_data_source_routes_are_removed(self):
+        paths = {route.path for route in operation_router.routes}
+        self.assertNotIn("/financial/upload", paths)
+        self.assertNotIn("/financial/cost", paths)
+        self.assertNotIn("/financial/available", paths)
+        self.assertNotIn("/projects/upload", paths)
 
 
 if __name__ == "__main__":

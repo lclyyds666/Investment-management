@@ -157,12 +157,12 @@ const metricCards = computed(() => {
       { label: '待审批合同', value: pendingCount.value, color: '#ff7ac6', ico: '📝' }
     ]
   }
-  // 全国视图：展示真实对账单财务指标（与经营页同源，实时同步）
+  // 全国视图：展示文旅门票/酒店台账指标（与经营页同源，实时同步）
   const f = fin.value || {}
   return [
+    { label: '已投入业务规模', value: Number(f.existing_scale || 0), color: '#ffd34e', ico: '💼', prefix: '¥' },
     { label: '已实现业务规模', value: Number(f.total_realized_scale || 0), color: '#2de1c2', ico: '📊', prefix: '¥' },
     { label: '已实现业务毛利润', value: Number(f.total_gross_income || 0), color: '#39c5ff', ico: '💰', prefix: '¥' },
-    { label: '可用资金', value: Number(f.available_funds || 0), color: '#ffd34e', ico: '💵', prefix: '¥' },
     { label: '待审批合同', value: pendingCount.value, color: '#ff7ac6', ico: '📝' }
   ]
 })

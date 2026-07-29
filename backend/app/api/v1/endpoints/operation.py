@@ -4,11 +4,11 @@
 """
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import require_roles
 from app.core.enums import ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, Role
 
 # 经营数据查看：全部非法律顾问 + 超管（这些接口 首页战略总览/大屏 也在用，故不能再排除法务风控）
@@ -21,13 +21,7 @@ from app.models.invoice import Invoice
 from app.models.operation import OperationData
 from app.models.project import ProjectMetrics
 from app.schemas.common import Response
-from app.schemas.financial import (
-    AvailableFundsIn,
-    FinancialDashboard,
-    InvestedCostIn,
-    ProjectUploadResult,
-    UploadResult,
-)
+from app.schemas.financial import FinancialDashboard
 from app.schemas.operation import (
     DashboardData,
     KpiSummary,
@@ -38,7 +32,6 @@ from app.schemas.operation import (
 )
 from app.services.ai_agent import diagnose as ai_diagnose_service
 from app.services import financial as financial_svc
-from app.services import project_etl
 
 router = APIRouter()
 
@@ -173,7 +166,7 @@ def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------------------------------- #
-# 财务经营指标（真实对账单回款数据）
+# 文旅台账经营指标
 # --------------------------------------------------------------------------- #
 @router.get(
     "/financial",
@@ -184,95 +177,6 @@ def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
 def financial_dashboard(db: Session = Depends(get_db)):
     """返回台账净投入、销售额、毛利润、占用时长及逐期服务费，供经营页与大屏共用。"""
     return Response.ok(financial_svc.build_dashboard(db))
-
-
-@router.post(
-    "/financial/upload",
-    response_model=Response[UploadResult],
-    summary="批量上传平台对账单(xlsx)并汇入财务指标",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
-)
-async def upload_financial(
-    file: UploadFile = File(..., description="多 Sheet 对账单 .xlsx"),
-    db: Session = Depends(get_db),
-):
-    """解析抖音/美团/携程对账单，提取『应扣出版预付』等指标并 UPSERT（覆盖式、幂等）。"""
-    name = (file.filename or "").lower()
-    if not name.endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的对账单文件")
-    content = await file.read()
-    try:
-        parsed = financial_svc.parse_workbook(content)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"对账单解析失败：{exc}")
-    if not parsed:
-        raise HTTPException(status_code=400, detail="未识别到抖音/美团/携程对账单 Sheet，请检查文件")
-    rows = financial_svc.upsert_metrics(db, parsed)
-    detail = [financial_svc._to_platform_metric(r) for r in rows]
-    return Response.ok(UploadResult(
-        imported=len(rows),
-        platforms=[financial_svc.PLATFORM_LABELS.get(r.platform, r.platform) for r in rows],
-        total_gross_income=sum((r.gross_income for r in rows), Decimal("0")),
-        detail=detail,
-    ))
-
-
-@router.put(
-    "/financial/cost",
-    response_model=Response[FinancialDashboard],
-    summary="设置对账单模块投入成本",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
-)
-def set_invested_cost(payload: InvestedCostIn, db: Session = Depends(get_db)):
-    cfg = financial_svc.get_or_create_config(db)
-    cfg.total_invested_cost = payload.total_invested_cost
-    db.commit()
-    return Response.ok(financial_svc.build_dashboard(db))
-
-
-@router.put(
-    "/financial/available",
-    response_model=Response[FinancialDashboard],
-    summary="录入可用资金",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
-)
-def set_available_funds(payload: AvailableFundsIn, db: Session = Depends(get_db)):
-    cfg = financial_svc.get_or_create_config(db)
-    cfg.available_funds = payload.available_funds
-    db.commit()
-    return Response.ok(financial_svc.build_dashboard(db))
-
-
-@router.post(
-    "/projects/upload",
-    response_model=Response[ProjectUploadResult],
-    summary="上传供管公司项目统计表(Sheet2)并汇入项目经营指标",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES, *FINANCE_ROLES))],
-)
-async def upload_projects(
-    file: UploadFile = File(..., description="项目投入及回款收益统计表 .xlsx(含 Sheet2)"),
-    db: Session = Depends(get_db),
-):
-    """加载 Sheet2 项目数据（万元→元），按 (项目, 付款日期) UPSERT，覆盖式、幂等。"""
-    name = (file.filename or "").lower()
-    if not name.endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的统计表文件")
-    content = await file.read()
-    try:
-        parsed = project_etl.parse_sheet2(content)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Sheet2 解析失败：{exc}")
-    if not parsed:
-        raise HTTPException(status_code=400, detail="未从 Sheet2 解析到任何项目数据行")
-    rows = project_etl.upsert_projects(db, parsed)
-    detail = [financial_svc._to_project_metric(r) for r in rows]
-    return Response.ok(ProjectUploadResult(
-        imported=len(rows),
-        total_invested=sum((r.invested_amount for r in rows), Decimal("0")),
-        total_realized=sum((r.realized_scale for r in rows), Decimal("0")),
-        total_gross_profit=sum((r.gross_profit for r in rows), Decimal("0")),
-        projects=detail,
-    ))
 
 
 @router.get(

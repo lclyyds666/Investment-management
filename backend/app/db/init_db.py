@@ -20,7 +20,6 @@ from app.models.audit import AuditLog  # noqa: F401 确保 create_all 建表
 from app.models.channel import Channel, ChannelData
 from app.models.contract import Contract  # noqa: F401
 from app.models.customer import Customer
-from app.models.financial import FinanceConfig, FinancialMetrics  # noqa: F401
 from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 建表
 from app.models.invoice import Invoice
 from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
@@ -180,14 +179,6 @@ def seed_invoices(db: Session) -> None:
     db.commit()
 
 
-def seed_finance_config(db: Session) -> None:
-    """确保存在一行投入成本配置（默认 0，由领导在经营页录入真实值）。"""
-    if db.scalar(select(FinanceConfig).limit(1)):
-        return
-    db.add(FinanceConfig(total_invested_cost=Decimal("0")))
-    db.commit()
-
-
 def init() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -198,7 +189,6 @@ def init() -> None:
         seed_channels(db)
         seed_channel_data(db)
         seed_invoices(db)
-        seed_finance_config(db)
         print("数据库初始化完成：已建表并写入种子数据。")
         print("默认账号(密码均为 123456)：")
         print("  admin(超管) / op(业务经办) / scm(供管公司负责人) / legal(法律顾问)")
