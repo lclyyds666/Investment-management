@@ -2,13 +2,14 @@ import json
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.api.v1.endpoints import hotel_ledger as hotel_api
 from app.api.v1.endpoints import ticket_ledger as ticket_api
 from app.models.hotel_ledger import HotelLedger
 from app.models.ticket_ledger import TicketLedger
-from app.schemas.hotel_ledger import HotelUpdateIn
+from app.schemas.hotel_ledger import HotelSaveIn, HotelSaveRow, HotelUpdateIn
 from app.schemas.ticket_ledger import TicketLedgerUpdateIn
 
 
@@ -39,6 +40,33 @@ class _Session:
 
     def refresh(self, _row):
         return None
+
+
+class _SaveSession:
+    def __init__(self):
+        self.rows = []
+        self.commit_count = 0
+
+    def scalar(self, _statement):
+        return 0
+
+    def scalars(self, _statement):
+        return _Rows(self.rows)
+
+    def add(self, row):
+        row.id = len(self.rows) + 1
+        row.pending_writeoff = Decimal("0")
+        row.confirm_stored = ""
+        row.confirm_name = ""
+        row.confirmed = False
+        row.created_at = datetime(2026, 1, 1)
+        self.rows.append(row)
+
+    def flush(self):
+        return None
+
+    def commit(self):
+        self.commit_count += 1
 
 
 def _daily_json():
@@ -352,8 +380,77 @@ class CommissionLinkageTest(unittest.TestCase):
             hotel_session,
             None,
         )
-        self.assertEqual(hotel_row.service_fee, Decimal("141.60"))
+        self.assertEqual(hotel_row.service_fee, Decimal("132.00"))
+        self.assertEqual(hotel_row.jinying_amount, Decimal("252.00"))
         self.assertEqual(hotel_row.pending_writeoff, Decimal("80.00"))
+
+    def test_hotel_algorithm_one_manual_settlement_derives_writeoff(self):
+        row = _hotel_row()
+        payload = HotelUpdateIn(jinying_amount=Decimal("999.00"))
+        preview = hotel_api._calculation_preview(row, payload)
+
+        session = _Session(row)
+        hotel_api.update_row("test-scenic", row.id, payload, session, None)
+
+        self.assertEqual(preview.service_fee, Decimal("132.00"))
+        self.assertEqual(preview.hexiao_amount, Decimal("867.00"))
+        self.assertEqual(preview.jinying_amount, Decimal("999.00"))
+        self.assertEqual(row.service_fee, Decimal("132.00"))
+        self.assertEqual(row.hexiao_amount, Decimal("867.00"))
+        self.assertEqual(row.jinying_amount, Decimal("999.00"))
+        self.assertEqual(row.pending_writeoff, Decimal("-667.00"))
+        self.assertEqual(session.commit_count, 1)
+
+    def test_hotel_algorithm_one_cent_adjustment_is_saved_as_snapshot(self):
+        session = _SaveSession()
+        payload = HotelSaveIn(rows=[HotelSaveRow(
+            platform="抖音",
+            hotel_name="测试酒店",
+            check_date_text="2026-01",
+            period_text="2026-01",
+            room_nights=3,
+            base_received=Decimal("150.00"),
+            supplier_commission=Decimal("6.00"),
+            commission_rate=Decimal("0.06"),
+            rate_hexiao=Decimal("0.90"),
+            fee_algo=1,
+            fee_per_night=Decimal("44.00"),
+            rate_settle=Decimal("0.94"),
+            jinying_amount=Decimal("261.61"),
+            payment_amount=Decimal("200.00"),
+            source_file="hotel-cent-adjustment.xlsx",
+        )])
+
+        hotel_api.save_ledger(
+            "test-scenic",
+            payload,
+            session,
+            SimpleNamespace(id=9),
+        )
+
+        saved = session.rows[0]
+        self.assertEqual(saved.service_fee, Decimal("132.00"))
+        self.assertEqual(saved.jinying_amount, Decimal("261.61"))
+        self.assertEqual(saved.hexiao_amount, Decimal("129.61"))
+        self.assertEqual(saved.pending_writeoff, Decimal("70.39"))
+        self.assertEqual(session.commit_count, 1)
+
+    def test_hotel_algorithm_two_keeps_settlement_minus_writeoff(self):
+        row = _hotel_row()
+        row.fee_algo = 2
+        payload = HotelUpdateIn(
+            hexiao_amount=Decimal("120.00"),
+            jinying_amount=Decimal("150.00"),
+        )
+        preview = hotel_api._calculation_preview(row, payload)
+
+        session = _Session(row)
+        hotel_api.update_row("test-scenic", row.id, payload, session, None)
+
+        self.assertEqual(preview.service_fee, Decimal("30.00"))
+        self.assertEqual(row.hexiao_amount, Decimal("120.00"))
+        self.assertEqual(row.jinying_amount, Decimal("150.00"))
+        self.assertEqual(row.service_fee, Decimal("30.00"))
 
     def test_manual_commission_survives_unrelated_rate_change(self):
         ticket_row = _ticket_row()

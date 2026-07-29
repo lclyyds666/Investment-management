@@ -18,7 +18,7 @@
     </el-dropdown>
 
     <!-- 个人信息 -->
-    <el-dialog v-model="infoVisible" title="个人信息" width="440px">
+    <el-dialog v-model="infoVisible" title="个人信息" width="440px" append-to-body>
       <el-descriptions :column="1" border>
         <el-descriptions-item label="姓名">{{ info?.full_name || '—' }}</el-descriptions-item>
         <el-descriptions-item label="登录账号">{{ info?.username || '—' }}</el-descriptions-item>
@@ -36,7 +36,7 @@
     </el-dialog>
 
     <!-- 修改密码 -->
-    <el-dialog v-model="pwdVisible" title="修改密码" width="460px" @closed="resetPwd">
+    <el-dialog v-model="pwdVisible" title="修改密码" width="460px" append-to-body @closed="resetPwd">
       <el-form ref="pwdRef" :model="pwd" :rules="pwdRules" label-width="100px" class="dlg-form">
         <el-form-item label="原密码" prop="old_password">
           <el-input v-model="pwd.old_password" type="password" show-password autocomplete="off" />
@@ -55,7 +55,7 @@
     </el-dialog>
 
     <!-- 修改用户名 -->
-    <el-dialog v-model="acctVisible" title="修改用户名" width="460px" @closed="resetAcct">
+    <el-dialog v-model="acctVisible" title="修改用户名" width="460px" append-to-body @closed="resetAcct">
       <el-alert
         type="info" :closable="false" show-icon class="mb"
         title="修改登录账号后无需重新登录（令牌以用户 ID 为主体）。"
@@ -75,7 +75,7 @@
     </el-dialog>
 
     <!-- 电子签章 -->
-    <el-dialog v-model="sigVisible" title="电子签章" width="520px" @closed="resetSig">
+    <el-dialog v-model="sigVisible" title="电子签章" width="520px" append-to-body @closed="resetSig">
       <el-alert
         v-if="signatureDisabled"
         type="warning" :closable="false" show-icon

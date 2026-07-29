@@ -199,8 +199,8 @@
     </el-table>
 
     <!-- 编辑单行弹窗（集中编辑：服务商佣金 / 核销率 / 服务费率 / 付款金额 / 回款） -->
-    <el-dialog v-model="editVisible" title="编辑台账行" width="480px">
-      <el-form label-width="120px" v-if="editRow">
+    <el-dialog v-model="editVisible" title="编辑台账行" width="min(980px, 94vw)" top="4vh" append-to-body>
+      <el-form v-if="editRow" label-width="120px" class="edit-ledger-form">
         <el-form-item label="平台">
           <el-select v-model="editForm.platform" style="width: 100%">
             <el-option v-for="p in PLATFORMS" :key="p" :label="p" :value="p" />
@@ -862,6 +862,13 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .saved-table :deep(.grand-total-row .cell) { color: var(--el-color-primary); }
 .total-label { font-weight: 700; color: var(--el-color-primary); }
 
+.edit-ledger-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  align-items: start;
+}
+.edit-ledger-form :deep(.el-form-item) { margin-bottom: 16px; align-items: flex-start; }
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
 .pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }
 
@@ -870,5 +877,6 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   .tl-ops { width: 100%; }
   .tl-ops :deep(.el-button) { flex: 1 1 auto; }
   .draft-header { align-items: flex-start; flex-direction: column; }
+  .edit-ledger-form { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

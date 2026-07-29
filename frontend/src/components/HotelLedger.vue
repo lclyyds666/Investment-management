@@ -60,8 +60,8 @@
         <el-table-column label="付款日期（本期共享）" width="160">
           <template #default="{ row }"><el-date-picker v-model="row.payment_date" type="date" value-format="YYYY-MM-DD" size="small" placeholder="手工选择" style="width:130px" @change="syncPaymentDate(row.payment_date)" /></template>
         </el-table-column>
-        <el-table-column label="结算金额（可改）" width="160" align="right">
-          <template #default="{ row }"><el-input-number v-model="row.jinying_amount" :min="0" :precision="2" :step="1000" size="small" controls-position="right" style="width:140px" @change="row.jinyingEdited = true" /></template>
+        <el-table-column label="结算金额（可校准）" width="160" align="right">
+          <template #default="{ row }"><el-input-number v-model="row.jinying_amount" :min="rowFeeDisplay(row)" :precision="2" :step="0.01" size="small" controls-position="right" style="width:140px" @update:model-value="onDraftJinyingInput(row)" /></template>
         </el-table-column>
         <el-table-column label="服务费" width="110" align="right">
           <template #default="{ row }"><span class="calc">{{ fmtMoney(rowFeeDisplay(row)) }}</span></template>
@@ -157,15 +157,15 @@
     </el-table>
 
     <!-- 编辑单行弹窗 -->
-    <el-dialog v-model="editVisible" title="编辑台账行" width="480px">
-      <el-form label-width="130px" v-if="editRow">
+    <el-dialog v-model="editVisible" title="编辑台账行" width="min(980px, 94vw)" top="4vh" append-to-body>
+      <el-form v-if="editRow" label-width="130px" class="edit-ledger-form">
         <el-form-item label="平台">
           <el-input :model-value="editRow.platform" disabled style="width:100%" />
         </el-form-item>
         <el-form-item label="酒店名称">
           <el-input v-model="editForm.hotel_name" style="width:100%" />
         </el-form-item>
-        <el-form-item label="服务费算法">
+        <el-form-item label="服务费算法" class="form-span-2">
           <el-radio-group v-model="editForm.fee_algo">
             <el-radio :value="1">算法1（间夜×每间夜服务费）</el-radio>
             <el-radio :value="2">算法2（结算基数×结算费率）</el-radio>
@@ -193,7 +193,7 @@
         </el-form-item>
         <el-form-item label="景区核销金额">
           <el-input-number v-model="editForm.hexiao_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @update:model-value="markHexiaoEdited" />
-          <div class="edit-hint">默认 = 结算基数 × 核销率，可人工修改（服务费 = 结算 − 核销）</div>
+          <div class="edit-hint">默认 =（服务商到账 − 服务商佣金）× 核销率，可人工修改</div>
         </el-form-item>
         <el-form-item v-if="editForm.fee_algo === 1" label="间夜">
           <el-input-number v-model="editForm.room_nights" :min="0" :precision="0" controls-position="right" style="width:100%" />
@@ -205,12 +205,12 @@
           <el-input-number v-model="editForm.ratePctSettle" :min="0" :max="100" :precision="2" :step="1" controls-position="right" style="width:100%" /><span class="pct-suffix">%</span>
         </el-form-item>
         <el-form-item label="结算金额">
-          <el-input-number v-model="editForm.jinying_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @update:model-value="markJinyingEdited" />
-          <div class="edit-hint">{{ editForm.fee_algo === 2 ? '默认 = 结算基数 × 结算费率' : '默认 = 景区核销 + 服务费（间夜 × 每间夜服务费）' }}（改佣金/费率/算法自动跟随、逐日累加）；可手工改，服务费 = 结算 − 核销</div>
+          <el-input-number v-model="editForm.jinying_amount" :min="editForm.fee_algo === 1 ? editServiceFee : 0" :precision="2" :step="0.01" controls-position="right" style="width:100%" @update:model-value="markJinyingEdited" />
+          <div class="edit-hint">{{ editForm.fee_algo === 1 ? '算法1：默认 = 景区核销 + 服务费；手工校准后保持服务费不变，并反算景区核销金额' : '算法2：默认 = 结算基数 × 结算费率；手工修改后，服务费 = 结算 − 核销' }}</div>
         </el-form-item>
         <el-form-item label="服务费">
           <el-input :model-value="fmtMoney(editServiceFee)" disabled style="width:100%" />
-          <div class="edit-hint">服务费 = 结算金额 − 景区核销金额（自动）</div>
+          <div class="edit-hint">{{ editForm.fee_algo === 1 ? '算法1：服务费 = 间夜 × 每间夜服务费' : '算法2：服务费 = 结算金额 − 景区核销金额' }}</div>
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input-number v-model="editForm.payment_amount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" />
@@ -290,19 +290,26 @@ function settleBase(row) {
 }
 function calcHexiao(row) { return round2(settleBase(row) * DEFAULT_RATE_HEXIAO) }
 function calcFee(row) { return round2((Number(row.room_nights) || 0) * DEFAULT_FEE_PER_NIGHT) }
-function calcJinying(row) { return round2(calcHexiao(row) + calcFee(row)) }
 // 佣金未改 → 展示后端「按日期粒度」精准默认核销；改了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
   return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
 }
-function rowHexiao(row) { return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(row) }
-// 改佣金/间夜 → 结算金额回到默认(算法1: 核销+间夜×费, JS 预览)并清手工标记
-function onDraftResetJinying(row) {
-  row.jinying_amount = calcJinying(row)
-  row.jinyingEdited = false
+function rowHexiao(row) {
+  if (row.jinyingEdited) {
+    return round2((Number(row.jinying_amount) || 0) - calcFee(row))
+  }
+  return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(row)
 }
-// 服务费 = 结算金额 − 景区核销金额（结算金额可手工改）
-function rowFeeDisplay(row) { return round2((Number(row.jinying_amount) || 0) - rowHexiao(row)) }
+// 算法1：服务费只由间夜产生，结算金额是核销与服务费之和。
+function rowFeeDisplay(row) { return calcFee(row) }
+function rowDefaultJinying(row) { return round2(rowHexiao(row) + rowFeeDisplay(row)) }
+function onDraftResetJinying(row) {
+  row.jinyingEdited = false
+  row.jinying_amount = rowDefaultJinying(row)
+}
+function onDraftJinyingInput(row) {
+  row.jinyingEdited = true
+}
 
 // 上一期末待核销（整期滚动起点）：savedRows 按 period_start 升序 → 末行所属期的 pending（同期同值）
 const lastPeriodPending = computed(() => {
@@ -453,7 +460,7 @@ async function onFileChange(file) {
       def_jinying: Number(p.def_jinying) || 0,
       // 逐日明细透传持久化（编辑改费率/佣金/算法时后端按天重算）
       daily_json: p.daily_json || '',
-      // 结算金额默认=逐日累加值，可手工改；jinyingEdited 标记是否被手工改过
+      // 允许按分校准结算金额；后端保持算法1服务费不变并反算景区核销
       jinying_amount: Number(p.def_jinying) || 0,
       jinyingEdited: false,
       payment_amount: 0,
@@ -484,7 +491,7 @@ async function onSave() {
     supplier_commission: r.supplier_commission || 0,
     rate_hexiao: DEFAULT_RATE_HEXIAO, fee_per_night: DEFAULT_FEE_PER_NIGHT,
     daily_json: r.daily_json,
-    // 结算金额仅在手工改过时上传(覆盖)，否则由后端逐日累加
+    // 仅手工校准时上传，后端按算法1反算核销并写入完整快照
     jinying_amount: r.jinyingEdited ? r.jinying_amount : null,
     def_commission: r.def_commission,
     def_hexiao: r.def_hexiao,
@@ -531,16 +538,18 @@ const editSettleBase = computed(() => {
   return round2((Number(editForm.base_received) || 0) - comm)
 })
 const editHexiao = computed(() => round2(editSettleBase.value * (Number(editForm.ratePctHexiao) || 0) / 100))
+const editAlgorithmOneFee = computed(() => round2(
+  (Number(editForm.room_nights) || 0) * (Number(editForm.fee_per_night) || 0)
+))
 const editJinying = computed(() => {
   if (Number(editForm.fee_algo) === 2) {
     return round2(editSettleBase.value * (Number(editForm.ratePctSettle) || 0) / 100)
   }
-  const fee = round2((Number(editForm.room_nights) || 0) * (Number(editForm.fee_per_night) || 0))
-  return round2(editHexiao.value + fee)
+  return round2(numberOr(editForm.hexiao_amount) + editAlgorithmOneFee.value)
 })
-const editServiceFee = computed(() => round2(
-  numberOr(editForm.jinying_amount) - numberOr(editForm.hexiao_amount)
-))
+const editServiceFee = computed(() => Number(editForm.fee_algo) === 1
+  ? editAlgorithmOneFee.value
+  : round2(numberOr(editForm.jinying_amount) - numberOr(editForm.hexiao_amount)))
 const editPendingWriteoff = computed(() => {
   if (!editRow.value) return 0
   const paymentDelta = numberOr(editForm.payment_amount) - numberOr(editRow.value.payment_amount)
@@ -618,11 +627,21 @@ function markCommissionEdited() {
 
 function markHexiaoEdited() {
   editForm.hexiaoEdited = true
+  if (Number(editForm.fee_algo) === 1) {
+    editForm.jinying_amount = editJinying.value
+    editForm.jinyingEdited = false
+  }
   cancelCalculationPreview()
 }
 
 function markJinyingEdited() {
   editForm.jinyingEdited = true
+  if (Number(editForm.fee_algo) === 1) {
+    editForm.hexiao_amount = round2(
+      numberOr(editForm.jinying_amount) - editAlgorithmOneFee.value
+    )
+    editForm.hexiaoEdited = false
+  }
   cancelCalculationPreview()
 }
 
@@ -651,7 +670,9 @@ function buildEditPayload() {
   if (editForm.commissionEdited) payload.supplier_commission = editForm.supplier_commission
   if (editForm.receivedEdited) payload.base_received = editForm.base_received
   if (editForm.hexiaoEdited) payload.hexiao_amount = editForm.hexiao_amount
-  if (editForm.jinyingEdited) payload.jinying_amount = editForm.jinying_amount
+  if (editForm.jinyingEdited) {
+    payload.jinying_amount = editForm.jinying_amount
+  }
   return payload
 }
 
@@ -804,6 +825,14 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   justify-content: center;
 }
 .draft-note { margin-top: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
+.edit-ledger-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  align-items: start;
+}
+.edit-ledger-form :deep(.el-form-item) { margin-bottom: 16px; align-items: flex-start; }
+.edit-ledger-form :deep(.form-span-2) { grid-column: 1 / -1; }
 .edit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
 .calc { color: var(--metric-realized); font-weight: 700; }
 .pending { color: var(--metric-warning); font-weight: 750; }
@@ -821,5 +850,7 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   .hl-ops { width: 100%; }
   .hl-ops :deep(.el-button) { flex: 1 1 auto; }
   .draft-header { align-items: flex-start; flex-direction: column; }
+  .edit-ledger-form { grid-template-columns: minmax(0, 1fr); }
+  .edit-ledger-form :deep(.form-span-2) { grid-column: auto; }
 }
 </style>

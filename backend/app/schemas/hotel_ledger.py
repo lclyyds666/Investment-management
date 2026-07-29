@@ -50,7 +50,7 @@ class HotelSaveRow(BaseModel):
     fee_per_night: Decimal = Field(default=Decimal("44.00"))
     fee_algo: int = 1                                # 服务费算法(1=间夜×每间夜服务费;2=结算−核销)
     rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率(算法2)
-    jinying_amount: Optional[Decimal] = None        # 结算金额：默认公式算,可编辑覆盖
+    jinying_amount: Optional[Decimal] = None        # 结算金额：可手工校准；算法1据此反算核销，算法2据此计算服务费
     payment_date: Optional[date] = None             # 付款日期(手工,每期共享)
     # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用）
     def_commission: Optional[Decimal] = None
@@ -87,8 +87,8 @@ class HotelUpdateIn(BaseModel):
     fee_per_night: Optional[Decimal] = None
     fee_algo: Optional[int] = None             # 服务费算法(1/2)
     rate_settle: Optional[Decimal] = None      # 结算费率(算法2)
-    hexiao_amount: Optional[Decimal] = None    # 景区核销金额(人工覆盖;服务费=结算−核销)
-    jinying_amount: Optional[Decimal] = None   # 结算金额(可编辑覆盖值)
+    hexiao_amount: Optional[Decimal] = None    # 景区核销金额(人工覆盖；算法1结算随之更新，算法2服务费随之更新)
+    jinying_amount: Optional[Decimal] = None   # 结算金额(可手工校准；算法1反算核销，算法2计算服务费)
     payment_amount: Optional[Decimal] = None
     co_investment_amount: Optional[Decimal] = Field(default=None, ge=0)
     payment_date: Optional[date] = None        # 付款日期(手工,每期共享)

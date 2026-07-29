@@ -234,19 +234,31 @@ def _calculation_preview(
         )
     )
     calc, _ = _effective_hotel_calculation(row, payload)
+    fee_algo = payload.fee_algo if payload.fee_algo is not None else row.fee_algo
     hexiao_amount = (
         payload.hexiao_amount if payload.hexiao_amount is not None else calc["hexiao_amount"]
     )
-    jinying_amount = (
-        payload.jinying_amount if payload.jinying_amount is not None else calc["jinying_amount"]
-    )
+    if int(fee_algo or 1) == 1:
+        service_fee = calc["service_fee"]
+        if payload.jinying_amount is not None:
+            jinying_amount = payload.jinying_amount
+            hexiao_amount = jinying_amount - service_fee
+        else:
+            jinying_amount = hexiao_amount + service_fee
+    else:
+        jinying_amount = (
+            payload.jinying_amount
+            if payload.jinying_amount is not None
+            else calc["jinying_amount"]
+        )
+        service_fee = jinying_amount - hexiao_amount
     return HotelCalculationPreview(
         supplier_commission=calc["supplier_commission"],
         commission_rate=commission_rate,
         settle_base=calc["settle_base"],
         hexiao_amount=hexiao_amount,
         jinying_amount=jinying_amount,
-        service_fee=jinying_amount - hexiao_amount,
+        service_fee=service_fee,
     )
 
 
@@ -436,8 +448,14 @@ def save_ledger(
             r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
             scenic_id=sid,
         )
-        # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
-        if r.jinying_amount is not None:
+        hexiao_val = calc["hexiao_amount"]
+        # 算法1：服务费固定为「间夜×每间夜服务费」；手工校准结算金额时反算核销金额。
+        # 算法2：结算金额可编辑；显式覆盖后，服务费=结算−核销。
+        if int(r.fee_algo or 1) == 1 and r.jinying_amount is not None:
+            jinying_val = r.jinying_amount
+            fee_val = calc["service_fee"]
+            hexiao_val = jinying_val - fee_val
+        elif int(r.fee_algo or 1) == 2 and r.jinying_amount is not None:
             jinying_val = r.jinying_amount
             fee_val = r.jinying_amount - calc["hexiao_amount"]
         else:
@@ -454,12 +472,12 @@ def save_ledger(
             commission_rate=r.commission_rate,
             settle_base=calc["settle_base"],
             rate_hexiao=r.rate_hexiao,
-            hexiao_amount=calc["hexiao_amount"],
+            hexiao_amount=hexiao_val,
             fee_algo=r.fee_algo or 1,
             fee_per_night=r.fee_per_night,
             rate_settle=r.rate_settle,
-            service_fee=fee_val,                     # 服务费=结算−核销
-            jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
+            service_fee=fee_val,
+            jinying_amount=jinying_val,
             daily_json=r.daily_json or "",
             payment_amount=r.payment_amount or Decimal("0"),
             co_investment_amount=r.co_investment_amount or Decimal("0"),
@@ -594,17 +612,45 @@ def update_row(
         row.hexiao_amount = calc["hexiao_amount"]
         row.service_fee = calc["service_fee"]
         row.jinying_amount = calc["jinying_amount"]
-    # 结算金额可编辑：显式传入(手工改)则覆盖，服务费=结算−核销
-    if payload.jinying_amount is not None:
-        row.jinying_amount = payload.jinying_amount
-        row.service_fee = row.jinying_amount - row.hexiao_amount
-    # 景区核销金额可编辑：显式传入(人工改)则覆盖，服务费=结算−核销
-    if payload.hexiao_amount is not None:
-        row.hexiao_amount = payload.hexiao_amount
-        row.service_fee = row.jinying_amount - row.hexiao_amount
+    fee_algo = int(row.fee_algo or 1)
+    if fee_algo == 1:
+        # 算法1：服务费仅由「间夜×每间夜服务费」产生；结算金额始终为核销+服务费。
+        if calc_dirty or payload.hexiao_amount is not None or payload.jinying_amount is not None:
+            fee_calc = calc or hl_svc.compute_row(
+                row.platform,
+                row.base_received,
+                row.supplier_commission,
+                row.room_nights,
+                row.rate_hexiao,
+                row.fee_per_night,
+                1,
+                row.rate_settle,
+                scenic_id=sid,
+            )
+            row.service_fee = fee_calc["service_fee"]
+            if payload.jinying_amount is not None:
+                row.jinying_amount = payload.jinying_amount
+                row.hexiao_amount = row.jinying_amount - row.service_fee
+            elif payload.hexiao_amount is not None:
+                row.hexiao_amount = payload.hexiao_amount
+                row.jinying_amount = row.hexiao_amount + row.service_fee
+            else:
+                row.jinying_amount = row.hexiao_amount + row.service_fee
+    else:
+        # 算法2：结算金额允许手工覆盖，服务费=结算−核销。
+        if payload.jinying_amount is not None:
+            row.jinying_amount = payload.jinying_amount
+            row.service_fee = row.jinying_amount - row.hexiao_amount
+        if payload.hexiao_amount is not None:
+            row.hexiao_amount = payload.hexiao_amount
+            row.service_fee = row.jinying_amount - row.hexiao_amount
 
     # 付款金额 / 跟投金额 / 付款日期 / 回款日期 / 回款金额：每期各平台共享 → 同步到本期所有平台行
-    balance_dirty = calc_dirty or (payload.hexiao_amount is not None)
+    balance_dirty = (
+        calc_dirty
+        or payload.hexiao_amount is not None
+        or (fee_algo == 1 and payload.jinying_amount is not None)
+    )
     _shared = any(
         field in fields_set
         for field in (
