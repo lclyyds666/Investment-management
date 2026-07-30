@@ -110,12 +110,12 @@
       <el-table-column label="回款金额" min-width="100" align="right">
         <template #default="{ row }">{{ (row.isTotal || row.isSoloPeriod) ? (row.repay_amount != null ? fmtMoney(row.repay_amount) : '—') : '' }}</template>
       </el-table-column>
-      <el-table-column label="操作" min-width="90">
+      <el-table-column label="操作" min-width="132" align="center">
         <template #default="{ row }">
-          <template v-if="!row.isTotal && canEdit">
+          <div v-if="!row.isTotal && canEdit" class="ledger-row-actions">
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
-          </template>
+          </div>
         </template>
       </el-table-column>
       <!-- 状态：本期合计/独行有内容(总合计行不显示)；确认函上传=业务经办、确认=业务复核 -->
@@ -844,6 +844,20 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
 .saved-table :deep(.grand-total-row .cell) { color: var(--el-color-primary); }
 .total-label { font-weight: 700; color: var(--el-color-primary); }
 .pct-suffix { margin-left: 6px; color: var(--el-text-color-secondary); }
+.ledger-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 112px;
+  white-space: nowrap;
+}
+.ledger-row-actions :deep(.el-button) {
+  justify-content: center;
+  min-width: 48px;
+  margin-left: 0;
+}
 
 @media (max-width: 760px) {
   .hl-head { align-items: flex-start; flex-direction: column; }

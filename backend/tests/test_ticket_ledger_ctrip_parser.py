@@ -113,6 +113,50 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         self.assertEqual(response.data.files[1].supplier_received, Decimal("2903.00"))
         self.assertTrue(response.data.files[1].daily_json)
 
+    def test_sheet_names_without_detail_and_four_platforms_are_supported(self):
+        wb = Workbook()
+
+        douyin = wb.active
+        douyin.title = "抖音5.25-5.31"
+        douyin.append(["订单实收金额", "软件服务费", "达人服务费", "团长服务费", "核销时间"])
+        douyin.append([100, -1, -2, -3, datetime(2026, 5, 25, 10, 0)])
+
+        meituan = wb.create_sheet("美团5.25-5.31")
+        meituan.append(["遵义动物园美团结算明细"])
+        meituan.append(["结算方式", "应付金额", "张数", "时间"])
+        meituan.append(["消费结算", 74.26, 2, datetime(2026, 5, 26, 10, 0)])
+        meituan.append(["退款结算", -74.26, 2, datetime(2026, 5, 26, 11, 0)])
+
+        ctrip = wb.create_sheet("携程6.1-6.7")
+        ctrip.append(["结算价金额", "流水类型", "使用份数", "服务完成日期", "出发时间", "付款日期"])
+        ctrip.append([49, "订单成本", 3, None, datetime(2026, 6, 1), datetime(2026, 6, 5)])
+
+        tongcheng = wb.create_sheet("同程6.1-6.15")
+        tongcheng.append(["商家应收", "订单票数", "旅游日期"])
+        tongcheng.append([92.12, 2, datetime(2026, 6, 10)])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(), "遵义动物园5.25-6.21.xlsx"
+        )
+        by_platform = {item["platform"]: item for item in parsed["platforms"]}
+
+        self.assertEqual(list(by_platform), ["抖音", "美团", "携程", "同程"])
+        self.assertEqual(by_platform["抖音"]["supplier_received"], Decimal("94.00"))
+        self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("74.26"))
+        self.assertEqual(by_platform["美团"]["order_count"], 2)
+        self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("49.00"))
+        self.assertEqual(by_platform["携程"]["order_count"], 3)
+        self.assertEqual(by_platform["同程"]["supplier_received"], Decimal("92.12"))
+        self.assertEqual(by_platform["同程"]["order_count"], 2)
+        for item in by_platform.values():
+            self.assertEqual(item["period_start"].isoformat(), "2026-05-25")
+            self.assertEqual(item["period_end"].isoformat(), "2026-06-21")
+            self.assertTrue(item["daily_json"])
+
 
 if __name__ == "__main__":
     unittest.main()

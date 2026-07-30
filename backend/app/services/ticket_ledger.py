@@ -1,7 +1,7 @@
 """文旅业务·门票平台核销台账 Excel 适配器。
 
 职责：
-1. 解析平台对账明细 xlsx（多个「周」明细 Sheet），逐单累加
+1. 解析平台对账明细 xlsx（同一文件可包含抖音/美团/携程/同程多个 Sheet），逐单累加
    订单实收 − 软件服务费 − 达人服务费 − 团长服务费 − 服务商服务费
    得到「服务商到账金额」，并解析对账周期跨度 / 核对日期文本。
 2. 出版应得到账金额 B = 服务商到账 − 服务商佣金(手工录入)；再按比例计算：
@@ -56,6 +56,17 @@ COL_XC_SERVICE_DATE = "服务完成日期"
 COL_XC_DEPARTURE_DATE = "出发时间"
 COL_XC_PAYMENT_DATE = "付款日期"
 XC_ORDER_COST = "订单成本"
+# 美团门票消费结算明细。应付金额为扣除技术服务费后的商家结算净额。
+COL_MT_AMOUNT = "应付金额"
+COL_MT_SETTLE_TYPE = "结算方式"
+COL_MT_COUNT = "张数"
+COL_MT_TIME = "时间"
+MT_CONSUMPTION_SETTLEMENT = "消费结算"
+# 同程门票结算明细。商家应收为平台最终结算给商家的净额。
+COL_TC_AMOUNT = "商家应收"
+COL_TC_COUNT = "订单票数"
+COL_TC_DATE = "旅游日期"
+_HEADER_SCAN_ROWS = 20
 # 服务商到账金额 = 订单实收 − 软件 − 达人 − 团长（明细中费用列为负数，直接相加）。
 # 注意：明细里的「服务商服务费」列其实是 -(服务商到账金额)，若一并相加会把结果抵消为 0，故不纳入。
 _FEE_COLS = (COL_RUANJIAN, COL_DAREN, COL_TUANZHANG)
@@ -110,13 +121,42 @@ def _header_index(header: list, name: str) -> int:
     return -1
 
 
-def _is_detail_sheet(ws_title: str) -> bool:
-    """判断是否为「周明细」Sheet（含核销明细，非对账单汇总页）。"""
-    t = ws_title or ""
-    return "明细" in t
+def _detect_platform(header: list) -> str | None:
+    """根据关键表头识别平台，不依赖 Sheet 名称。"""
+    names = {
+        str(value).strip()
+        for value in header
+        if value is not None and str(value).strip()
+    }
+    signatures = (
+        ("抖音", {COL_SHISHOU, COL_HEXIAO_TIME}),
+        ("美团", {COL_MT_AMOUNT, COL_MT_SETTLE_TYPE, COL_MT_COUNT, COL_MT_TIME}),
+        ("携程", {COL_XC_JIESUAN, COL_XC_FLOW_TYPE}),
+        ("同程", {COL_TC_AMOUNT, COL_TC_COUNT, COL_TC_DATE}),
+    )
+    return next(
+        (platform for platform, required in signatures if required.issubset(names)),
+        None,
+    )
 
 
-def _period_from_filename(filename: str) -> tuple[date | None, date | None]:
+def _find_platform_header(rows_iter) -> tuple[str, list] | None:
+    """在 Sheet 前若干行查找可识别的平台表头，并保留后续明细迭代器位置。"""
+    for _, raw in zip(range(_HEADER_SCAN_ROWS), rows_iter):
+        if not raw or not any(value is not None and str(value).strip() for value in raw):
+            continue
+        header = list(raw)
+        platform = _detect_platform(header)
+        if platform:
+            return platform, header
+    return None
+
+
+def _period_from_filename(
+    filename: str,
+    reference_start: date | None = None,
+    reference_end: date | None = None,
+) -> tuple[date | None, date | None]:
     """从文件名解析对账周期，如 对账明细-2026.04.29-2026.05.19.xlsx。"""
     if not filename:
         return None, None
@@ -124,14 +164,41 @@ def _period_from_filename(filename: str) -> tuple[date | None, date | None]:
         r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\D+(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})",
         filename,
     )
-    if not m:
+    if m:
+        try:
+            d1 = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            d2 = date(int(m.group(4)), int(m.group(5)), int(m.group(6)))
+            return d1, d2
+        except ValueError:
+            pass
+
+    # 兼容「遵义动物园5.25-6.21.xlsx」这类省略年份的业务文件名；
+    # 年份取明细日期，跨年时自动把结束日期放到下一年。
+    reference = reference_start or reference_end
+    if reference is None:
+        return None, None
+    short_match = re.search(
+        r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})\D+(\d{1,2})[.\-/](\d{1,2})(?!\d)",
+        filename or "",
+    )
+    if not short_match:
         return None, None
     try:
-        d1 = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        d2 = date(int(m.group(4)), int(m.group(5)), int(m.group(6)))
-        return d1, d2
+        start_month, start_day, end_month, end_day = map(int, short_match.groups())
+        start = date(reference.year, start_month, start_day)
+        end_year = reference.year + int((end_month, end_day) < (start_month, start_day))
+        end = date(end_year, end_month, end_day)
+        return start, end
     except ValueError:
         return None, None
+
+
+def _row_count(value, default: int = 1) -> int:
+    """平台聚合行换算为核销票数；缺失时按一条核销记录处理。"""
+    parsed = _num(value)
+    if parsed is None:
+        return default
+    return max(int(parsed), 0)
 
 
 def parse_reconciliation(content: bytes, filename: str = "") -> dict:
@@ -154,7 +221,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
     # read_only=True 流式读取，内存可控；用 try/finally 保证异常时也释放工作簿
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
 
-    # 同一文件可同时包含抖音和携程；每个平台独立生成一条台账草稿。
+    # 同一文件可同时包含多个平台；每个平台独立生成一条台账草稿。
     aggregates: dict[str, dict] = {}
 
     def platform_aggregate(platform: str) -> dict:
@@ -180,24 +247,16 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
 
     try:
         for ws in wb.worksheets:
-            if not _is_detail_sheet(ws.title):
-                continue  # 跳过对账单汇总页/其它页
-
             rows_iter = ws.iter_rows(values_only=True)
-            header = None
-            for raw in rows_iter:
-                if raw and any(c is not None and str(c).strip() for c in raw):
-                    header = list(raw)
-                    break
-            if header is None:
+            detected = _find_platform_header(rows_iter)
+            if detected is None:
                 continue
+            platform, header = detected
 
-            i_shishou = _header_index(header, COL_SHISHOU)
-            i_xc_jiesuan = _header_index(header, COL_XC_JIESUAN)
-
-            if i_shishou >= 0:
+            if platform == "抖音":
                 aggregate = platform_aggregate("抖音")
                 aggregate["sheets"].append(ws.title)
+                i_shishou = _header_index(header, COL_SHISHOU)
                 i_fees = [_header_index(header, c) for c in _FEE_COLS]
                 i_time = _header_index(header, COL_HEXIAO_TIME)
                 for raw in rows_iter:
@@ -231,10 +290,12 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                     dd["tuanzhang"] += (fee_vals[2] or Decimal("0"))
                 continue
 
-            if i_xc_jiesuan >= 0:
+            if platform == "携程":
                 aggregate = platform_aggregate("携程")
                 aggregate["sheets"].append(ws.title)
+                i_xc_jiesuan = _header_index(header, COL_XC_JIESUAN)
                 i_flow = _header_index(header, COL_XC_FLOW_TYPE)
+                i_count = _header_index(header, "使用份数")
                 i_service = _header_index(header, COL_XC_SERVICE_DATE)
                 i_departure = _header_index(header, COL_XC_DEPARTURE_DATE)
                 i_payment = _header_index(header, COL_XC_PAYMENT_DATE)
@@ -249,6 +310,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                     base = _num(raw[i_xc_jiesuan]) if i_xc_jiesuan < len(raw) else None
                     if base is None:
                         continue
+                    count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
                     d = None
                     for idx in (i_service, i_departure, i_payment):
                         if 0 <= idx < len(raw):
@@ -256,10 +318,72 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                             if d is not None:
                                 break
                     aggregate["supplier_received"] += base
-                    aggregate["order_count"] += 1
+                    aggregate["order_count"] += count
                     if base > 0:
-                        aggregate["positive_count"] += 1
+                        aggregate["positive_count"] += count
                     add_date(aggregate, d)
+                    key = d.isoformat() if d else "NA"
+                    dd = aggregate["daily"].setdefault(key, {
+                        "received": Decimal("0"), "shishou": Decimal("0"),
+                        "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                    })
+                    dd["received"] += base
+                continue
+
+            if platform == "美团":
+                aggregate = platform_aggregate("美团")
+                aggregate["sheets"].append(ws.title)
+                i_amount = _header_index(header, COL_MT_AMOUNT)
+                i_settle_type = _header_index(header, COL_MT_SETTLE_TYPE)
+                i_count = _header_index(header, COL_MT_COUNT)
+                i_time = _header_index(header, COL_MT_TIME)
+                for raw in rows_iter:
+                    if not raw:
+                        continue
+                    settle_type = (
+                        str(raw[i_settle_type] or "").strip()
+                        if 0 <= i_settle_type < len(raw)
+                        else ""
+                    )
+                    if settle_type != MT_CONSUMPTION_SETTLEMENT:
+                        continue
+                    base = _num(raw[i_amount]) if 0 <= i_amount < len(raw) else None
+                    if base is None:
+                        continue
+                    count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
+                    d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
+                    add_date(aggregate, d)
+                    aggregate["supplier_received"] += base
+                    aggregate["order_count"] += count
+                    if base > 0:
+                        aggregate["positive_count"] += count
+                    key = d.isoformat() if d else "NA"
+                    dd = aggregate["daily"].setdefault(key, {
+                        "received": Decimal("0"), "shishou": Decimal("0"),
+                        "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                    })
+                    dd["received"] += base
+                continue
+
+            if platform == "同程":
+                aggregate = platform_aggregate("同程")
+                aggregate["sheets"].append(ws.title)
+                i_amount = _header_index(header, COL_TC_AMOUNT)
+                i_count = _header_index(header, COL_TC_COUNT)
+                i_date = _header_index(header, COL_TC_DATE)
+                for raw in rows_iter:
+                    if not raw:
+                        continue
+                    base = _num(raw[i_amount]) if 0 <= i_amount < len(raw) else None
+                    if base is None:
+                        continue
+                    count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
+                    d = _to_date(raw[i_date]) if 0 <= i_date < len(raw) else None
+                    add_date(aggregate, d)
+                    aggregate["supplier_received"] += base
+                    aggregate["order_count"] += count
+                    if base > 0:
+                        aggregate["positive_count"] += count
                     key = d.isoformat() if d else "NA"
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),
@@ -270,12 +394,14 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
         wb.close()
 
     # 周期优先取文件名；否则各平台分别回退到有效业务日期跨度。
-    fn_start, fn_end = _period_from_filename(filename)
     platforms = []
-    for platform in ("抖音", "携程"):
+    for platform in ("抖音", "美团", "携程", "同程"):
         if platform not in aggregates:
             continue
         aggregate = aggregates[platform]
+        fn_start, fn_end = _period_from_filename(
+            filename, aggregate["min_dt"], aggregate["max_dt"]
+        )
         p_start = fn_start or aggregate["min_dt"]
         p_end = fn_end or aggregate["max_dt"]
         period_text = ""
@@ -309,7 +435,7 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
         "suggested_commission": Decimal("0"), "def_hexiao": Decimal("0"),
         "def_service_fee": Decimal("0"), "def_jinying": Decimal("0"),
         "daily_json": "", "order_count": 0, "positive_count": 0,
-        "period_start": fn_start, "period_end": fn_end, "period_text": "",
+        "period_start": None, "period_end": None, "period_text": "",
         "check_date_text": "", "sheets": [],
     })
     return {**legacy, "platforms": platforms}

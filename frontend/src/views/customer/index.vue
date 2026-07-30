@@ -22,16 +22,18 @@
       </template>
 
       <template #actions="{ row }">
-        <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
-        <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
-        <el-button v-if="canEdit" size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-        <el-button v-if="canEdit" size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
+        <div class="customer-actions">
+          <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
+          <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
+          <el-button v-if="canEdit" size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canEdit" size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
+        </div>
       </template>
     </ProTable>
 
     <!-- 新建/编辑 -->
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑客户' : '新建客户'" width="560px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" class="customer-form">
+      <el-form ref="formRef" v-loading="editLoading" :model="form" :rules="rules" label-width="110px" class="customer-form">
         <el-form-item label="客户ID" prop="customer_code">
           <el-input v-model="form.customer_code" :disabled="isEdit" placeholder="如 KH-010" />
         </el-form-item>
@@ -115,7 +117,7 @@
 import { ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, View, Edit, Delete, Document, UploadFilled, MagicStick } from '@element-plus/icons-vue'
-import { listCustomers, createCustomer, updateCustomer, deleteCustomer, listMaterials, uploadMaterials, deleteMaterial, fetchMaterialBlob } from '@/api/customer'
+import { listCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer, listMaterials, uploadMaterials, deleteMaterial, fetchMaterialBlob } from '@/api/customer'
 import CustomerResearchDialog from '@/components/CustomerResearchDialog.vue'
 import ProTable from '@/components/ProTable.vue'
 import { computed } from 'vue'
@@ -127,13 +129,13 @@ const userStore = useUserStore()
 const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 
 const columns = [
-  { prop: 'customer_code', label: '客户ID', width: 120 },
-  { prop: 'name', label: '客户名称', minWidth: 200, showOverflowTooltip: true },
-  { prop: 'contact', label: '联系人', width: 110 },
-  { prop: 'phone', label: '电话', width: 150 },
-  { prop: 'address', label: '地址', minWidth: 180, showOverflowTooltip: true },
-  { label: '资料', width: 120, align: 'center', slot: 'material' },
-  { label: '操作', width: 270, align: 'center', fixed: 'right', slot: 'actions' }
+  { prop: 'customer_code', label: '客户ID', minWidth: 120, showOverflowTooltip: true },
+  { prop: 'name', label: '客户名称', minWidth: 190, showOverflowTooltip: true },
+  { prop: 'contact', label: '联系人', minWidth: 110, showOverflowTooltip: true },
+  { prop: 'phone', label: '电话', minWidth: 150 },
+  { prop: 'address', label: '地址', minWidth: 220, showOverflowTooltip: true },
+  { label: '资料', minWidth: 120, align: 'center', slot: 'material' },
+  { label: '操作', width: 290, align: 'center', fixed: 'right', slot: 'actions' }
 ]
 
 const tableRef = ref()
@@ -141,6 +143,7 @@ const reload = () => tableRef.value?.reload()
 
 const dialogVisible = ref(false)
 const saving = ref(false)
+const editLoading = ref(false)
 const isEdit = ref(false)
 const editingId = ref(null)
 const formRef = ref()
@@ -169,12 +172,27 @@ function openCreate() {
 async function openEdit(row) {
   isEdit.value = true; editingId.value = row.id
   pendingFiles.value = []; dialogMaterials.value = []
-  Object.assign(form, {
-    customer_code: row.customer_code, name: row.name, social_credit_code: row.social_credit_code || '',
-    contact: row.contact, phone: row.phone,
-    address: row.address, remark: row.remark
-  })
+  Object.assign(form, emptyForm(), { customer_code: row.customer_code, name: row.name })
   formRef.value?.clearValidate?.(); dialogVisible.value = true
+  editLoading.value = true
+  try {
+    const detail = await getCustomer(row.id)
+    Object.assign(form, {
+      customer_code: detail.customer_code,
+      name: detail.name,
+      social_credit_code: detail.social_credit_code || '',
+      contact: detail.contact || '',
+      phone: detail.phone || '',
+      address: detail.address || '',
+      remark: detail.remark || ''
+    })
+  } catch {
+    ElMessage.error('客户详情加载失败，请重试')
+    dialogVisible.value = false
+    return
+  } finally {
+    editLoading.value = false
+  }
   // 载入该客户已入库资料（与查看/AI 同一数据源）
   try { dialogMaterials.value = await listMaterials(row.id) } catch { /* 资料加载失败不阻断编辑 */ }
 }
@@ -269,6 +287,19 @@ function openResearch(row) { researchCustomer.value = row; researchVisible.value
 <style scoped lang="scss">
 /* 表单标签不换行，避免「社会信用代码」等长标签跨行 */
 .customer-form :deep(.el-form-item__label) { white-space: nowrap; }
+.customer :deep(.pro-table .el-table__header .cell),
+.customer :deep(.pro-table .el-table__body .cell) {
+  white-space: nowrap;
+}
+.customer-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  white-space: nowrap;
+}
+.customer-actions :deep(.el-button) { margin-left: 0; }
 .muted { color: var(--el-text-color-placeholder); }
 .files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; width: 100%; }
 .file-tag { display: inline-flex; align-items: center; gap: 4px; }
