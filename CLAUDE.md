@@ -3,7 +3,7 @@
 > 本文件供 Claude Code 在新会话/新机器上快速接手。人也可当作项目速览。
 
 ## 项目概览
-山东出版供应链管理公司业务平台,前后端分离。
+山东出版供应链管理有限公司业务平台,前后端分离。
 - 前端:Vue 3 + Vite + Element Plus + ECharts(`frontend/`,开发端口 5173,`/api` 代理到后端 8000)
 - 后端:FastAPI + SQLAlchemy 2.0(`backend/`,端口 8000)
 - 数据库:MySQL 8.0,库名 `sd_publish_scm`

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class LedgerProfitPoint(BaseModel):
-    """经营图表的最小统计单元：景区 + 门票/酒店 + 期次。"""
+    """经营图表的最小统计单元：景区 + 门票/酒店 + 月份。"""
 
     scenic_id: str
     business_type: str
@@ -15,6 +15,7 @@ class LedgerProfitPoint(BaseModel):
     year: Optional[int] = None
     month: Optional[int] = None
     service_fee: Decimal = Decimal("0")
+    realized_amount: Decimal = Decimal("0")
 
 
 class FinancialDashboard(BaseModel):

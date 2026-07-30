@@ -4,7 +4,7 @@
       <div>
         <p class="page-eyebrow">TRAVEL LEDGER INSIGHTS</p>
         <h1 class="page-title">经营数据中心</h1>
-        <p class="page-subtitle">所有指标均由文旅门票与酒店台账实时汇总，金额、期次和景区维度保持同源。</p>
+        <p class="page-subtitle">所有指标均由文旅门票与酒店台账实时汇总，金额、月份和景区维度保持同源。</p>
       </div>
     </header>
 
@@ -40,7 +40,7 @@
           <template #header>
             <div class="chart-header">
               <span class="card-title">业务毛利润</span>
-              <span class="chart-subtitle">各景区每期门票/酒店服务费</span>
+              <span class="chart-subtitle">各景区按月份汇总门票/酒店服务费</span>
             </div>
           </template>
           <BaseChart :option="barOption" />
@@ -57,12 +57,6 @@
               <div class="pie-filters">
                 <el-select v-model="selectedMonth" clearable placeholder="全部月份" class="small-filter">
                   <el-option v-for="month in monthOptions" :key="month" :label="`${month}月`" :value="month" />
-                </el-select>
-                <el-select v-model="selectedPeriod" clearable placeholder="全部期次" class="period-filter">
-                  <el-option
-                    v-for="item in periodOptions" :key="item.key"
-                    :label="item.label" :value="item.key"
-                  />
                 </el-select>
               </div>
             </div>
@@ -87,7 +81,6 @@ const loading = ref(false)
 const selectedYear = ref('')
 const selectedScenicIds = ref([])
 const selectedMonth = ref('')
-const selectedPeriod = ref('')
 const dash = ref({
   existing_scale: 0, total_realized_scale: 0, total_gross_income: 0,
   capital_occupation_days: null, ledger_profit: [],
@@ -129,19 +122,10 @@ const monthOptions = computed(() => [...new Set(
 const monthFilteredPoints = computed(() => sharedFilteredPoints.value.filter(
   (item) => !selectedMonth.value || Number(item.month) === Number(selectedMonth.value)
 ))
-const periodOptions = computed(() => {
-  const periods = new Map()
-  for (const item of monthFilteredPoints.value) {
-    if (!periods.has(item.period_key)) periods.set(item.period_key, item.period)
-  }
-  return [...periods.entries()].map(([key, label]) => ({ key, label }))
-})
-const pieFilteredPoints = computed(() => monthFilteredPoints.value.filter(
-  (item) => !selectedPeriod.value || item.period_key === selectedPeriod.value
-))
+const pieFilteredPoints = computed(() => monthFilteredPoints.value)
 
-watch([selectedYear, selectedScenicIds, selectedMonth], () => {
-  selectedPeriod.value = ''
+watch([selectedYear, selectedScenicIds], () => {
+  selectedMonth.value = ''
 }, { deep: true })
 
 const kpiCards = computed(() => {
@@ -272,14 +256,13 @@ onMounted(load)
   .pie-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
   .pie-filters { display: flex; gap: 8px; flex-wrap: wrap; }
   .small-filter { width: 110px; }
-  .period-filter { width: 180px; }
 }
 
 @media (max-width: 768px) {
   .operation {
     .filter-control, .scenic-filter { width: 100%; }
     .pie-filters { width: 100%; }
-    .small-filter, .period-filter { flex: 1 1 140px; }
+    .small-filter { flex: 1 1 140px; }
   }
 }
 </style>

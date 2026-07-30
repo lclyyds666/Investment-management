@@ -25,14 +25,15 @@ def _decimal(value) -> Decimal:
 
 
 def _period_date(row) -> date | None:
-    """取台账归属期日期，缺少结构化日期时再从期次文本中兜底解析。"""
-    for value in (getattr(row, "period_start", None), getattr(row, "period_end", None)):
+    """取台账归属月份；跨月期次一律归入结束日期所在月份。"""
+    for value in (getattr(row, "period_end", None), getattr(row, "period_start", None)):
         if isinstance(value, datetime):
             return value.date()
         if isinstance(value, date):
             return value
     text = getattr(row, "period_text", "") or getattr(row, "check_date_text", "") or ""
-    match = _LEDGER_DATE_RE.search(text)
+    matches = list(_LEDGER_DATE_RE.finditer(text))
+    match = matches[-1] if matches else None
     if match:
         try:
             return date(int(match.group(1)), int(match.group(2)), int(match.group(3) or 1))
@@ -55,18 +56,25 @@ def _period_label(row) -> str:
     return f"台账#{getattr(row, 'id', '')}"
 
 
-def _profit_point(scenic_id: str, business_type: str, row, service_fee: Decimal) -> dict:
+def _profit_point(
+    scenic_id: str,
+    business_type: str,
+    row,
+    service_fee: Decimal,
+    realized_amount: Decimal,
+) -> dict:
     period_date = _period_date(row)
-    period = _period_label(row)
-    date_key = period_date.isoformat() if period_date else "undated"
+    period = f"{period_date.month}月" if period_date else _period_label(row)
+    date_key = period_date.strftime("%Y-%m") if period_date else f"undated::{period}"
     return {
         "scenic_id": scenic_id,
         "business_type": business_type,
         "period": period,
-        "period_key": f"{date_key}::{period}",
+        "period_key": date_key,
         "year": period_date.year if period_date else None,
         "month": period_date.month if period_date else None,
         "service_fee": service_fee,
+        "realized_amount": realized_amount,
     }
 
 
@@ -114,7 +122,13 @@ def build_ledger_metrics(
         total_gross += _decimal(row.service_fee)
         add_occupation(net_investment, row.pay_date, row.repay_date)
         ledger_profit.append(
-            _profit_point(row.scenic_id, "ticket", row, _decimal(row.service_fee))
+            _profit_point(
+                row.scenic_id,
+                "ticket",
+                row,
+                _decimal(row.service_fee),
+                _decimal(row.jinying_amount),
+            )
         )
 
     hotel_groups: dict[tuple[str, str], list[HotelLedger]] = defaultdict(list)
@@ -134,7 +148,18 @@ def build_ledger_metrics(
         repay_date = next((row.repay_date for row in rows if row.repay_date), None)
         add_occupation(net_investment, payment_date, repay_date)
         total_fee = sum((_decimal(row.service_fee) for row in rows), Decimal("0"))
-        ledger_profit.append(_profit_point(scenic_id, "hotel", representative, total_fee))
+        total_realized_amount = sum(
+            (_decimal(row.jinying_amount) for row in rows), Decimal("0")
+        )
+        ledger_profit.append(
+            _profit_point(
+                scenic_id,
+                "hotel",
+                representative,
+                total_fee,
+                total_realized_amount,
+            )
+        )
 
     ledger_profit.sort(
         key=lambda item: (

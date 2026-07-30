@@ -382,7 +382,7 @@ const emptyForm = () => ({
   subject: '',
   customer_name: '',
   customer_credit_code: '',
-  party_a: '山东出版供应链管理公司',
+  party_a: '山东出版供应链管理有限公司',
   party_b: '',
   amount: 0,
   currency: '人民币',

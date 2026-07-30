@@ -2,7 +2,7 @@
   "name": "sd-publish-scm-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "山东出版供应链管理公司业务平台 - 前端",
+  "description": "山东出版供应链管理有限公司业务平台 - 前端",
   "type": "module",
   "scripts": {
     "dev": "vite",

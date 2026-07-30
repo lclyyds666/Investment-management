@@ -50,7 +50,7 @@
     <el-container>
       <el-header class="header">
         <div class="title-block">
-          <span class="title">山东出版供应链管理公司</span>
+          <span class="title">山东出版供应链管理有限公司</span>
           <span class="title-subtitle">业务协同与经营决策工作台</span>
         </div>
         <div class="header-right">

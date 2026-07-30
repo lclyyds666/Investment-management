@@ -60,7 +60,7 @@ function makeEntries(name, items) {
 //   填了 url 就直达、UI 会标记为已绑定；没填的自动降级为「按景区名搜索」。改完前端重新构建部署即可。
 const SCENIC_DEFS = [
   {
-    id: 'quancheng-ouleb', name: '泉城欧乐堡', ext: 'png',
+    id: 'quancheng-ouleb', name: '泉城欧乐堡', province: '山东省', ext: 'png',
     ticketEnabled: true, hotelEnabled: true,
     scenic: [
       { key: 'douyin', url: 'https://life.douyin.com' },
@@ -72,7 +72,7 @@ const SCENIC_DEFS = [
     ]
   },
   {
-    id: 'quanzhou-ouleb', name: '泉州欧乐堡', ext: 'jpg',
+    id: 'quanzhou-ouleb', name: '泉州欧乐堡', province: '福建省', ext: 'jpg',
     ticketEnabled: true, hotelEnabled: true,
     scenic: [
       { key: 'douyin', url: 'https://life.douyin.com' },
@@ -84,7 +84,7 @@ const SCENIC_DEFS = [
     ]
   },
   {
-    id: 'fuzhou-ouleb', name: '福州欧乐堡', ext: 'jpg',
+    id: 'fuzhou-ouleb', name: '福州欧乐堡', province: '福建省', ext: 'jpg',
     ticketEnabled: true, hotelEnabled: true,
     scenic: [
       { key: 'douyin', url: 'https://life.douyin.com' },
@@ -96,7 +96,7 @@ const SCENIC_DEFS = [
     ]
   },
   {
-    id: 'zunyi-zoo', name: '遵义动物园', ext: 'jpg',
+    id: 'zunyi-zoo', name: '遵义动物园', province: '贵州省', ext: 'jpg',
     ticketEnabled: true, hotelEnabled: false,
     scenic: [],
     ticket: [
@@ -107,7 +107,7 @@ const SCENIC_DEFS = [
     ]
   },
   {
-    id: 'nanyang-wildlife', name: '南阳森林野生动物世界', ext: 'jpg',
+    id: 'nanyang-wildlife', name: '南阳森林野生动物世界', province: '河南省', ext: 'jpg',
     ticketEnabled: true, hotelEnabled: false,
     scenic: [],
     ticket: [
@@ -118,7 +118,7 @@ const SCENIC_DEFS = [
     ]
   },
   {
-    id: 'guanquelou', name: '鹳雀楼', ext: 'png',
+    id: 'guanquelou', name: '鹳雀楼', province: '山西省', ext: 'png',
     ticketEnabled: true, hotelEnabled: false,
     scenic: [],
     ticket: [
@@ -133,6 +133,7 @@ const SCENIC_DEFS = [
 export const scenicSpots = SCENIC_DEFS.map((s) => ({
   id: s.id,
   name: s.name,
+  province: s.province,
   imagePath: `/scenic/${s.id}.${s.ext}`,
   scenicPlatforms: makeEntries(s.name, s.scenic),
   ticketPlatforms: makeEntries(s.name, s.ticket),

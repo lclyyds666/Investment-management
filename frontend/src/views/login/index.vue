@@ -8,7 +8,7 @@
     <el-card class="login-card">
       <div class="brand">
         <div class="brand-logo">SD·SCM</div>
-        <h2>山东出版供应链管理公司</h2>
+        <h2>山东出版供应链管理有限公司</h2>
         <p>业务平台 · 数据智能中心</p>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="onSubmit">

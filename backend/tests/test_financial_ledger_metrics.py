@@ -92,6 +92,39 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
         ]
         self.assertEqual(len(hotel_points), 1)
         self.assertEqual(hotel_points[0]["service_fee"], Decimal("500"))
+        self.assertEqual(hotel_points[0]["realized_amount"], Decimal("2200"))
+
+    def test_cross_month_period_belongs_to_end_month(self):
+        tickets = [
+            TicketLedger(
+                id=6,
+                scenic_id="quanzhou-ouleb",
+                period_text="2026/1/1-2026/1/20",
+                jinying_amount=Decimal("880"),
+                service_fee=Decimal("30"),
+            ),
+            TicketLedger(
+                id=5,
+                scenic_id="quanzhou-ouleb",
+                period_text="2026/4/20-2026/5/19",
+                period_start=date(2026, 4, 20),
+                period_end=date(2026, 5, 19),
+                jinying_amount=Decimal("940"),
+                service_fee=Decimal("40"),
+            )
+        ]
+
+        result = build_ledger_metrics(tickets, [])
+        points = {point["period_key"]: point for point in result["ledger_profit"]}
+        january_point = points["2026-01"]
+        may_point = points["2026-05"]
+
+        self.assertEqual(january_point["month"], 1)
+        self.assertEqual(january_point["period"], "1月")
+        self.assertEqual(may_point["year"], 2026)
+        self.assertEqual(may_point["month"], 5)
+        self.assertEqual(may_point["period"], "5月")
+        self.assertEqual(may_point["realized_amount"], Decimal("940"))
 
     def test_dashboard_only_queries_travel_ledgers(self):
         db = Mock()
