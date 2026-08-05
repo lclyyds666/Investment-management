@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     # 应用
-    PROJECT_NAME: str = "山东出版供应链管理有限公司业务平台"
+    PROJECT_NAME: str = "山东出版投资有限公司工作平台"
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
 
