@@ -9,7 +9,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.enums import InvoiceStatus, Role
+from app.core.enums import CompanyCode, InvoiceStatus, Role
 from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
@@ -24,6 +24,7 @@ from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 
 from app.models.invoice import Invoice
 from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
 from app.models.operation import OperationData
+from app.models.portal import UserCompanyRole
 from app.models.project import ProjectMetrics  # noqa: F401
 from app.models.research import CustomerMaterial, CustomerResearch  # noqa: F401
 from app.models.scenic import ScenicLedger  # noqa: F401
@@ -78,6 +79,24 @@ def seed_users(db: Session) -> None:
                 hashed_password=hash_password("123456"),
             )
         )
+    db.flush()
+
+    for item in SEED_USERS:
+        user = db.scalar(select(User).where(User.username == item["username"]))
+        company_role = db.scalar(
+            select(UserCompanyRole).where(
+                UserCompanyRole.user_id == user.id,
+                UserCompanyRole.company_code == CompanyCode.SUPPLY_MANAGEMENT.value,
+            )
+        )
+        if company_role is None:
+            db.add(
+                UserCompanyRole(
+                    user_id=user.id,
+                    company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
+                    role=user.role,
+                )
+            )
     db.commit()
 
 
