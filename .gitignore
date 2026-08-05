@@ -227,3 +227,6 @@ __marimo__/
 
 # 客户准入资料上传目录(原始文件，勿入库)
 backend/uploads/
+
+# Local isolated development worktrees
+.worktrees/
