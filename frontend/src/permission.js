@@ -8,7 +8,7 @@ const TITLE = import.meta.env.VITE_APP_TITLE || '业务平台'
 const SUPPLY_DASHBOARD_PATH = '/supplymanagement/dashboard'
 const SUPPLY_CONTRACT_PATH = '/supplymanagement/contract'
 
-router.beforeEach(async (to) => {
+export const portalGuard = async (to) => {
   document.title = to.meta?.title ? `${to.meta.title} - ${TITLE}` : TITLE
 
   const userStore = useUserStore()
@@ -44,12 +44,14 @@ router.beforeEach(async (to) => {
     return { path: '/' }
   }
 
-  const supplyRole = portalStore.companyRole(COMPANY_CODES.SUPPLY_MANAGEMENT)
-  if (!portalStore.isSuperuser && supplyRole === ROLES.LEGAL_COUNSEL) {
-    if (!LEGAL_COUNSEL_PATHS.includes(to.path)) {
-      return { path: SUPPLY_CONTRACT_PATH }
-    }
-    return true
+  const isSupplyRoute = to.meta?.company === COMPANY_CODES.SUPPLY_MANAGEMENT
+  if (
+    isSupplyRoute &&
+    !portalStore.isSuperuser &&
+    portalStore.companyRole(COMPANY_CODES.SUPPLY_MANAGEMENT) === ROLES.LEGAL_COUNSEL &&
+    !LEGAL_COUNSEL_PATHS.includes(to.path)
+  ) {
+    return { path: SUPPLY_CONTRACT_PATH }
   }
 
   if (to.meta?.resource && !portalStore.hasResource(to.meta.resource)) {
@@ -70,4 +72,6 @@ router.beforeEach(async (to) => {
   }
 
   return true
-})
+}
+
+router.beforeEach(portalGuard)
