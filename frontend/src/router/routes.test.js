@@ -4,6 +4,9 @@ import { legacySupplyRedirects } from './legacyRedirects'
 
 vi.mock('@/layout/index.vue', () => ({ default: {} }))
 vi.mock('@/views/cultural-tourism/DetailView.vue', () => ({ default: {} }))
+vi.mock('@/views/dashboard/index.vue', () => ({ default: {} }))
+vi.mock('@/views/invoice/index.vue', () => ({ default: {} }))
+vi.mock('@/views/screen/index.vue', () => ({ default: {} }))
 
 const supplyRoutes = [
   ['Dashboard', '/supplymanagement/dashboard', 'supply.dashboard'],
@@ -120,5 +123,14 @@ describe('unified portal routes', () => {
     expect(router.currentRoute.value.fullPath).toBe(
       '/supplymanagement/cultural-tourism/zunyi-zoo?tab=hotel#ledger'
     )
+  })
+
+  it.each([
+    ['/dashboard?year=2026', '/supplymanagement/dashboard?year=2026'],
+    ['/finance/invoice?status=pending', '/supplymanagement/finance/invoice?status=pending'],
+    ['/screen#map', '/supplymanagement/screen#map']
+  ])('preserves legacy location %s', async (legacy, expected) => {
+    await router.push(legacy)
+    expect(router.currentRoute.value.fullPath).toBe(expected)
   })
 })
