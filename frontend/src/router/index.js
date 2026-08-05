@@ -1,8 +1,22 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { ROLES, APPROVER_ROLES, DIRECTOR_ROLES, FINANCE_ROLES, APPROVAL_CENTER_ROLES } from '@/constants/business'
+import {
+  APPROVAL_CENTER_ROLES,
+  COMPANY_CODES,
+  DIRECTOR_ROLES,
+  FINANCE_ROLES,
+  RESOURCE_CODES,
+  ROLES
+} from '@/constants/business'
+import { legacySupplyRedirects } from './legacyRedirects'
 
-// 兼容旧引用：从常量集中转出
 export { ROLES } from '@/constants/business'
+
+const PortalHomePlaceholder = {
+  name: 'PortalHomePlaceholder',
+  render: () => null
+}
+
+const supplyCompany = COMPANY_CODES.SUPPLY_MANAGEMENT
 
 const routes = [
   {
@@ -12,97 +26,112 @@ const routes = [
     meta: { title: '登录', public: true }
   },
   {
-    path: '/screen',
-    name: 'Screen',
-    component: () => import('@/views/screen/index.vue'),
-    meta: { title: '数据投放大屏' }
+    path: '/',
+    name: 'PortalHome',
+    component: PortalHomePlaceholder
   },
   {
-    path: '/',
+    path: '/supplymanagement/screen',
+    name: 'Screen',
+    component: () => import('@/views/screen/index.vue'),
+    meta: {
+      title: '数据投放大屏',
+      company: supplyCompany,
+      resource: RESOURCE_CODES.SUPPLY_DASHBOARD
+    }
+  },
+  {
+    path: '/supplymanagement',
     component: () => import('@/layout/index.vue'),
-    redirect: '/dashboard',
+    redirect: '/supplymanagement/dashboard',
+    meta: { company: supplyCompany },
     children: [
       {
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('@/views/dashboard/index.vue'),
-        meta: { title: '战略总览', icon: 'HomeFilled' }
+        meta: {
+          title: '战略总览',
+          icon: 'HomeFilled',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_DASHBOARD
+        }
       },
       {
         path: 'operation',
         name: 'Operation',
         component: () => import('@/views/operation/index.vue'),
-        // 经营数据中心：业务经办/业务复核/财务/负责人/总经理可查看（法务风控、法律顾问不可见）
         meta: {
           title: '经营数据中心',
           icon: 'TrendCharts',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_OPERATION,
           roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
         }
       },
       {
-        // 渠道业务 · 文旅业务：入口页（MainView，景区卡片 Grid）。保留原菜单分组与位置。
         path: 'cultural-tourism',
         name: 'CulturalTourism',
         component: () => import('@/views/cultural-tourism/MainView.vue'),
-        // 渠道业务·文旅：业务经办/业务复核/财务经办/供管负责人/总经理可见（财务复核、法务风控、法律顾问不可见）
         meta: {
-          title: '文旅业务', icon: 'Sunny', group: '渠道业务', groupIcon: 'Connection',
+          title: '文旅业务',
+          icon: 'Sunny',
+          group: '渠道业务',
+          groupIcon: 'Connection',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SCENIC_ANALYTICS,
           roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ROLES.FINANCE_HANDLER, ...DIRECTOR_ROLES]
         }
       },
       {
-        // 景区详情页（DetailView，动态路由）：与 MainView 共用全局外壳，不进侧边菜单(无 title)
         path: 'cultural-tourism/:scenicId',
         name: 'CulturalTourismDetail',
         component: () => import('@/views/cultural-tourism/DetailView.vue'),
-        meta: { icon: 'Place' }
-      },
-      {
-        // 兼容旧地址 /channel、/channel/tourism、/channel/other → 新文旅业务入口
-        path: 'channel',
-        redirect: '/cultural-tourism'
-      },
-      {
-        path: 'channel/tourism',
-        redirect: '/cultural-tourism'
-      },
-      {
-        path: 'channel/other',
-        redirect: '/cultural-tourism'
+        meta: {
+          icon: 'Place',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SCENIC_ANALYTICS
+        }
       },
       {
         path: 'finance/fund',
         name: 'FinanceFund',
         component: () => import('@/views/finance/fund.vue'),
-        // 资金管理：归入「智慧财务」菜单组；当前为存根页
         meta: {
           title: '资金管理',
           icon: 'Coin',
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES],
           group: '智慧财务',
-          groupIcon: 'Wallet'
+          groupIcon: 'Wallet',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_FINANCE,
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
         }
       },
       {
         path: 'finance/invoice',
         name: 'Invoice',
         component: () => import('@/views/invoice/index.vue'),
-        // 发票管理：归入「智慧财务」菜单组；财务 + 负责人
         meta: {
           title: '发票管理',
           icon: 'Tickets',
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES],
           group: '智慧财务',
-          groupIcon: 'Wallet'
+          groupIcon: 'Wallet',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_FINANCE,
+          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
         }
       },
       {
         path: 'contract',
         name: 'Contract',
         component: () => import('@/views/contract/index.vue'),
-        // 合同管理（经营合规）：业务经办/业务复核/法务风控/供管负责人/总经理/法律顾问可见（财务经办、财务复核不可见）
         meta: {
-          title: '合同管理', icon: 'Document', group: '经营合规', groupIcon: 'DocumentChecked',
+          title: '合同管理',
+          icon: 'Document',
+          group: '经营合规',
+          groupIcon: 'DocumentChecked',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_CONTRACT,
           roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ROLES.RISK_AUDITOR, ...DIRECTOR_ROLES, ROLES.LEGAL_COUNSEL]
         }
       },
@@ -110,44 +139,64 @@ const routes = [
         path: 'approval',
         name: 'Approval',
         component: () => import('@/views/approval/index.vue'),
-        // 审批中心：两套独立审批单工作流（业务付款审批单 / 业务审批单）。
-        // 业务经办创建并提交，其余链上角色逐级审批；与合同(法律)审批互不干扰。
-        meta: { title: '业务审批', icon: 'Stamp', roles: APPROVAL_CENTER_ROLES, group: '经营合规', groupIcon: 'DocumentChecked' }
+        meta: {
+          title: '业务审批',
+          icon: 'Stamp',
+          group: '经营合规',
+          groupIcon: 'DocumentChecked',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_APPROVAL,
+          roles: APPROVAL_CENTER_ROLES
+        }
       },
       {
         path: 'customer',
         name: 'Customer',
         component: () => import('@/views/customer/index.vue'),
-        meta: { title: '客户档案库', icon: 'Postcard' }
-      },
-      {
-        // 兼容旧地址 /invoice → 新地址 /finance/invoice
-        path: 'invoice',
-        redirect: '/finance/invoice'
+        meta: {
+          title: '客户档案库',
+          icon: 'Postcard',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_CUSTOMER
+        }
       },
       {
         path: 'org',
         name: 'Org',
         component: () => import('@/views/system/users.vue'),
-        // 用户管理：归入「系统管理」菜单组；仅超级管理员可见 / 可访问（菜单隐藏 + 路由守卫双保险）
-        meta: { title: '用户管理', icon: 'OfficeBuilding', requiresSuperuser: true, group: '系统管理', groupIcon: 'Setting' }
+        meta: {
+          title: '用户管理',
+          icon: 'OfficeBuilding',
+          group: '系统管理',
+          groupIcon: 'Setting',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_ADMIN,
+          requiresSuperuser: true
+        }
       },
       {
         path: 'audit',
         name: 'Audit',
         component: () => import('@/views/system/audit.vue'),
-        // 操作日志：归入「系统管理」菜单组；仅超级管理员可见 / 可访问
-        meta: { title: '操作日志', icon: 'List', requiresSuperuser: true, group: '系统管理', groupIcon: 'Setting' }
+        meta: {
+          title: '操作日志',
+          icon: 'List',
+          group: '系统管理',
+          groupIcon: 'Setting',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_ADMIN,
+          requiresSuperuser: true
+        }
       },
       {
         path: 'profile',
         name: 'Profile',
         component: () => import('@/views/profile/index.vue'),
-        // 个人设置：不进侧边菜单（无 title），经顶部下拉进入
-        meta: { icon: 'User' }
+        meta: { icon: 'User', company: supplyCompany }
       }
     ]
   },
+  ...legacySupplyRedirects,
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',

@@ -1,5 +1,20 @@
 // 业务常量：7 级角色、审批链、合同类型、状态 —— 与后端 app/core/enums.py 对齐
 
+export const COMPANY_CODES = {
+  SUPPLY_MANAGEMENT: 'supplymanagement'
+}
+
+export const RESOURCE_CODES = {
+  SUPPLY_DASHBOARD: 'supply.dashboard',
+  SUPPLY_OPERATION: 'supply.operation',
+  SCENIC_ANALYTICS: 'supply.scenic.analytics',
+  SUPPLY_FINANCE: 'supply.finance',
+  SUPPLY_CONTRACT: 'supply.contract',
+  SUPPLY_APPROVAL: 'supply.approval',
+  SUPPLY_CUSTOMER: 'supply.customer',
+  SUPPLY_ADMIN: 'supply.admin'
+}
+
 export const ROLES = {
   BUSINESS_HANDLER: 'business_handler',   // 业务经办
   BUSINESS_REVIEWER: 'business_reviewer', // 业务复核
@@ -43,7 +58,7 @@ export const FINANCE_ROLES = [ROLES.FINANCE_HANDLER, ROLES.FINANCE_REVIEWER]
 
 // 法律顾问：仅可访问「合同管理」+「个人设置」（合同法律审批内嵌在合同管理页）；
 // 不放行「业务审批」/approval、「客户档案库」/customer —— 法律顾问不参与这些流程。
-export const LEGAL_COUNSEL_PATHS = ['/contract', '/profile']
+export const LEGAL_COUNSEL_PATHS = ['/supplymanagement/contract', '/supplymanagement/profile']
 
 // 合同/审批单类型
 export const CONTRACT_TYPES = {
