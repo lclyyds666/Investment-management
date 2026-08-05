@@ -11,11 +11,6 @@ import { legacySupplyRedirects } from './legacyRedirects'
 
 export { ROLES } from '@/constants/business'
 
-const PortalHomePlaceholder = {
-  name: 'PortalHomePlaceholder',
-  render: () => null
-}
-
 const supplyCompany = COMPANY_CODES.SUPPLY_MANAGEMENT
 
 const routes = [
@@ -27,8 +22,35 @@ const routes = [
   },
   {
     path: '/',
-    name: 'PortalHome',
-    component: PortalHomePlaceholder
+    component: () => import('@/layout/PortalLayout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'PortalHome',
+        component: () => import('@/views/portal/index.vue'),
+        meta: { title: 'AI 助手' }
+      },
+      {
+        path: 'investment',
+        name: 'Investment',
+        component: () => import('@/views/portal/ConstructionView.vue'),
+        meta: {
+          title: '山东出版投资有限公司',
+          company: COMPANY_CODES.INVESTMENT,
+          companyName: '山东出版投资有限公司'
+        }
+      },
+      {
+        path: 'fundmanagement',
+        name: 'FundManagement',
+        component: () => import('@/views/portal/ConstructionView.vue'),
+        meta: {
+          title: '山东出版股权基金管理有限公司',
+          company: COMPANY_CODES.FUND_MANAGEMENT,
+          companyName: '山东出版股权基金管理有限公司'
+        }
+      }
+    ]
   },
   {
     path: '/supplymanagement/screen',

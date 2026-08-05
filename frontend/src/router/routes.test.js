@@ -51,6 +51,18 @@ describe('unified portal routes', () => {
     expect(router.resolve({ name: 'Screen' }).path).toBe('/supplymanagement/screen')
   })
 
+  it('registers both construction applications under the shared portal shell', () => {
+    const investment = router.resolve({ name: 'Investment' })
+    const fund = router.resolve({ name: 'FundManagement' })
+
+    expect(investment.path).toBe('/investment')
+    expect(investment.meta.company).toBe('investment')
+    expect(investment.meta.companyName).toBe('山东出版投资有限公司')
+    expect(fund.path).toBe('/fundmanagement')
+    expect(fund.meta.company).toBe('fundmanagement')
+    expect(fund.meta.companyName).toBe('山东出版股权基金管理有限公司')
+  })
+
   it.each(supplyRoutes)(
     'mounts %s under the supply namespace with authoritative metadata',
     (name, path, resource) => {

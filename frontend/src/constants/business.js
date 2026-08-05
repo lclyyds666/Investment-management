@@ -1,7 +1,9 @@
 // 业务常量：7 级角色、审批链、合同类型、状态 —— 与后端 app/core/enums.py 对齐
 
 export const COMPANY_CODES = {
-  SUPPLY_MANAGEMENT: 'supplymanagement'
+  INVESTMENT: 'investment',
+  SUPPLY_MANAGEMENT: 'supplymanagement',
+  FUND_MANAGEMENT: 'fundmanagement'
 }
 
 export const RESOURCE_CODES = {

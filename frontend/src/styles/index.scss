@@ -377,6 +377,12 @@ button,
   line-height: 1.75;
 }
 
+.portal-page {
+  width: min(100%, var(--portal-content-max-width));
+  min-width: 0;
+  margin-inline: auto;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -420,6 +426,10 @@ button,
   .el-dialog__body,
   .el-drawer__body {
     padding: 18px;
+  }
+
+  .portal-page {
+    width: 100%;
   }
 }
 

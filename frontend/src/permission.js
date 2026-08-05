@@ -4,7 +4,7 @@ import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { COMPANY_CODES, LEGAL_COUNSEL_PATHS, ROLES } from '@/constants/business'
 
-const TITLE = import.meta.env.VITE_APP_TITLE || '业务平台'
+const TITLE = import.meta.env.VITE_APP_TITLE || '山东出版投资有限公司工作平台'
 const SUPPLY_DASHBOARD_PATH = '/supplymanagement/dashboard'
 const SUPPLY_CONTRACT_PATH = '/supplymanagement/contract'
 

@@ -43,6 +43,12 @@ describe('portal permission guard', () => {
     vi.clearAllMocks()
   })
 
+  it('uses the unified platform name in browser titles', async () => {
+    authenticatedContext()
+    await portalGuard(route('/', { title: 'AI 助手' }))
+    expect(document.title).toBe('AI 助手 - 山东出版投资有限公司工作平台')
+  })
+
   it('allows legal counsel to remain on the authenticated portal home', async () => {
     const { portalStore } = authenticatedContext({
       companyRoles: { [SUPPLY_COMPANY]: 'legal_counsel' },
