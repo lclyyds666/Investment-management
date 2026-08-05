@@ -12,6 +12,17 @@
       <div class="head-side right">
         <span class="clock">{{ clock }}</span>
         <span class="sep">|</span> {{ today }}
+        <el-button
+          v-if="fullscreen"
+          class="scr-btn"
+          size="small"
+          round
+          aria-label="AI 助手"
+          @click="openAssistant"
+        >
+          <el-icon><ChatDotRound /></el-icon>
+          <span>AI 助手</span>
+        </el-button>
         <el-button class="scr-btn" size="small" round @click="toggleScreen">
           <el-icon><component :is="fullscreen ? 'Close' : 'FullScreen'" /></el-icon>
           <span>{{ fullscreen ? '退出' : '全屏投放' }}</span>
@@ -81,6 +92,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import CountTo from '@/components/screen/CountTo.vue'
@@ -95,6 +107,11 @@ const props = defineProps({
 
 const router = useRouter()
 const userStore = useUserStore()
+
+function openAssistant() {
+  if (document.fullscreenElement) document.exitFullscreen?.()
+  router.push({ name: 'PortalHome' })
+}
 
 function toggleScreen() {
   if (props.fullscreen) {

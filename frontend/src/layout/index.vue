@@ -1,16 +1,16 @@
 <template>
   <el-container class="app-wrapper">
-    <el-aside :width="collapsed ? '64px' : '220px'" class="sidebar" :class="{ collapsed }">
+    <el-aside :width="sidebarCollapsed ? '64px' : '220px'" class="sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="logo" aria-label="山东出版供应链平台">
         <span class="logo-seal">SD</span>
-        <span v-show="!collapsed" class="logo-wordmark">
+        <span v-show="!sidebarCollapsed" class="logo-wordmark">
           <strong>出版供应链平台</strong>
           <small>SUPPLY CHAIN OPERATIONS</small>
         </span>
       </div>
       <el-menu
         :default-active="activeMenu"
-        :collapse="collapsed"
+        :collapse="sidebarCollapsed"
         :collapse-transition="false"
         router
         background-color="transparent"
@@ -41,9 +41,9 @@
       </el-menu>
 
       <!-- 收起/展开 -->
-      <div class="collapse-bar" @click="toggleCollapse">
-        <el-icon><component :is="collapsed ? 'Expand' : 'Fold'" /></el-icon>
-        <span v-show="!collapsed">收起菜单</span>
+      <div v-if="!compactViewport" class="collapse-bar" @click="toggleCollapse">
+        <el-icon><component :is="sidebarCollapsed ? 'Expand' : 'Fold'" /></el-icon>
+        <span v-show="!sidebarCollapsed">收起菜单</span>
       </div>
     </el-aside>
 
@@ -87,11 +87,22 @@ function badgeText(n) {
 }
 
 // 登录期间轮询待审批数量（30s）；组件卸载（登出跳登录页）时停止
-onMounted(() => badgeStore.startPolling())
-onUnmounted(() => badgeStore.stopPolling())
+onMounted(() => {
+  badgeStore.startPolling()
+  window.addEventListener('resize', syncViewport)
+})
+onUnmounted(() => {
+  badgeStore.stopPolling()
+  window.removeEventListener('resize', syncViewport)
+})
 
 // 侧边栏收起/展开（localStorage 持久化）
 const collapsed = ref(localStorage.getItem('sidebar_collapsed') === '1')
+const compactViewport = ref(window.innerWidth <= 760)
+const sidebarCollapsed = computed(() => compactViewport.value || collapsed.value)
+function syncViewport() {
+  compactViewport.value = window.innerWidth <= 760
+}
 function toggleCollapse() {
   collapsed.value = !collapsed.value
   localStorage.setItem('sidebar_collapsed', collapsed.value ? '1' : '0')

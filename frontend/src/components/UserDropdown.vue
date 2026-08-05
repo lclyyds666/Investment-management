@@ -129,8 +129,11 @@ async function refreshInfo() {
 
 async function onCommand(cmd) {
   if (cmd === 'logout') {
-    // 先留痕退出（best-effort，令牌还在时调用），再清本地并跳登录
-    try { await logoutAudit() } catch { /* 审计失败不阻塞本地退出 */ }
+    // 给审计一个短暂发送窗口，网络停滞时仍立即完成本地退出。
+    await Promise.race([
+      Promise.resolve().then(logoutAudit).catch(() => undefined),
+      new Promise((resolve) => window.setTimeout(resolve, 300))
+    ])
     userStore.logout()
     router.replace({ name: 'Login' })
     return

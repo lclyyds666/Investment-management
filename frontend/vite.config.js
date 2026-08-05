@@ -23,7 +23,12 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'happy-dom',
       globals: true,
-      setupFiles: ['./src/test/setup.js']
+      setupFiles: ['./src/test/setup.js'],
+      server: {
+        deps: {
+          inline: ['element-plus', '@element-plus/icons-vue']
+        }
+      }
     },
     server: {
       host: '0.0.0.0',

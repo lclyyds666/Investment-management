@@ -1,9 +1,9 @@
 <template>
   <el-container class="portal-layout" direction="vertical">
     <GlobalHeader :context-label="contextLabel" />
-    <el-main class="portal-layout__main">
+    <div class="portal-layout__main">
       <router-view />
-    </el-main>
+    </div>
   </el-container>
 </template>
 
@@ -24,7 +24,10 @@ const contextLabel = computed(() => String(route.meta.companyName || ''))
 }
 
 .portal-layout__main {
+  flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
+  background: var(--app-bg);
 }
 </style>
