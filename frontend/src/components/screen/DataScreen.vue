@@ -99,9 +99,9 @@ const userStore = useUserStore()
 function toggleScreen() {
   if (props.fullscreen) {
     if (document.fullscreenElement) document.exitFullscreen?.()
-    router.push('/')
+    router.push({ name: 'PortalHome' })
   } else {
-    router.push('/screen')
+    router.push({ name: 'Screen' })
   }
 }
 

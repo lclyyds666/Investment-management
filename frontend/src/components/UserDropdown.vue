@@ -1,11 +1,12 @@
 <template>
   <span>
     <el-dropdown @command="onCommand">
-      <span class="user">
-        {{ userStore.userInfo?.full_name || '用户' }}
-        <el-tag size="small" type="warning" effect="plain">{{ roleLabel }}</el-tag>
-        <el-icon><ArrowDown /></el-icon>
-      </span>
+      <button class="user" type="button" aria-label="用户菜单">
+        <el-icon class="user-icon"><User /></el-icon>
+        <span class="user-name">{{ userStore.userInfo?.full_name || '用户' }}</span>
+        <el-tag class="user-role" size="small" type="warning" effect="plain">{{ roleLabel }}</el-tag>
+        <el-icon class="user-chevron"><ArrowDown /></el-icon>
+      </button>
       <template #dropdown>
         <el-dropdown-menu>
           <el-dropdown-item command="info" :icon="User">个人信息</el-dropdown-item>
@@ -16,24 +17,6 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
-
-    <!-- 个人信息 -->
-    <el-dialog v-model="infoVisible" title="个人信息" width="440px" append-to-body>
-      <el-descriptions :column="1" border>
-        <el-descriptions-item label="姓名">{{ info?.full_name || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="登录账号">{{ info?.username || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="角色">
-          <el-tag type="warning" size="small">{{ info?.role_label || roleLabel }}</el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="所属部门">{{ info?.department || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="超级管理员">
-          <el-tag :type="info?.is_superuser ? 'success' : 'info'" size="small">
-            {{ info?.is_superuser ? '是' : '否' }}
-          </el-tag>
-        </el-descriptions-item>
-      </el-descriptions>
-      <template #footer><el-button @click="infoVisible = false">关闭</el-button></template>
-    </el-dialog>
 
     <!-- 修改密码 -->
     <el-dialog v-model="pwdVisible" title="修改密码" width="460px" append-to-body @closed="resetPwd">
@@ -133,7 +116,6 @@ const signatureDisabled = computed(() => userStore.role === ROLES.INFO_MAINTAINE
 const info = ref(userStore.userInfo)
 
 // 弹窗可见性
-const infoVisible = ref(false)
 const pwdVisible = ref(false)
 const acctVisible = ref(false)
 const sigVisible = ref(false)
@@ -148,12 +130,12 @@ async function refreshInfo() {
 async function onCommand(cmd) {
   if (cmd === 'logout') {
     // 先留痕退出（best-effort，令牌还在时调用），再清本地并跳登录
-    await logoutAudit()
+    try { await logoutAudit() } catch { /* 审计失败不阻塞本地退出 */ }
     userStore.logout()
-    router.replace('/login')
+    router.replace({ name: 'Login' })
     return
   }
-  if (cmd === 'info') { refreshInfo(); infoVisible.value = true }
+  if (cmd === 'info') router.push({ name: 'Profile' })
   else if (cmd === 'password') { pwdVisible.value = true }
   else if (cmd === 'username') { acctVisible.value = true }
   else if (cmd === 'signature') {
@@ -266,10 +248,22 @@ function resetSig() {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   cursor: pointer;
   outline: none;
   color: var(--chrome-title-color);
 }
+.user-name {
+  overflow: hidden;
+  max-width: 9em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-icon { display: none; }
 .mb { margin-bottom: 14px; }
 /* 弹窗表单：标签固定左侧、不换行，输入框右侧自适应，严禁 Label 换行错位 */
 .dlg-form :deep(.el-form-item) {
@@ -298,4 +292,13 @@ function resetSig() {
 }
 .sig-img { max-height: 90px; max-width: 100%; }
 .sig-upload { width: 100%; :deep(.el-upload), :deep(.el-upload-dragger) { width: 100%; } }
+
+@media (max-width: 760px) {
+  .user-role { display: none; }
+}
+
+@media (max-width: 520px) {
+  .user-icon { display: inline-flex; }
+  .user-name, .user-chevron { display: none; }
+}
 </style>

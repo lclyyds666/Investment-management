@@ -45,6 +45,12 @@ describe('unified portal routes', () => {
     expect(router.resolve('/').name).toBe('PortalHome')
   })
 
+  it('keeps the portal and supply profile destinations distinct', () => {
+    expect(router.resolve({ name: 'PortalHome' }).path).toBe('/')
+    expect(router.resolve({ name: 'Profile' }).path).toBe('/supplymanagement/profile')
+    expect(router.resolve({ name: 'Screen' }).path).toBe('/supplymanagement/screen')
+  })
+
   it.each(supplyRoutes)(
     'mounts %s under the supply namespace with authoritative metadata',
     (name, path, resource) => {

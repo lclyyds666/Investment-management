@@ -47,17 +47,8 @@
       </div>
     </el-aside>
 
-    <el-container>
-      <el-header class="header">
-        <div class="title-block">
-          <span class="title">山东出版供应链管理有限公司</span>
-          <span class="title-subtitle">业务协同与经营决策工作台</span>
-        </div>
-        <div class="header-right">
-          <ThemeToggle />
-          <UserDropdown />
-        </div>
-      </el-header>
+    <el-container class="supply-content" direction="vertical">
+      <GlobalHeader context-label="山东出版供应链管理有限公司" show-assistant-action />
       <el-main>
         <router-view />
       </el-main>
@@ -71,8 +62,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
-import UserDropdown from '@/components/UserDropdown.vue'
-import ThemeToggle from '@/components/ThemeToggle.vue'
+import GlobalHeader from '@/components/GlobalHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,10 +71,10 @@ const badgeStore = useApprovalBadgeStore()
 
 const activeMenu = computed(() => route.path)
 
-// 导航角标：按当前角色的待我审批数量。/contract=合同类、/approval=业务审批类
+// 导航角标：按当前角色的待我审批数量。
 function menuBadge(path) {
-  if (path === '/contract') return badgeStore.contract
-  if (path === '/approval') return badgeStore.business
+  if (path === '/supplymanagement/contract') return badgeStore.contract
+  if (path === '/supplymanagement/approval') return badgeStore.business
   return 0
 }
 // 分组标题角标 = 组内各子项角标之和
@@ -109,7 +99,7 @@ function toggleCollapse() {
 
 // 从路由表生成菜单：按角色 / 超管过滤，再按 meta.group 归组为折叠子菜单
 const menus = computed(() => {
-  const root = router.options.routes.find((r) => r.path === '/')
+  const root = router.options.routes.find((r) => r.path === '/supplymanagement')
   const isLegalCounsel = !userStore.isSuperuser && userStore.role === ROLES.LEGAL_COUNSEL
   const visible = (root?.children || [])
     .filter((c) => c.meta?.title)
@@ -117,13 +107,14 @@ const menus = computed(() => {
     .filter((c) => userStore.hasRole(c.meta.roles))
     // 系统管理（用户管理/操作日志）仅超管可见
     .filter((c) => !c.meta.requiresSuperuser || userStore.isSuperuser)
+    .map((c) => ({ ...c, resolvedPath: router.resolve({ name: c.name }).path }))
     // 法律顾问仅保留其允许入口（合同管理 / 客户档案库 / 个人设置）
-    .filter((c) => !isLegalCounsel || LEGAL_COUNSEL_PATHS.includes('/' + c.path))
+    .filter((c) => !isLegalCounsel || LEGAL_COUNSEL_PATHS.includes(c.resolvedPath))
 
   const result = []
   const groups = {}
   for (const c of visible) {
-    const item = { path: '/' + c.path, meta: c.meta }
+    const item = { path: c.resolvedPath, meta: c.meta }
     if (c.meta.group) {
       let g = groups[c.meta.group]
       if (!g) {
@@ -143,6 +134,9 @@ const menus = computed(() => {
 <style scoped lang="scss">
 .app-wrapper {
   height: 100%;
+  min-width: 0;
+}
+.supply-content {
   min-width: 0;
 }
 .sidebar {
@@ -280,60 +274,5 @@ const menus = computed(() => {
     padding-left: 44px !important;
     min-width: auto;
   }
-}
-.header {
-  height: 72px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 clamp(18px, 1.7vw, 30px);
-  background: var(--chrome-header-bg);
-  border-bottom: 1px solid var(--chrome-header-border);
-  box-shadow: var(--chrome-header-shadow);
-  backdrop-filter: blur(16px);
-  transition: all var(--motion-base) ease;
-  .title-block {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .title {
-    overflow: hidden;
-    color: var(--chrome-title-color);
-    font-family: var(--font-display);
-    font-size: 17px;
-    font-weight: 750;
-    letter-spacing: 0.04em;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .title-subtitle {
-    margin-top: 3px;
-    color: var(--el-text-color-secondary);
-    font-size: 11px;
-    letter-spacing: 0.08em;
-  }
-  .user {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    outline: none;
-    color: var(--chrome-title-color);
-  }
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-}
-
-@media (max-width: 1100px) {
-  .header .title-subtitle { display: none; }
-}
-
-@media (max-width: 760px) {
-  .header .title { font-size: 14px; }
-  .header .header-right { gap: 6px; }
 }
 </style>

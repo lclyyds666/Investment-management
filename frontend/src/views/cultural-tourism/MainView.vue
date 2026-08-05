@@ -69,7 +69,7 @@ const failed = reactive({}) // 图片加载失败 → 降级占位
 const configDialog = ref(null)
 
 function goDetail(id) {
-  router.push(`/cultural-tourism/${id}`)
+  router.push({ name: 'CulturalTourismDetail', params: { scenicId: id } })
 }
 </script>
 
