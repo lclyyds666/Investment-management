@@ -102,7 +102,9 @@ describe('portal permission guard', () => {
       companyRoles: { [SUPPLY_COMPANY]: 'business_handler' },
       resources: ['supply.operation']
     })
+    const hasCompany = vi.spyOn(portalStore, 'hasCompany')
     const hasResource = vi.spyOn(portalStore, 'hasResource')
+    const companyRole = vi.spyOn(portalStore, 'companyRole')
 
     await expect(portalGuard(route('/supplymanagement/operation', {
       company: SUPPLY_COMPANY,
@@ -110,6 +112,15 @@ describe('portal permission guard', () => {
       roles: ['finance_handler']
     }))).resolves.toEqual({ path: SUPPLY_DASHBOARD })
     expect(hasResource).toHaveBeenCalledWith('supply.operation')
+
+    const companyCheckOrder = hasCompany.mock.invocationCallOrder[0]
+    const resourceCheckOrder = hasResource.mock.invocationCallOrder[0]
+    const roleCheckOrder = companyRole.mock.invocationCallOrder.at(-1)
+    const roleDenialOrder = ElMessage.error.mock.invocationCallOrder[0]
+
+    expect(companyCheckOrder).toBeLessThan(resourceCheckOrder)
+    expect(resourceCheckOrder).toBeLessThan(roleCheckOrder)
+    expect(roleCheckOrder).toBeLessThan(roleDenialOrder)
   })
 
   it('enforces superuser after company, resource, and role checks pass', async () => {
@@ -131,5 +142,14 @@ describe('portal permission guard', () => {
     expect(hasResource).toHaveBeenCalledWith('supply.admin')
     expect(companyRole).toHaveBeenCalledWith(SUPPLY_COMPANY)
     expect(ElMessage.error).toHaveBeenCalledOnce()
+
+    const companyCheckOrder = hasCompany.mock.invocationCallOrder[0]
+    const resourceCheckOrder = hasResource.mock.invocationCallOrder[0]
+    const roleCheckOrder = companyRole.mock.invocationCallOrder.at(-1)
+    const superuserDenialOrder = ElMessage.error.mock.invocationCallOrder[0]
+
+    expect(companyCheckOrder).toBeLessThan(resourceCheckOrder)
+    expect(resourceCheckOrder).toBeLessThan(roleCheckOrder)
+    expect(roleCheckOrder).toBeLessThan(superuserDenialOrder)
   })
 })
