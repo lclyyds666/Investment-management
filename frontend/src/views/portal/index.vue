@@ -131,7 +131,7 @@ h1 {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 719px) {
   .portal-home {
     padding: 14px 12px 24px;
   }

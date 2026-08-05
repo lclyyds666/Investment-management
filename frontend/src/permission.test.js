@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createPinia, setActivePinia } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { usePortalStore } from '@/store/portal'
@@ -11,6 +13,7 @@ vi.mock('element-plus', () => ({
 
 const SUPPLY_COMPANY = 'supplymanagement'
 const SUPPLY_DASHBOARD = '/supplymanagement/dashboard'
+const PLATFORM_TITLE = '山东出版投资有限公司工作平台'
 
 function authenticatedContext({
   isSuperuser = false,
@@ -46,7 +49,13 @@ describe('portal permission guard', () => {
   it('uses the unified platform name in browser titles', async () => {
     authenticatedContext()
     await portalGuard(route('/', { title: 'AI 助手' }))
-    expect(document.title).toBe('AI 助手 - 山东出版投资有限公司工作平台')
+    expect(document.title).toBe(`AI 助手 - ${PLATFORM_TITLE}`)
+  })
+
+  it.each(['development', 'production'])('ships the unified title in the %s Vite environment', (mode) => {
+    const env = readFileSync(resolve(process.cwd(), `.env.${mode}`), 'utf8')
+
+    expect(env).toContain(`VITE_APP_TITLE=${PLATFORM_TITLE}`)
   })
 
   it('allows legal counsel to remain on the authenticated portal home', async () => {
