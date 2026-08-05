@@ -2,11 +2,20 @@ import unittest
 from decimal import Decimal
 from types import SimpleNamespace
 
+from app.models.scenic_config import ScenicConfig
 from app.schemas.scenic_config import ScenicConfigUpdate
 from app.services.scenic_config import get_effective_config
 
 
 class ScenicConfigTest(unittest.TestCase):
+    def test_orm_uses_existing_production_rate_columns(self):
+        self.assertEqual(ScenicConfig.ticket_rate_hexiao.property.columns[0].name, "rate_hexiao")
+        self.assertEqual(ScenicConfig.ticket_rate_settle.property.columns[0].name, "rate_settle")
+        self.assertEqual(
+            ScenicConfig.ticket_commission_rate.property.columns[0].name,
+            "commission_rate",
+        )
+
     def test_target_scenic_fallbacks_match_initial_configuration(self):
         zunyi = get_effective_config(None, "zunyi-zoo")
         self.assertEqual(zunyi.default_ticket_product, "遵义动物园")
