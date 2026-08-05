@@ -2,6 +2,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from fastapi import HTTPException
+
+from app.api.deps import require_company_resource, require_roles
 from app.core.enums import CompanyCode, ResourceCode, Role
 from app.models.portal import UserCompanyRole
 from app.services.permissions import allowed_resources, get_company_role, has_resource
@@ -51,6 +54,62 @@ class CompanyPermissionServiceTest(unittest.TestCase):
         resources = allowed_resources(Mock(), user, CompanyCode.SUPPLY_MANAGEMENT)
         self.assertIn(ResourceCode.SUPPLY_ADMIN, resources)
         self.assertIn(ResourceCode.SCENIC_ANALYTICS, resources)
+
+    def test_superuser_cannot_access_supply_resource_under_another_company(self):
+        user = SimpleNamespace(id=1, is_superuser=True)
+        self.assertFalse(
+            has_resource(
+                Mock(),
+                user,
+                CompanyCode.INVESTMENT,
+                ResourceCode.SCENIC_ANALYTICS,
+            )
+        )
+
+
+class CompanyPermissionDependencyTest(unittest.TestCase):
+    def test_require_roles_denies_missing_supply_membership(self):
+        user = SimpleNamespace(id=7, is_superuser=False)
+        db = Mock()
+        db.scalar.return_value = None
+
+        with self.assertRaises(HTTPException) as raised:
+            require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=db)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_require_roles_allows_superuser_without_lookup(self):
+        user = SimpleNamespace(id=1, is_superuser=True)
+        db = Mock()
+
+        self.assertIs(require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=db), user)
+        db.scalar.assert_not_called()
+
+    def test_require_company_resource_denies_missing_supply_membership(self):
+        user = SimpleNamespace(id=7, is_superuser=False)
+        db = Mock()
+        db.scalar.return_value = None
+
+        with self.assertRaises(HTTPException) as raised:
+            require_company_resource(
+                CompanyCode.SUPPLY_MANAGEMENT,
+                ResourceCode.SCENIC_ANALYTICS,
+            )(current_user=user, db=db)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_require_company_resource_allows_superuser_for_supply_resource(self):
+        user = SimpleNamespace(id=1, is_superuser=True)
+        db = Mock()
+
+        self.assertIs(
+            require_company_resource(
+                CompanyCode.SUPPLY_MANAGEMENT,
+                ResourceCode.SCENIC_ANALYTICS,
+            )(current_user=user, db=db),
+            user,
+        )
+        db.scalar.assert_not_called()
 
 
 if __name__ == "__main__":

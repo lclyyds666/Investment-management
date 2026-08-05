@@ -54,10 +54,10 @@ def get_company_role(db: Session, user: User, company: CompanyCode) -> Role | No
 def allowed_resources(
     db: Session, user: User, company: CompanyCode
 ) -> frozenset[ResourceCode]:
-    if user.is_superuser:
-        return frozenset(SUPPLY_RESOURCE_ROLES)
     if company != CompanyCode.SUPPLY_MANAGEMENT:
         return frozenset()
+    if user.is_superuser:
+        return frozenset(SUPPLY_RESOURCE_ROLES)
 
     company_role = get_company_role(db, user, company)
     if company_role is None:
