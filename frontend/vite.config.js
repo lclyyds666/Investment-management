@@ -20,6 +20,11 @@ export default defineConfig(({ mode }) => {
         '@': fileURLToPath(new URL('./src', import.meta.url))
       }
     },
+    test: {
+      environment: 'happy-dom',
+      globals: true,
+      setupFiles: ['./src/test/setup.js']
+    },
     server: {
       host: '0.0.0.0',
       port: 5173,
