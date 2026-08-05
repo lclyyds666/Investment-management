@@ -6,9 +6,12 @@
         <h1 class="page-title">文旅业务</h1>
         <p class="page-subtitle">按景区进入独立经营空间，集中查看平台入口、经营指标与核销台账。</p>
       </div>
-      <div class="ct-summary" aria-label="景区数量">
-        <strong>{{ scenicSpots.length }}</strong>
-        <span>个景区<br />统一运营</span>
+      <div class="ct-head-actions">
+        <el-button :icon="Setting" @click="configDialog?.open()">景区配置</el-button>
+        <div class="ct-summary" aria-label="景区数量">
+          <strong>{{ scenicSpots.length }}</strong>
+          <span>个景区<br />统一运营</span>
+        </div>
       </div>
     </header>
 
@@ -49,17 +52,21 @@
         </div>
       </div>
     </div>
+
+    <ScenicConfigDialog ref="configDialog" />
   </div>
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Place } from '@element-plus/icons-vue'
+import { ArrowRight, Place, Setting } from '@element-plus/icons-vue'
 import { scenicSpots } from '@/constants/scenic'
+import ScenicConfigDialog from '@/components/ScenicConfigDialog.vue'
 
 const router = useRouter()
 const failed = reactive({}) // 图片加载失败 → 降级占位
+const configDialog = ref(null)
 
 function goDetail(id) {
   router.push(`/cultural-tourism/${id}`)
@@ -71,6 +78,11 @@ function goDetail(id) {
   padding: 4px 2px 28px;
 }
 .ct-intro { margin-inline: auto; }
+.ct-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .ct-summary {
   display: flex;
   align-items: center;
@@ -195,6 +207,7 @@ function goDetail(id) {
 }
 
 @media (max-width: 720px) {
+  .ct-head-actions { width: 100%; justify-content: space-between; }
   .ct-summary { align-self: stretch; justify-content: center; }
   .ct-grid { grid-template-columns: 1fr; }
   .ct-card-img { height: 250px; }

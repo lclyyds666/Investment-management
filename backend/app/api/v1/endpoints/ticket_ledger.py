@@ -42,6 +42,7 @@ from app.schemas.ticket_ledger import (
     TicketLedgerUpdateIn,
 )
 from app.services import ticket_ledger as tl_svc
+from app.services.scenic_config import get_effective_config
 
 router = APIRouter()
 
@@ -106,6 +107,7 @@ def _recover_daily_json(row: TicketLedger) -> str:
         info = tl_svc.parse_reconciliation(
             source_path.read_bytes(),
             filename=row.detail_name or row.source_file or stored,
+            scenic_id=row.scenic_id,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"恢复逐日明细失败：{exc}") from exc
@@ -341,6 +343,7 @@ async def parse_files(
     _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
+    config = get_effective_config(db, sid)
     # 单期逻辑：每次上传只允许 1 个文件，1 文件即计为一期
     if len(files) != 1:
         raise HTTPException(status_code=400, detail="每次仅能上传 1 个对账明细文件（1 个文件=1 期）")
@@ -373,7 +376,12 @@ async def parse_files(
         # 且同一时刻只跑一个解析，避免重叠上传在小内存机上叠加 OOM。
         async with _PARSE_SEMAPHORE:
             info = await run_in_threadpool(
-                tl_svc.parse_reconciliation, content, filename=fname
+                tl_svc.parse_reconciliation, content, filename=fname, scenic_id=sid,
+                rate_hexiao=config.ticket_rate_hexiao,
+                rate_settle=config.ticket_rate_settle,
+                commission_rate=config.ticket_commission_rate,
+                commission_override=config.ticket_default_commission,
+                ticket_product=config.default_ticket_product,
             )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"解析失败：{exc}")
@@ -390,11 +398,15 @@ async def parse_files(
             )
         parsed.append(ParsedFile(
             platform=platform_info["platform"],
+            ticket_product=platform_info["ticket_product"],
             source_file=fname,
             detail_stored=detail_stored,
             detail_name=fname,
             supplier_received=platform_info["supplier_received"],
             suggested_commission=platform_info["suggested_commission"],
+            commission_rate=platform_info["commission_rate"],
+            rate_hexiao=platform_info["rate_hexiao"],
+            rate_settle=platform_info["rate_settle"],
             def_hexiao=platform_info["def_hexiao"],
             def_service_fee=platform_info["def_service_fee"],
             def_jinying=platform_info["def_jinying"],
@@ -458,6 +470,7 @@ def save_ledger(
     current_user: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
+    config = get_effective_config(db, sid)
 
     if payload.mode == "replace":
         db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))
@@ -471,12 +484,24 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
+        rate_hexiao = r.rate_hexiao if r.rate_hexiao is not None else config.ticket_rate_hexiao
+        rate_settle = r.rate_settle if r.rate_settle is not None else config.ticket_rate_settle
+        commission_rate = (
+            r.commission_rate
+            if r.commission_rate is not None
+            else config.ticket_commission_rate
+        )
+        commission_override = (
+            r.supplier_commission
+            if r.supplier_commission is not None
+            else config.ticket_default_commission
+        )
         # 逐日重算：有逐日明细则按天累加(核销/结算/服务费逐日舍入再相加)，否则回退期级公式
         calc = tl_svc.recompute_from_json(
-            r.daily_json, r.rate_hexiao, r.rate_settle, r.supplier_commission,
-            r.commission_rate, r.platform or "抖音", scenic_id=sid
+            r.daily_json, rate_hexiao, rate_settle, commission_override,
+            commission_rate, r.platform or "抖音", scenic_id=sid
         ) or tl_svc.compute_row(
-            r.supplier_received, r.supplier_commission, r.rate_hexiao, r.rate_settle,
+            r.supplier_received, commission_override or Decimal("0"), rate_hexiao, rate_settle,
             r.platform or "抖音", scenic_id=sid
         )
         # 结算金额可编辑：前端传入(手工改)则采用并令服务费=结算−核销；否则用逐日默认值
@@ -491,23 +516,23 @@ def save_ledger(
             row_no=base_no + i,
             pay_date=r.pay_date,
             platform=r.platform or "",
-            ticket_product=r.ticket_product or tl_svc.DEFAULT_TICKET_PRODUCT,
+            ticket_product=r.ticket_product or config.default_ticket_product,
             check_date_text=r.check_date_text or "",
             period_text=r.period_text or "",
             period_start=r.period_start,
             period_end=r.period_end,
             supplier_received=r.supplier_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
-            commission_rate=r.commission_rate,
+            commission_rate=commission_rate,
             publisher_due=calc["publisher_due"],
             hexiao_amount=calc["hexiao_amount"],
             payment_amount=r.payment_amount or Decimal("0"),
             co_investment_amount=r.co_investment_amount or Decimal("0"),
             jinying_amount=jinying_val,              # 结算金额(手工优先，否则逐日累加)
             service_fee=fee_val,                     # 服务费=结算−核销
-            rate_hexiao=r.rate_hexiao,
-            rate_settle=r.rate_settle,
-            rate_fee=r.rate_fee,
+            rate_hexiao=rate_hexiao,
+            rate_settle=rate_settle,
+            rate_fee=(r.rate_fee if r.rate_fee is not None else rate_settle - rate_hexiao),
             daily_json=r.daily_json or "",
             order_count=r.order_count or 0,
             positive_count=r.positive_count or 0,

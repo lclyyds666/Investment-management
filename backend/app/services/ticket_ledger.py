@@ -1,13 +1,9 @@
 """文旅业务·门票平台核销台账 Excel 适配器。
 
 职责：
-1. 解析平台对账明细 xlsx（同一文件可包含抖音/美团/携程/同程多个 Sheet），逐单累加
-   订单实收 − 软件服务费 − 达人服务费 − 团长服务费 − 服务商服务费
-   得到「服务商到账金额」，并解析对账周期跨度 / 核对日期文本。
-2. 出版应得到账金额 B = 服务商到账 − 服务商佣金(手工录入)；再按比例计算：
-     景区核销金额 = B × 核销率(默认 90%)
-     结算金额     = B × 结算费率(默认 94%)
-     服务费       = 结算金额 − 景区核销金额   (默认口径 = B × 4%)
+1. 解析平台对账明细 xlsx（同一文件可包含抖音/美团/携程/同程多个 Sheet），按景区与
+   平台的固定策略计算服务商到账，并解析对账周期跨度 / 核对日期文本。
+2. 使用调用方传入的景区配置快照计算服务商佣金、景区核销、结算金额和服务费，
    另按期次递推出景区待核销金额(滚动余额，见 running_pending)。
 3. 用 openpyxl 生成标准格式业务台账 xlsx（含合计行）供导出。
 
@@ -48,6 +44,7 @@ COL_SHISHOU = "订单实收金额"
 COL_RUANJIAN = "软件服务费"
 COL_DAREN = "达人服务费"
 COL_TUANZHANG = "团长服务费"
+COL_FUWUSHANG = "服务商服务费"
 COL_HEXIAO_TIME = "核销时间"
 # 携程门票对账明细。携程没有抖音的订单实收/佣金列，结算价即服务商到账口径。
 COL_XC_JIESUAN = "结算价金额"
@@ -58,6 +55,7 @@ COL_XC_PAYMENT_DATE = "付款日期"
 XC_ORDER_COST = "订单成本"
 # 美团门票消费结算明细。应付金额为扣除技术服务费后的商家结算净额。
 COL_MT_AMOUNT = "应付金额"
+COL_MT_TECH_FEE = "技术服务费"
 COL_MT_SETTLE_TYPE = "结算方式"
 COL_MT_COUNT = "张数"
 COL_MT_TIME = "时间"
@@ -70,6 +68,13 @@ _HEADER_SCAN_ROWS = 20
 # 服务商到账金额 = 订单实收 − 软件 − 达人 − 团长（明细中费用列为负数，直接相加）。
 # 注意：明细里的「服务商服务费」列其实是 -(服务商到账金额)，若一并相加会把结果抵消为 0，故不纳入。
 _FEE_COLS = (COL_RUANJIAN, COL_DAREN, COL_TUANZHANG)
+
+# 公式不属于运营配置，只能随代码评审和发布调整。
+_RECEIVED_RULES = {
+    ("zunyi-zoo", "抖音"): "zunyi_douyin",
+    ("zunyi-zoo", "美团"): "zunyi_meituan",
+    ("nanyang-wildlife", "抖音"): "nanyang_douyin",
+}
 
 
 def _num(v):
@@ -201,7 +206,22 @@ def _row_count(value, default: int = 1) -> int:
     return max(int(parsed), 0)
 
 
-def parse_reconciliation(content: bytes, filename: str = "") -> dict:
+def _fee_charge(value: Decimal | None) -> Decimal:
+    """平台费用列正负号不统一，业务公式统一按正向费用金额扣减。"""
+    return abs(value or Decimal("0"))
+
+
+def parse_reconciliation(
+    content: bytes,
+    filename: str = "",
+    *,
+    scenic_id: str = "legacy",
+    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
+    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
+    commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+    commission_override=None,
+    ticket_product: str = DEFAULT_TICKET_PRODUCT,
+) -> dict:
     """解析一个对账明细 xlsx，返回汇总。
 
     返回:
@@ -258,7 +278,19 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                 aggregate["sheets"].append(ws.title)
                 i_shishou = _header_index(header, COL_SHISHOU)
                 i_fees = [_header_index(header, c) for c in _FEE_COLS]
+                i_fuwushang = _header_index(header, COL_FUWUSHANG)
                 i_time = _header_index(header, COL_HEXIAO_TIME)
+                received_rule = _RECEIVED_RULES.get((scenic_id, "抖音"), "default")
+                if received_rule == "zunyi_douyin":
+                    missing = [
+                        name for name, idx in (
+                            (COL_DAREN, i_fees[1]), (COL_FUWUSHANG, i_fuwushang)
+                        ) if idx < 0
+                    ]
+                    if missing:
+                        raise ValueError(
+                            f"遵义动物园抖音明细缺少必要列：{'、'.join(missing)}"
+                        )
                 for raw in rows_iter:
                     if not raw:
                         continue
@@ -266,12 +298,24 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                     fee_vals = [
                         (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
                     ]
+                    fuwushang = (
+                        _num(raw[i_fuwushang]) if 0 <= i_fuwushang < len(raw) else None
+                    )
                     # 空行 / 小计行：实收与全部费用都无值 → 跳过
-                    if shishou is None and all(f is None for f in fee_vals):
+                    if shishou is None and all(f is None for f in fee_vals) and fuwushang is None:
                         continue
-                    base = (shishou or Decimal("0"))
-                    for fee in fee_vals:
-                        base += (fee or Decimal("0"))  # 费用为负数，直接相加
+                    if received_rule == "zunyi_douyin":
+                        base = (
+                            (shishou or Decimal("0"))
+                            - _fee_charge(fee_vals[1])
+                            - _fee_charge(fuwushang)
+                        )
+                    elif received_rule == "nanyang_douyin":
+                        base = shishou or Decimal("0")
+                    else:
+                        base = shishou or Decimal("0")
+                        for fee in fee_vals:
+                            base += fee or Decimal("0")  # 通用账单费用为负数，直接相加
                     aggregate["supplier_received"] += base
                     aggregate["order_count"] += 1
                     if shishou is not None and shishou > 0:
@@ -334,9 +378,13 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                 aggregate = platform_aggregate("美团")
                 aggregate["sheets"].append(ws.title)
                 i_amount = _header_index(header, COL_MT_AMOUNT)
+                i_tech_fee = _header_index(header, COL_MT_TECH_FEE)
                 i_settle_type = _header_index(header, COL_MT_SETTLE_TYPE)
                 i_count = _header_index(header, COL_MT_COUNT)
                 i_time = _header_index(header, COL_MT_TIME)
+                received_rule = _RECEIVED_RULES.get((scenic_id, "美团"), "default")
+                if received_rule == "zunyi_meituan" and i_tech_fee < 0:
+                    raise ValueError(f"遵义动物园美团明细缺少必要列：{COL_MT_TECH_FEE}")
                 for raw in rows_iter:
                     if not raw:
                         continue
@@ -350,6 +398,11 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                     base = _num(raw[i_amount]) if 0 <= i_amount < len(raw) else None
                     if base is None:
                         continue
+                    if received_rule == "zunyi_meituan":
+                        tech_fee = (
+                            _num(raw[i_tech_fee]) if 0 <= i_tech_fee < len(raw) else None
+                        )
+                        base += tech_fee or Decimal("0")
                     count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
                     d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
                     add_date(aggregate, d)
@@ -410,9 +463,21 @@ def parse_reconciliation(content: bytes, filename: str = "") -> dict:
                 f"{p_start.year}/{p_start.month}/{p_start.day}-"
                 f"{p_end.year}/{p_end.month}/{p_end.day}"
             )
-        defs = daily_defaults(aggregate["daily"], platform=platform)
+        defs = daily_defaults(
+            aggregate["daily"],
+            rate_hexiao=rate_hexiao,
+            rate_settle=rate_settle,
+            commission_override=commission_override,
+            commission_rate=commission_rate,
+            platform=platform,
+            scenic_id=scenic_id,
+        )
         platforms.append({
             "platform": platform,
+            "ticket_product": ticket_product,
+            "rate_hexiao": rate_hexiao,
+            "rate_settle": rate_settle,
+            "commission_rate": commission_rate,
             "supplier_received": _q(aggregate["supplier_received"]),
             "suggested_commission": defs["commission"],
             "def_hexiao": defs["hexiao"],
@@ -515,10 +580,14 @@ calculateTicketLedger = calculate_ticket_ledger
 def daily_defaults(daily: dict[str, dict],
                    rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
                    rate_settle: Decimal = DEFAULT_RATE_SETTLE,
-                   platform: str = "抖音") -> dict:
+                   commission_override=None,
+                   commission_rate: Decimal = DEFAULT_COMMISSION_RATE,
+                   platform: str = "抖音",
+                   scenic_id: str = "legacy") -> dict:
     """解析时的按日精准默认值（佣金取逐日自动值）。"""
     res = recompute_from_days(
-        _days_from_daily(daily), rate_hexiao, rate_settle, None, platform=platform
+        _days_from_daily(daily), rate_hexiao, rate_settle, commission_override,
+        commission_rate, platform, scenic_id
     )
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),

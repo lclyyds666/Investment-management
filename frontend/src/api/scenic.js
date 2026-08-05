@@ -26,3 +26,16 @@ export function clearScenicLedger(scenicId) {
 export function getScenicMetrics(scenicId) {
   return request.get(`/scenic-spots/${encodeURIComponent(scenicId)}/metrics`)
 }
+
+/** 查询全部景区门票默认配置 */
+export function getScenicConfigs() {
+  return request.get('/scenic-spots/configs')
+}
+
+/** 修改单个景区门票默认配置 */
+export function updateScenicConfig(scenicId, payload) {
+  return request.put(
+    `/scenic-spots/${encodeURIComponent(scenicId)}/config`,
+    payload
+  )
+}

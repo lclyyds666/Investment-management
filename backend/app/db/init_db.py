@@ -27,6 +27,7 @@ from app.models.operation import OperationData
 from app.models.project import ProjectMetrics  # noqa: F401
 from app.models.research import CustomerMaterial, CustomerResearch  # noqa: F401
 from app.models.scenic import ScenicLedger  # noqa: F401
+from app.models.scenic_config import ScenicConfig
 from app.models.ticket_ledger import TicketLedger  # noqa: F401 确保 create_all 建表
 from app.models.user import User
 
@@ -129,6 +130,26 @@ def seed_channels(db: Session) -> None:
     db.commit()
 
 
+def seed_scenic_configs(db: Session) -> None:
+    """补齐景区默认配置；已有行由运营维护，不覆盖。"""
+    from app.services.scenic_config import SCENIC_SEEDS
+
+    for sid, name, order, product, hexiao, settle, commission_rate, commission in SCENIC_SEEDS:
+        if db.get(ScenicConfig, sid):
+            continue
+        db.add(ScenicConfig(
+            scenic_id=sid,
+            scenic_name=name,
+            sort_order=order,
+            default_ticket_product=product,
+            ticket_rate_hexiao=Decimal(hexiao),
+            ticket_rate_settle=Decimal(settle),
+            ticket_commission_rate=Decimal(commission_rate),
+            ticket_default_commission=Decimal(commission) if commission is not None else None,
+        ))
+    db.commit()
+
+
 def seed_channel_data(db: Session) -> None:
     """为示例渠道「携程商旅」写入一份带列映射的回传数据，并汇入经营表，
     开箱即可在首页/大屏看到"渠道 → 经营看板"的真实联动效果。"""
@@ -187,6 +208,7 @@ def init() -> None:
         seed_operation(db)
         seed_customers(db)
         seed_channels(db)
+        seed_scenic_configs(db)
         seed_channel_data(db)
         seed_invoices(db)
         print("数据库初始化完成：已建表并写入种子数据。")

@@ -18,10 +18,13 @@ from app.core.enums import Role
 from app.db.session import get_db
 from app.models.hotel_ledger import HotelLedger
 from app.models.scenic import ScenicLedger
+from app.models.scenic_config import ScenicConfig
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.scenic import ScenicLedgerOut, ScenicLedgerRow, ScenicUploadResult
+from app.schemas.scenic_config import ScenicConfigOut, ScenicConfigUpdate
+from app.services import scenic_config as scenic_config_svc
 
 router = APIRouter()
 
@@ -94,6 +97,85 @@ def _columns_of(rows: list[dict]) -> list[str]:
             if k not in cols:
                 cols.append(k)
     return cols
+
+
+def _config_out(config) -> ScenicConfigOut:
+    return ScenicConfigOut(
+        scenic_id=config.scenic_id,
+        scenic_name=config.scenic_name,
+        sort_order=config.sort_order,
+        default_ticket_product=config.default_ticket_product,
+        ticket_rate_hexiao=config.ticket_rate_hexiao,
+        ticket_rate_settle=config.ticket_rate_settle,
+        ticket_commission_rate=config.ticket_commission_rate,
+        ticket_default_commission=config.ticket_default_commission,
+        configured=config.configured,
+        updated_by=config.updated_by,
+        updated_at=config.updated_at,
+    )
+
+
+@router.get(
+    "/configs",
+    response_model=Response[list[ScenicConfigOut]],
+    summary="查询全部景区默认配置",
+)
+def get_configs(db: Session = Depends(get_db), _: User = Depends(_view_guard)):
+    return Response.ok([_config_out(item) for item in scenic_config_svc.list_effective_configs(db)])
+
+
+@router.get(
+    "/{scenic_id}/config",
+    response_model=Response[ScenicConfigOut],
+    summary="查询单个景区默认配置",
+)
+def get_config(
+    scenic_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(_view_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    return Response.ok(_config_out(scenic_config_svc.get_effective_config(db, sid)))
+
+
+@router.put(
+    "/{scenic_id}/config",
+    response_model=Response[ScenicConfigOut],
+    summary="修改景区默认配置",
+)
+def update_config(
+    scenic_id: str,
+    payload: ScenicConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_edit_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    row = db.get(ScenicConfig, sid)
+    if row is None:
+        fallback = scenic_config_svc.get_effective_config(None, sid)
+        row = ScenicConfig(
+            scenic_id=sid,
+            scenic_name=fallback.scenic_name,
+            sort_order=fallback.sort_order,
+            default_ticket_product=fallback.default_ticket_product,
+            ticket_rate_hexiao=fallback.ticket_rate_hexiao,
+            ticket_rate_settle=fallback.ticket_rate_settle,
+            ticket_commission_rate=fallback.ticket_commission_rate,
+            ticket_default_commission=fallback.ticket_default_commission,
+        )
+        db.add(row)
+    row.default_ticket_product = payload.default_ticket_product
+    row.ticket_rate_hexiao = payload.ticket_rate_hexiao
+    row.ticket_rate_settle = payload.ticket_rate_settle
+    row.ticket_commission_rate = payload.ticket_commission_rate
+    row.ticket_default_commission = payload.ticket_default_commission
+    row.updated_by = current_user.id
+    db.commit()
+    db.refresh(row)
+    return Response.ok(
+        _config_out(scenic_config_svc.get_effective_config(db, sid)),
+        message="景区配置已保存，后续新解析将使用最新值",
+    )
 
 
 @router.get(

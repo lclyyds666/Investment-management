@@ -157,6 +157,86 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
             self.assertEqual(item["period_end"].isoformat(), "2026-06-21")
             self.assertTrue(item["daily_json"])
 
+    @staticmethod
+    def _target_scenic_workbook(include_meituan_tech_fee: bool = True) -> bytes:
+        wb = Workbook()
+        douyin = wb.active
+        douyin.title = "抖音"
+        douyin.append([
+            "订单实收金额", "软件服务费", "达人服务费", "团长服务费",
+            "服务商服务费", "核销时间",
+        ])
+        douyin.append([100, -1, -2, -3, -5, datetime(2026, 8, 1, 10, 0)])
+
+        meituan = wb.create_sheet("美团")
+        headers = ["结算方式", "应付金额"]
+        values = ["消费结算", 80]
+        if include_meituan_tech_fee:
+            headers.append("技术服务费")
+            values.append(-3)
+        headers.extend(["张数", "时间"])
+        values.extend([1, datetime(2026, 8, 1, 11, 0)])
+        meituan.append(headers)
+        meituan.append(values)
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+        return output.getvalue()
+
+    def test_zunyi_uses_configured_rates_and_fixed_platform_received_rules(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._target_scenic_workbook(),
+            "遵义动物园8.1-8.1.xlsx",
+            scenic_id="zunyi-zoo",
+            rate_hexiao=Decimal("0.84"),
+            rate_settle=Decimal("0.87"),
+            commission_rate=Decimal("0"),
+            commission_override=Decimal("0"),
+            ticket_product="遵义动物园",
+        )
+        by_platform = {item["platform"]: item for item in parsed["platforms"]}
+
+        douyin = by_platform["抖音"]
+        self.assertEqual(douyin["supplier_received"], Decimal("93.00"))
+        self.assertEqual(douyin["suggested_commission"], Decimal("0.00"))
+        self.assertEqual(douyin["def_hexiao"], Decimal("78.12"))
+        self.assertEqual(douyin["def_jinying"], Decimal("80.91"))
+        self.assertEqual(douyin["ticket_product"], "遵义动物园")
+        self.assertEqual(douyin["rate_hexiao"], Decimal("0.84"))
+        self.assertEqual(douyin["rate_settle"], Decimal("0.87"))
+
+        meituan = by_platform["美团"]
+        self.assertEqual(meituan["supplier_received"], Decimal("77.00"))
+        self.assertEqual(meituan["suggested_commission"], Decimal("0.00"))
+        self.assertEqual(meituan["def_hexiao"], Decimal("64.68"))
+        self.assertEqual(meituan["def_jinying"], Decimal("66.99"))
+
+    def test_nanyang_douyin_received_is_order_received(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._target_scenic_workbook(),
+            "南阳森林野生动物世界8.1-8.1.xlsx",
+            scenic_id="nanyang-wildlife",
+            rate_hexiao=Decimal("0.80"),
+            rate_settle=Decimal("0.85"),
+            commission_rate=Decimal("0"),
+            commission_override=Decimal("0"),
+            ticket_product="南阳森林野生动物世界",
+        )
+        douyin = next(item for item in parsed["platforms"] if item["platform"] == "抖音")
+        self.assertEqual(douyin["supplier_received"], Decimal("100.00"))
+        self.assertEqual(douyin["suggested_commission"], Decimal("0.00"))
+        self.assertEqual(douyin["def_hexiao"], Decimal("80.00"))
+        self.assertEqual(douyin["def_jinying"], Decimal("85.00"))
+
+    def test_zunyi_meituan_requires_technical_service_fee(self):
+        with self.assertRaisesRegex(ValueError, "技术服务费"):
+            ticket_ledger.parse_reconciliation(
+                self._target_scenic_workbook(include_meituan_tech_fee=False),
+                "遵义动物园8.1-8.1.xlsx",
+                scenic_id="zunyi-zoo",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

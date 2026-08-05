@@ -10,13 +10,17 @@ class ParsedFile(BaseModel):
     """单个对账明细文件解析结果（上传即算，不落库；供前端录入服务商佣金/付款金额等）。"""
 
     platform: str = ""
+    ticket_product: str = ""
     source_file: str = ""
     # 明细源文件已落盘，供预览/下载；保存台账时随行持久化
     detail_stored: str = ""
     detail_name: str = ""
     supplier_received: Decimal = Decimal("0")   # 服务商到账金额（明细算）
-    # 服务商佣金建议值 = 订单实收×6% − 达人 − 团长（前端预填，可手工修改）
+    # 按景区配置和逐日明细算出的服务商佣金快照（前端预填，可手工修改）
     suggested_commission: Decimal = Decimal("0")
+    commission_rate: Decimal = Decimal("0")
+    rate_hexiao: Decimal = Decimal("0")
+    rate_settle: Decimal = Decimal("0")
     # 按日期粒度逐日计算后累加的精准默认值（核销/服务费/结算）
     def_hexiao: Decimal = Decimal("0")
     def_service_fee: Decimal = Decimal("0")
@@ -46,19 +50,19 @@ class TicketLedgerSaveRow(BaseModel):
 
     pay_date: Optional[date] = None
     platform: str = ""
-    ticket_product: str = "水上世界/童话世界/海洋王国"
+    ticket_product: Optional[str] = None
     check_date_text: str = ""
     period_text: str = ""
     period_start: Optional[date] = None
     period_end: Optional[date] = None
     supplier_received: Decimal = Decimal("0")
-    supplier_commission: Decimal = Decimal("0")     # 服务商佣金（手工，默认0）
-    commission_rate: Decimal = Field(default=Decimal("0.06"))  # 服务商佣金率（仅抖音，默认0.06）
+    supplier_commission: Optional[Decimal] = None    # 未传时读取景区默认佣金
+    commission_rate: Optional[Decimal] = Field(default=None, ge=0, le=1)
     payment_amount: Decimal = Decimal("0")          # 付款金额（手工，期次递推输入）
     co_investment_amount: Decimal = Field(default=Decimal("0"), ge=0)  # 跟投金额
-    rate_hexiao: Decimal = Field(default=Decimal("0.90"))
-    rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率（结算金额=B×结算费率）
-    rate_fee: Decimal = Field(default=Decimal("0.04"))     # 旧服务费率（已弃用，兼容保留）
+    rate_hexiao: Optional[Decimal] = Field(default=None, ge=0, le=1)
+    rate_settle: Optional[Decimal] = Field(default=None, ge=0, le=1)
+    rate_fee: Optional[Decimal] = None                    # 旧服务费率（已弃用，兼容保留）
     # 结算金额：默认=景区核销+服务费(后端算)；前端可传覆盖值(可编辑默认值)
     jinying_amount: Optional[Decimal] = None
     # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用，避免全量汇总误差）

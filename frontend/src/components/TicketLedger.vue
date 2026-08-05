@@ -22,11 +22,6 @@
       </div>
     </div>
 
-    <el-alert
-      type="info" :closable="false" show-icon class="tl-tip"
-      title="流程：每次上传 1 个对账明细（即 1 期）→ 自动算「服务商到账」与「服务商佣金(=订单实收×6%−达人−团长，可改)」→ 出版应得到账=服务商到账−服务商佣金 → 录入「付款金额」→ 系统按核销率/结算费率算景区核销(=出版应得×90%)、结算金额(=出版应得×结算费率94%)、服务费(=结算−核销)，并按期次递推「景区待核销金额」→ 保存生成台账。"
-    />
-
     <!-- 待确认区：本期上传解析后的可编辑草稿表（仅展示本次上传，不含历史已确认记录） -->
     <el-card v-if="draftRows.length" shadow="never" class="tl-draft">
       <template #header>
@@ -210,7 +205,6 @@
           <el-input-number v-model="editForm.supplier_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width: 100%" @update:model-value="markReceivedEdited" />
           <div class="edit-hint">算法自动算出，可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
-        <!-- 服务商佣金算法仅对抖音生效：佣金率可动态调整(默认6%) -->
         <el-form-item v-if="editForm.platform === '抖音'" label="服务商佣金率">
           <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width: 100%" @update:model-value="onCommissionRateInput" @change="onCommissionRateChange" />
           <span class="pct-suffix">%</span>
@@ -300,11 +294,6 @@ const canUploadConfirm = computed(() => userStore.isSuperuser || userStore.role 
 const canApproveConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
-// 默认比例（核销率/结算费率的逐行编辑迁至「编辑台账行」弹窗；草稿按默认值预览）
-// 结算费率默认 0.94（= 旧核销率0.90 + 旧服务费率0.04）：结算金额=出版应得×结算费率，服务费=结算−核销。
-const DEFAULT_RATE_HEXIAO = 0.9
-const DEFAULT_RATE_SETTLE = 0.94
-
 const loading = ref(false)
 const parsing = ref(false)
 const saving = ref(false)
@@ -326,19 +315,26 @@ function numberOr(value, fallback = 0) {
 function draftPublisherDue(row) {
   return round2((Number(row.supplier_received) || 0) - (Number(row.supplier_commission) || 0))
 }
-function calcHexiao(b) { return round2((Number(b) || 0) * DEFAULT_RATE_HEXIAO) }
-function calcJinying(b) { return round2((Number(b) || 0) * DEFAULT_RATE_SETTLE) }
-function calcFee(b) { return round2(calcJinying(b) - calcHexiao(b)) }
+function calcHexiao(row, b) {
+  return round2((Number(b) || 0) * numberOr(row.rate_hexiao))
+}
+function calcJinying(row, b) {
+  return round2((Number(b) || 0) * numberOr(row.rate_settle))
+}
 // 佣金未改动 → 展示后端「按日期粒度」算出的精准默认值；改动了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
   return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
 }
 function rowHexiao(row) {
-  return isDefaultComm(row) ? (Number(row.def_hexiao) || 0) : calcHexiao(draftPublisherDue(row))
+  return isDefaultComm(row)
+    ? (Number(row.def_hexiao) || 0)
+    : calcHexiao(row, draftPublisherDue(row))
 }
 // 结算金额默认值：佣金未改用后端「逐日累加」值，改了用 JS 期级预览(保存后按逐日重算)
 function rowJinyingDefault(row) {
-  return isDefaultComm(row) ? (Number(row.def_jinying) || 0) : calcJinying(draftPublisherDue(row))
+  return isDefaultComm(row)
+    ? (Number(row.def_jinying) || 0)
+    : calcJinying(row, draftPublisherDue(row))
 }
 // 改服务商佣金 → 结算金额回到默认(跟随)，清除手工标记
 function onDraftCommChange(row) {
@@ -401,14 +397,16 @@ async function onFileChange(file) {
     draftRows.value = (res.files || []).map((f) => ({
       pay_date: null,
       platform: f.platform || '抖音',
-      ticket_product: f.ticket_product || '水上世界/童话世界/海洋王国',
+      ticket_product: f.ticket_product || scenicName.value,
       check_date_text: f.check_date_text,
       period_text: f.period_text,
       period_start: f.period_start,
       period_end: f.period_end,
       supplier_received: f.supplier_received,
-      // 服务商佣金 = 订单实收×6% − 达人 − 团长（后端按日算出的建议值，可手工修改）
       supplier_commission: Number(f.suggested_commission) || 0,
+      commission_rate: numberOr(f.commission_rate),
+      rate_hexiao: numberOr(f.rate_hexiao),
+      rate_settle: numberOr(f.rate_settle),
       // 后端「按日期粒度」算出的精准默认值（未改佣金时直接展示/采用）
       def_commission: Number(f.suggested_commission) || 0,
       def_hexiao: Number(f.def_hexiao) || 0,
@@ -449,8 +447,9 @@ async function onSave() {
     supplier_received: r.supplier_received,
     supplier_commission: r.supplier_commission || 0,
     payment_amount: r.payment_amount || 0,
-    rate_hexiao: DEFAULT_RATE_HEXIAO,
-    rate_settle: DEFAULT_RATE_SETTLE,
+    commission_rate: r.commission_rate,
+    rate_hexiao: r.rate_hexiao,
+    rate_settle: r.rate_settle,
     daily_json: r.daily_json,
     // 结算金额仅在手工改过时上传(覆盖)，否则由后端逐日累加
     jinying_amount: r.jinyingEdited ? r.jinying_amount : null,
@@ -488,8 +487,8 @@ const editForm = reactive({
   pay_date: null, platform: '',
   supplier_received: 0, receivedEdited: false,   // 服务商到账(可人工改)
   supplier_commission: 0,
-  commissionRatePct: 6, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
-  ratePctHexiao: 90, ratePctSettle: 94,
+  commissionRatePct: 0, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
+  ratePctHexiao: 0, ratePctSettle: 0,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false, payment_amount: 0,
   repay_date: null, repay_amount: null, co_investment_amount: 0
@@ -554,10 +553,10 @@ function openEdit(row) {
   editForm.supplier_received = Number(row.supplier_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
-  editForm.commissionRatePct = round2(numberOr(row.commission_rate, 0.06) * 100)
+  editForm.commissionRatePct = round2(numberOr(row.commission_rate) * 100)
   editForm.commissionEdited = false
-  editForm.ratePctHexiao = round2(numberOr(row.rate_hexiao, DEFAULT_RATE_HEXIAO) * 100)
-  editForm.ratePctSettle = round2(numberOr(row.rate_settle, DEFAULT_RATE_SETTLE) * 100)
+  editForm.ratePctHexiao = round2(numberOr(row.rate_hexiao) * 100)
+  editForm.ratePctSettle = round2(numberOr(row.rate_settle) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
   editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0
@@ -831,7 +830,6 @@ watch(() => props.scenicId, loadSaved, { immediate: true })
   .el-icon { color: var(--el-color-primary); }
 }
 .tl-ops { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.tl-tip { margin-bottom: 16px; line-height: 1.65; }
 .tl-draft { margin-bottom: 20px; border-color: var(--surface-border-strong) !important; }
 .draft-header {
   display: flex;
