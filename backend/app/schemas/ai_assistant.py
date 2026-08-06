@@ -85,6 +85,40 @@ class AiConversationOut(StrictAiModel):
     messages: list[AiMessageOut] = Field(default_factory=list)
 
 
+class AiConversationSummaryOut(StrictAiModel):
+    id: int
+    owner_id: int
+    title: str
+    status: Literal["active"]
+    last_active_at: datetime
+    expires_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class AiToolCallOut(StrictAiModel):
+    id: int
+    message_id: int
+    tool_name: str
+    arguments_json: dict[str, Any]
+    permission_decision: Literal["allowed", "denied"]
+    status: Literal["completed", "failed"]
+    duration_ms: int | None = None
+    result_summary_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminAiMessageOut(AiMessageOut):
+    first_token_ms: int | None = None
+    duration_ms: int | None = None
+    tool_calls: list[AiToolCallOut] = Field(default_factory=list)
+
+
+class AdminAiConversationOut(AiConversationSummaryOut):
+    messages: list[AdminAiMessageOut] = Field(default_factory=list)
+
+
 class ToolResult(StrictAiModel):
     data: dict[str, Any] = Field(default_factory=dict)
     actions: list[ScenicNavigationAction] = Field(default_factory=list)
@@ -159,6 +193,14 @@ class NavigationInput(StrictToolInput):
 
 class AdminDeleteRequest(StrictAiModel):
     reason: str = Field(min_length=2, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_must_contain_visible_text(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("删除原因至少需要 2 个字符")
+        return value
 
 
 class AiDeletionAuditOut(StrictAiModel):

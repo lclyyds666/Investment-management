@@ -1,26 +1,36 @@
 """Authenticated user APIs for AI assistant conversations."""
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_superuser
 from app.db.session import get_db
 from app.models.ai_assistant import AiConversation, AiMessage
 from app.models.user import User
 from app.schemas.ai_assistant import (
     AiConversationCreate,
     AiConversationOut,
+    AiConversationSummaryOut,
     AiConversationUpdate,
+    AiDeletionAuditOut,
+    AdminAiConversationOut,
+    AdminDeleteRequest,
     AiMessageCreate,
 )
 from app.schemas.common import Response
 from app.services.ai_conversations import (
     begin_generation,
     create_conversation,
+    delete_admin_conversation,
     delete_owned_conversation,
+    get_admin_conversation,
     get_owned_conversation,
     list_owned_conversations,
+    list_admin_conversations,
+    list_deletion_audits,
     rename_owned_conversation,
     suggestions_for_user,
     stream_generation,
@@ -28,6 +38,100 @@ from app.services.ai_conversations import (
 from app.services.ai_runtime import request_stop
 
 router = APIRouter()
+
+
+@router.get("/admin/conversations", response_model=Response[dict], summary="AI 会话审计列表")
+def list_admin_conversation_records(
+    user_id: int | None = None,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    status_filter: str | None = Query(default=None, alias="status", max_length=24),
+    keyword: str | None = Query(default=None, max_length=200),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_superuser),
+):
+    rows, total = list_admin_conversations(
+        db,
+        user_id=user_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        conversation_status=status_filter,
+        keyword=keyword,
+        page=page,
+        size=size,
+    )
+    return Response.ok({
+        "items": [AiConversationSummaryOut.model_validate(row) for row in rows],
+        "total": total,
+        "page": page,
+        "size": size,
+    })
+
+
+@router.get(
+    "/admin/conversations/{conversation_id}",
+    response_model=Response[AdminAiConversationOut],
+    summary="AI 会话审计详情",
+)
+def get_admin_conversation_record(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_superuser),
+):
+    return Response.ok(AdminAiConversationOut.model_validate(
+        get_admin_conversation(db, conversation_id)
+    ))
+
+
+@router.delete(
+    "/admin/conversations/{conversation_id}",
+    response_model=Response[AiDeletionAuditOut],
+    summary="管理员删除 AI 会话",
+)
+def delete_admin_conversation_record(
+    conversation_id: int,
+    payload: AdminDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_superuser),
+):
+    receipt = delete_admin_conversation(
+        db, conversation_id, current_user.id, payload.reason
+    )
+    return Response.ok(AiDeletionAuditOut.model_validate(receipt), message="会话已删除")
+
+
+@router.get(
+    "/admin/deletion-audits",
+    response_model=Response[dict],
+    summary="AI 会话删除审计",
+)
+def get_deletion_audit_records(
+    user_id: int | None = None,
+    mode: str | None = Query(default=None, max_length=24),
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_superuser),
+):
+    rows, total = list_deletion_audits(
+        db,
+        user_id=user_id,
+        mode=mode,
+        started_at=started_at,
+        ended_at=ended_at,
+        page=page,
+        size=size,
+    )
+    return Response.ok({
+        "items": [AiDeletionAuditOut.model_validate(row) for row in rows],
+        "total": total,
+        "page": page,
+        "size": size,
+    })
 
 
 @router.post(

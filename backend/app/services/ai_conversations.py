@@ -6,12 +6,13 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import AsyncIterator
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -85,6 +86,61 @@ def list_owned_conversations(
     return rows, total
 
 
+def list_admin_conversations(
+    db: Session,
+    *,
+    user_id: int | None = None,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    conversation_status: str | None = None,
+    keyword: str | None = None,
+    page: int,
+    size: int,
+) -> tuple[list[AiConversation], int]:
+    conditions = []
+    if user_id is not None:
+        conditions.append(AiConversation.owner_id == user_id)
+    if started_at is not None:
+        conditions.append(AiConversation.created_at >= started_at)
+    if ended_at is not None:
+        conditions.append(AiConversation.created_at <= ended_at)
+    if conversation_status:
+        conditions.append(AiConversation.status == conversation_status)
+    if keyword and keyword.strip():
+        pattern = f"%{keyword.strip()}%"
+        message_match = select(AiMessage.id).where(
+            AiMessage.conversation_id == AiConversation.id,
+            AiMessage.content.ilike(pattern),
+        ).exists()
+        conditions.append(or_(AiConversation.title.ilike(pattern), message_match))
+
+    statement = (
+        select(AiConversation)
+        .where(*conditions)
+        .order_by(AiConversation.last_active_at.desc(), AiConversation.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = db.scalars(statement).all()
+    total = db.scalar(
+        select(func.count()).select_from(AiConversation).where(*conditions)
+    ) or 0
+    return rows, total
+
+
+def get_admin_conversation(db: Session, conversation_id: int) -> AiConversation:
+    conversation = db.scalar(
+        select(AiConversation)
+        .options(
+            selectinload(AiConversation.messages).selectinload(AiMessage.tool_calls)
+        )
+        .where(AiConversation.id == conversation_id)
+    )
+    if conversation is None:
+        raise _not_found()
+    return conversation
+
+
 def create_conversation(db: Session, user_id: int, title: str = _DEFAULT_TITLE) -> AiConversation:
     now = datetime.now()
     conversation = AiConversation(
@@ -131,6 +187,121 @@ def delete_owned_conversation(
         db.rollback()
         raise
     return receipt
+
+
+def delete_admin_conversation(
+    db: Session,
+    conversation_id: int,
+    actor_id: int,
+    reason: str,
+) -> AiDeletionAudit:
+    conversation = get_admin_conversation(db, conversation_id)
+    receipt = AiDeletionAudit(
+        conversation_id=conversation.id,
+        owner_id=conversation.owner_id,
+        actor_id=actor_id,
+        mode="admin",
+        reason=reason,
+        deleted_message_count=len(conversation.messages),
+        deleted_at=datetime.now(),
+    )
+    try:
+        db.add(receipt)
+        db.delete(conversation)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(receipt)
+    return receipt
+
+
+def list_deletion_audits(
+    db: Session,
+    *,
+    user_id: int | None = None,
+    mode: str | None = None,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    page: int,
+    size: int,
+) -> tuple[list[AiDeletionAudit], int]:
+    conditions = []
+    if user_id is not None:
+        conditions.append(AiDeletionAudit.owner_id == user_id)
+    if mode:
+        conditions.append(AiDeletionAudit.mode == mode)
+    if started_at is not None:
+        conditions.append(AiDeletionAudit.deleted_at >= started_at)
+    if ended_at is not None:
+        conditions.append(AiDeletionAudit.deleted_at <= ended_at)
+    rows = db.scalars(
+        select(AiDeletionAudit)
+        .where(*conditions)
+        .order_by(AiDeletionAudit.deleted_at.desc(), AiDeletionAudit.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    ).all()
+    total = db.scalar(
+        select(func.count()).select_from(AiDeletionAudit).where(*conditions)
+    ) or 0
+    return rows, total
+
+
+@dataclass(frozen=True)
+class CleanupResult:
+    deleted_conversations: int
+    deleted_messages: int
+
+
+def _expired_conversation_batch(
+    db: Session, *, now: datetime
+) -> list[AiConversation]:
+    cutoff = now - timedelta(days=settings.AI_CONVERSATION_RETENTION_DAYS)
+    return db.scalars(
+        select(AiConversation)
+        .options(selectinload(AiConversation.messages))
+        .where(AiConversation.last_active_at < cutoff)
+        .order_by(AiConversation.last_active_at, AiConversation.id)
+        .limit(500)
+    ).all()
+
+
+def preview_expired_conversations(
+    db: Session, *, now: datetime
+) -> CleanupResult:
+    rows = _expired_conversation_batch(db, now=now)
+    return CleanupResult(
+        deleted_conversations=len(rows),
+        deleted_messages=sum(len(row.messages) for row in rows),
+    )
+
+
+def cleanup_expired_conversations(
+    db: Session, *, now: datetime
+) -> CleanupResult:
+    rows = _expired_conversation_batch(db, now=now)
+    deleted_messages = sum(len(row.messages) for row in rows)
+    try:
+        for conversation in rows:
+            db.add(AiDeletionAudit(
+                conversation_id=conversation.id,
+                owner_id=conversation.owner_id,
+                actor_id=None,
+                mode="retention",
+                reason="超过当前会话保留期",
+                deleted_message_count=len(conversation.messages),
+                deleted_at=now,
+            ))
+            db.delete(conversation)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return CleanupResult(
+        deleted_conversations=len(rows),
+        deleted_messages=deleted_messages,
+    )
 
 
 def suggestions_for_user(db: Session, user: User) -> list[str]:
