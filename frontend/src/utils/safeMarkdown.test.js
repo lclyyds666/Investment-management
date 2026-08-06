@@ -1,0 +1,86 @@
+import { describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import MessageBubble from '@/components/ai/MessageBubble.vue'
+import { renderSafeMarkdown, validatedAction } from './safeMarkdown'
+
+const push = vi.fn()
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push })
+}))
+
+describe('safe AI output', () => {
+  it('removes scripts, event handlers, images, media, and links', () => {
+    const html = renderSafeMarkdown([
+      '[外链](https://evil.example)',
+      '<img src=x onerror=alert(1)>',
+      '<script>alert(1)</script>',
+      '<video src="https://evil.example/a.mp4"></video>',
+      '<svg onload="alert(1)"></svg>'
+    ].join(''))
+
+    expect(html).not.toMatch(/script|onerror|onload|<img|<video|<svg|href=|src=/i)
+    expect(html).toContain('外链')
+  })
+
+  it('keeps only the approved text and table structure without attributes', () => {
+    const html = renderSafeMarkdown('# **重点**\n\n- [x] 已核对\n\n| 景区 | 金额 |\n| :---: | ---: |\n| 遵义 | `120` |\n\n<span style="color:red" data-x="1">说明</span>')
+
+    expect(html).toContain('<strong>重点</strong>')
+    expect(html).toContain('<table>')
+    expect(html).toContain('<code>120</code>')
+    expect(html).not.toMatch(/style=|data-x=|align=|class=|<span|<input|<h1/i)
+  })
+
+  it('accepts only exact scenic navigation actions', () => {
+    expect(validatedAction({
+      type: 'navigate_to_scenic',
+      scenic_id: 'zunyi-zoo',
+      label: ' 前往遵义动物园 '
+    })).toEqual({
+      type: 'navigate_to_scenic',
+      scenic_id: 'zunyi-zoo',
+      label: '前往遵义动物园'
+    })
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '前往', url: 'https://evil.example' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: '../admin', label: '前往' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'ZUNYI', label: '前往' })).toBeNull()
+    expect(validatedAction({ type: 'open_url', scenic_id: 'zunyi-zoo', label: '前往' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: ' '.repeat(81) })).toBeNull()
+  })
+
+  it('navigates through the fixed named route only after a valid action click', async () => {
+    push.mockClear()
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: {
+          role: 'assistant',
+          content: '可查看对应景区。',
+          status: 'completed',
+          actions_json: [
+            { type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '前往遵义动物园' },
+            { type: 'navigate_to_scenic', scenic_id: 'nanyang-world', label: '危险', url: '/admin' }
+          ]
+        }
+      },
+      global: {
+        stubs: {
+          ElButton: {
+            props: ['ariaLabel'],
+            emits: ['click'],
+            template: '<button :aria-label="ariaLabel" @click="$emit(\'click\')"><slot /></button>'
+          },
+          ElIcon: true
+        }
+      }
+    })
+
+    expect(push).not.toHaveBeenCalled()
+    expect(wrapper.findAll('button')).toHaveLength(1)
+    await wrapper.get('button').trigger('click')
+    expect(push).toHaveBeenCalledWith({
+      name: 'CulturalTourismDetail',
+      params: { scenicId: 'zunyi-zoo' }
+    })
+  })
+})
