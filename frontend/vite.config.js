@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
       environment: 'happy-dom',
       globals: true,
       setupFiles: ['./src/test/setup.js'],
+      exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
       server: {
         deps: {
           inline: ['element-plus', '@element-plus/icons-vue']
@@ -33,6 +34,9 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: 5173,
+      watch: {
+        ignored: ['**/test-results/**', '**/playwright-report/**', '**/.playwright-results/**', '**/.playwright-report/**']
+      },
       proxy: {
         // 将 /api 代理到后端 FastAPI
         '/api': {
