@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import DOMPurify from 'dompurify'
 import MessageBubble from '@/components/ai/MessageBubble.vue'
 import { renderSafeMarkdown, validatedAction } from './safeMarkdown'
 
@@ -21,6 +22,19 @@ describe('safe AI output', () => {
 
     expect(html).not.toMatch(/script|onerror|onload|<img|<video|<svg|href=|src=/i)
     expect(html).toContain('外链')
+  })
+
+  it('removes URL text and fails closed when DOMPurify is unavailable', () => {
+    const html = renderSafeMarkdown('访问 https://evil.example/a 或 www.evil.example，不应展示目标。')
+    expect(html).not.toMatch(/https?:\/\/|www\./i)
+
+    const originalSupport = DOMPurify.isSupported
+    DOMPurify.isSupported = false
+    try {
+      expect(renderSafeMarkdown('**不会降级为原始 HTML**')).toBe('')
+    } finally {
+      DOMPurify.isSupported = originalSupport
+    }
   })
 
   it('keeps only the approved text and table structure without attributes', () => {
@@ -47,6 +61,27 @@ describe('safe AI output', () => {
     expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'ZUNYI', label: '前往' })).toBeNull()
     expect(validatedAction({ type: 'open_url', scenic_id: 'zunyi-zoo', label: '前往' })).toBeNull()
     expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: ' '.repeat(81) })).toBeNull()
+
+    const inherited = Object.assign(Object.create({ url: 'https://evil.example' }), {
+      type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '前往'
+    })
+    expect(validatedAction(inherited)).toBeNull()
+
+    const hiddenExtra = { type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '前往' }
+    Object.defineProperty(hiddenExtra, 'url', { value: 'https://evil.example' })
+    expect(validatedAction(hiddenExtra)).toBeNull()
+
+    let getterCalls = 0
+    const accessor = { type: 'navigate_to_scenic', label: '前往' }
+    Object.defineProperty(accessor, 'scenic_id', {
+      enumerable: true,
+      get() {
+        getterCalls += 1
+        return 'zunyi-zoo'
+      }
+    })
+    expect(validatedAction(accessor)).toBeNull()
+    expect(getterCalls).toBe(0)
   })
 
   it('navigates through the fixed named route only after a valid action click', async () => {
@@ -82,5 +117,21 @@ describe('safe AI output', () => {
       name: 'CulturalTourismDetail',
       params: { scenicId: 'zunyi-zoo' }
     })
+  })
+
+  it('treats malformed action collections as no actions', () => {
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: {
+          role: 'assistant',
+          content: '无操作',
+          status: 'completed',
+          actions_json: { type: 'navigate_to_scenic' }
+        }
+      },
+      global: { stubs: { ElButton: true, ElIcon: true } }
+    })
+
+    expect(wrapper.find('button').exists()).toBe(false)
   })
 })

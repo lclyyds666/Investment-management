@@ -21,6 +21,11 @@ const ALLOWED_TAGS = [
 ]
 
 const ACTION_KEYS = new Set(['type', 'scenic_id', 'label'])
+const URL_TEXT_PATTERN = /\b(?:(?:https?|ftp):\/\/|www\.|mailto:)[^\s<>()]+/giu
+
+function stripUrlText(value) {
+  return String(value || '').replace(URL_TEXT_PATTERN, '')
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -33,6 +38,7 @@ function escapeHtml(value) {
 
 function createRestrictedRenderer() {
   const renderer = new Renderer()
+  const defaultText = renderer.text
   renderer.html = () => ''
   renderer.image = () => ''
   renderer.hr = () => ''
@@ -44,8 +50,13 @@ function createRestrictedRenderer() {
   renderer.del = function deleted({ tokens }) {
     return this.parser.parseInline(tokens)
   }
-  renderer.link = function link({ tokens }) {
+  renderer.link = function link({ text, tokens }) {
+    if (!stripUrlText(text).trim()) return ''
     return this.parser.parseInline(tokens)
+  }
+  renderer.text = function text(token) {
+    const scrubbed = stripUrlText(token.text)
+    return defaultText.call(this, { ...token, raw: scrubbed, text: scrubbed })
   }
   renderer.list = function list(token) {
     const tag = token.ordered ? 'ol' : 'ul'
@@ -68,6 +79,7 @@ export function renderSafeMarkdown(source) {
     breaks: true,
     renderer: createRestrictedRenderer()
   })
+  if (DOMPurify.isSupported !== true || typeof DOMPurify.sanitize !== 'function') return ''
   return DOMPurify.sanitize(raw, {
     ALLOWED_TAGS,
     ALLOWED_ATTR: [],
@@ -79,12 +91,26 @@ export function renderSafeMarkdown(source) {
 
 export function validatedAction(action) {
   if (!action || typeof action !== 'object' || Array.isArray(action)) return null
-  const keys = Object.keys(action)
-  if (keys.some((key) => !ACTION_KEYS.has(key))) return null
-  if (action.type !== 'navigate_to_scenic') return null
-  if (typeof action.scenic_id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(action.scenic_id)) return null
-  if (typeof action.label !== 'string') return null
-  const label = action.label.trim()
-  if (!label || label.length > 80) return null
-  return { type: action.type, scenic_id: action.scenic_id, label }
+  try {
+    if (Object.getPrototypeOf(action) !== Object.prototype) return null
+    const keys = Reflect.ownKeys(action)
+    if (keys.length !== ACTION_KEYS.size || keys.some((key) => typeof key !== 'string' || !ACTION_KEYS.has(key))) {
+      return null
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(action)
+    if (keys.some((key) => !Object.hasOwn(descriptors[key], 'value'))) return null
+    const snapshot = {
+      type: descriptors.type.value,
+      scenic_id: descriptors.scenic_id.value,
+      label: descriptors.label.value
+    }
+    if (snapshot.type !== 'navigate_to_scenic') return null
+    if (typeof snapshot.scenic_id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(snapshot.scenic_id)) return null
+    if (typeof snapshot.label !== 'string') return null
+    const label = snapshot.label.trim()
+    if (!label || label.length > 80) return null
+    return { type: snapshot.type, scenic_id: snapshot.scenic_id, label }
+  } catch {
+    return null
+  }
 }

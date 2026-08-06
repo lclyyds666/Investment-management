@@ -68,9 +68,13 @@ const router = useRouter()
 
 const safeContent = computed(() => renderSafeMarkdown(props.message.content))
 const validActions = computed(() => (
-  (props.message.actions_json || []).map(validatedAction).filter(Boolean)
+  (Array.isArray(props.message.actions_json) ? props.message.actions_json : [])
+    .map(validatedAction)
+    .filter(Boolean)
 ))
-const toolStatuses = computed(() => props.message.tool_statuses || [])
+const toolStatuses = computed(() => (
+  Array.isArray(props.message.tool_statuses) ? props.message.tool_statuses : []
+))
 const requestedRange = computed(() => formatRange(
   props.message.data_start_date,
   props.message.data_end_date
