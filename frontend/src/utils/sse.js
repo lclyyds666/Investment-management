@@ -2,7 +2,7 @@ export function createSseParser(onEvent) {
   let buffer = ''
 
   function emit(frame) {
-    const lines = frame.split(/\r?\n/)
+    const lines = frame.split(/\r\n|\r|\n/)
     let event = 'message'
     const dataLines = []
     for (const line of lines) {
@@ -20,7 +20,7 @@ export function createSseParser(onEvent) {
 
   function drain() {
     while (true) {
-      const boundary = buffer.match(/\r?\n\r?\n/)
+      const boundary = buffer.match(/\r\n(?:\r\n|\r|\n)|\r(?!\n)(?:\r\n|\r|\n)|\n(?:\r\n|\r|\n)/)
       if (!boundary || boundary.index === undefined) return
       const frame = buffer.slice(0, boundary.index)
       buffer = buffer.slice(boundary.index + boundary[0].length)
