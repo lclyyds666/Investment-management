@@ -1,7 +1,8 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from app.schemas.ai_assistant import ToolResult
+from app.schemas.ai_assistant import ScenicNavigationAction, ToolResult
 from app.services.ai_orchestrator import (
     AiOrchestrator,
     _UNAVAILABLE,
@@ -11,6 +12,14 @@ from app.services.ai_orchestrator import (
     is_safe_model_text,
 )
 from app.services.deepseek_chat import IntentDecision
+from app.services.scenic_config import SCENIC_SEEDS
+
+
+def _seed_configs():
+    return [
+        SimpleNamespace(scenic_id=item[0], scenic_name=item[1])
+        for item in SCENIC_SEEDS
+    ]
 
 
 class OfflineClient:
@@ -41,8 +50,6 @@ class PoisonedAnswerClient:
 class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.ai_orchestrator.list_effective_configs")
     def test_custom_effective_scenic_name_canonicalizes_to_route_safe_id(self, list_configs):
-        from types import SimpleNamespace
-
         list_configs.return_value = [
             SimpleNamespace(scenic_id="custom-museum-2026", scenic_name="Custom Museum"),
             SimpleNamespace(scenic_id="Unsafe/Scenic", scenic_name="Unsafe"),
@@ -58,6 +65,66 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
             IntentDecision(intent="scenic_navigation", scenic_ids=["custom museum"]), context
         )
         self.assertEqual(decision.scenic_ids, ["custom-museum-2026"])
+
+    def test_standalone_helpers_are_the_only_seed_fallback(self):
+        self.assertTrue(_allowed_scenics(None))
+        with patch(
+            "app.services.ai_orchestrator.list_effective_configs",
+            side_effect=RuntimeError("config unavailable"),
+        ):
+            self.assertEqual(_allowed_scenics(Mock()), [])
+
+    def test_navigation_action_requires_route_safe_scenic_id(self):
+        action = ScenicNavigationAction(
+            scenic_id="dynamic--scenic-2026", label="Dynamic scenic"
+        )
+        self.assertEqual(action.scenic_id, "dynamic--scenic-2026")
+        for scenic_id in (
+            "-leading",
+            "trailing-",
+            "../admin",
+            "https://evil.example",
+            "Uppercase",
+        ):
+            with self.subTest(scenic_id=scenic_id):
+                with self.assertRaises(ValueError):
+                    ScenicNavigationAction(scenic_id=scenic_id, label="Unsafe")
+
+    @patch("app.services.ai_orchestrator.execute_tool")
+    async def test_failed_or_empty_config_registry_never_runs_scenic_tool(self, execute_tool):
+        client = PoisonedAnswerClient(
+            "unused",
+            decision=IntentDecision(
+                intent="scenic_navigation", scenic_ids=["zunyi-zoo"]
+            ),
+        )
+        for config_result in (RuntimeError("config unavailable"), []):
+            with self.subTest(config_result=config_result):
+                execute_tool.reset_mock()
+                config_patch = (
+                    patch(
+                        "app.services.ai_orchestrator.list_effective_configs",
+                        side_effect=config_result,
+                    )
+                    if isinstance(config_result, Exception)
+                    else patch(
+                        "app.services.ai_orchestrator.list_effective_configs",
+                        return_value=config_result,
+                    )
+                )
+                with config_patch:
+                    events = [
+                        event
+                        async for event in AiOrchestrator(client=client).stream(
+                            "打开遵义动物园", Mock()
+                        )
+                    ]
+                execute_tool.assert_not_called()
+                self.assertFalse(any(event.kind == "action" for event in events))
+                self.assertEqual(
+                    "".join(event.payload.get("text", "") for event in events),
+                    _UNAVAILABLE,
+                )
 
     def test_defensive_scanner_rejects_adversarial_provider_text(self):
         adversarial_text = (
@@ -92,8 +159,12 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
         text = "".join(event.payload.get("text", "") for event in events)
         self.assertIn("AI 服务暂时不可用，请稍后重试。", text)
 
+    @patch("app.services.ai_orchestrator.list_effective_configs")
     @patch("app.services.ai_orchestrator.execute_tool")
-    async def test_tool_answer_uses_local_aggregate_without_provider_stream(self, execute_tool):
+    async def test_tool_answer_uses_local_aggregate_without_provider_stream(
+        self, execute_tool, list_configs
+    ):
+        list_configs.return_value = _seed_configs()
         execute_tool.return_value = ToolResult(data={"summaries": [{
             "scenic_name": "遵义动物园",
             "sales": "870.00",
@@ -113,10 +184,12 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
             event.payload.get("engine") in (None, "local") for event in events
         ))
 
+    @patch("app.services.ai_orchestrator.list_effective_configs")
     @patch("app.services.ai_orchestrator.execute_tool")
-    async def test_navigation_action_survives_model_outage(self, execute_tool):
-        from app.schemas.ai_assistant import ScenicNavigationAction
-
+    async def test_navigation_action_survives_model_outage(
+        self, execute_tool, list_configs
+    ):
+        list_configs.return_value = _seed_configs()
         execute_tool.return_value = ToolResult(actions=[ScenicNavigationAction(
             scenic_id="zunyi-zoo", label="前往遵义动物园"
         )])
@@ -127,8 +200,12 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions[0]["scenic_id"], "zunyi-zoo")
         self.assertNotIn("url", actions[0])
 
+    @patch("app.services.ai_orchestrator.list_effective_configs")
     @patch("app.services.ai_orchestrator.execute_tool")
-    async def test_scenic_tool_status_carries_persistable_coverage_metadata(self, execute_tool):
+    async def test_scenic_tool_status_carries_persistable_coverage_metadata(
+        self, execute_tool, list_configs
+    ):
+        list_configs.return_value = _seed_configs()
         execute_tool.return_value = ToolResult(data={"summaries": [{
             "requested_start": "2026-07-01",
             "requested_end": "2026-07-31",

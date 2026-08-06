@@ -13,7 +13,11 @@ class StrictAiModel(BaseModel):
 
 class ScenicNavigationAction(StrictAiModel):
     type: Literal["navigate_to_scenic"] = "navigate_to_scenic"
-    scenic_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9-]+$")
+    scenic_id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+    )
     label: str = Field(min_length=1, max_length=80)
 
 

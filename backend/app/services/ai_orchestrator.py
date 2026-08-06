@@ -108,7 +108,9 @@ def _seed_registry() -> list[dict[str, str]]:
 
 
 def _effective_registry(context: Any) -> list[dict[str, str]]:
-    """Return route-safe effective scenic entries, with a safe offline fallback."""
+    """Return route-safe configs; only explicit standalone use falls back to seeds."""
+    if context is None:
+        return _seed_registry()
     try:
         configs = list_effective_configs(_db_from_context(context))
         registry = []
@@ -129,11 +131,9 @@ def _effective_registry(context: Any) -> list[dict[str, str]]:
                 and scenic_name.strip()
             ):
                 registry.append({"scenic_id": scenic_id, "scenic_name": scenic_name})
-        if registry:
-            return registry
-    except Exception:  # noqa: BLE001 - test doubles and unavailable config reads use seeds
-        pass
-    return _seed_registry()
+        return registry
+    except Exception:  # noqa: BLE001 - contextual registry resolution fails closed
+        return []
 
 
 def _allowed_scenics(context: Any = None) -> list[dict[str, str]]:
