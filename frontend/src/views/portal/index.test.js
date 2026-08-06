@@ -40,6 +40,10 @@ vi.mock('@/store/portal', () => ({
   })
 }))
 
+vi.mock('@/components/ai/AiWorkspace.vue', () => ({
+  default: { template: '<div data-workspace="ai" />' }
+}))
+
 describe('portal home', () => {
   it('renders the assistant before exactly three independent application entries', () => {
     const wrapper = mount(PortalHome, {

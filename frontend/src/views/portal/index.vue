@@ -1,9 +1,7 @@
 <template>
   <main class="portal-home portal-page">
     <section data-testid="assistant-region" class="assistant-region" aria-label="AI 智能助手">
-      <div class="assistant-placeholder" aria-hidden="true">
-        <el-skeleton :rows="5" animated />
-      </div>
+      <AiWorkspace />
     </section>
 
     <section data-testid="application-region" class="application-region" aria-label="业务系统">
@@ -42,6 +40,7 @@ import { onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import ApplicationEntry from '@/components/portal/ApplicationEntry.vue'
+import AiWorkspace from '@/components/ai/AiWorkspace.vue'
 import { usePortalStore } from '@/store/portal'
 
 const router = useRouter()
@@ -68,17 +67,7 @@ onMounted(async () => {
 }
 
 .assistant-region {
-  display: flex;
-  align-items: center;
-  min-height: var(--portal-assistant-height);
-  padding: clamp(24px, 4vw, 56px);
   border-block: 1px solid var(--surface-border);
-  background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
-}
-
-.assistant-placeholder {
-  width: min(100%, 980px);
-  margin-inline: auto;
 }
 
 .application-region {
@@ -138,7 +127,6 @@ h1 {
 
   .assistant-region {
     min-height: 380px;
-    padding: 24px 18px;
   }
 
   .application-grid {
