@@ -52,7 +52,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, toRaw } from 'vue'
 import { Location } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { renderSafeMarkdown, validatedAction } from '@/utils/safeMarkdown'
@@ -69,7 +69,7 @@ const router = useRouter()
 const safeContent = computed(() => renderSafeMarkdown(props.message.content))
 const validActions = computed(() => (
   (Array.isArray(props.message.actions_json) ? props.message.actions_json : [])
-    .map(validatedAction)
+    .map((action) => validatedAction(toRaw(action)))
     .filter(Boolean)
 ))
 const toolStatuses = computed(() => (

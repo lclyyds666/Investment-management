@@ -25,8 +25,15 @@ describe('safe AI output', () => {
   })
 
   it('removes URL text and fails closed when DOMPurify is unavailable', () => {
-    const html = renderSafeMarkdown('访问 https://evil.example/a 或 www.evil.example，不应展示目标。')
-    expect(html).not.toMatch(/https?:\/\/|www\./i)
+    const html = renderSafeMarkdown([
+      '访问 https://evil.example/a 或 www.evil.example，不应展示目标。',
+      '',
+      '`ftp://evil.example/file` 与 mailto:test@evil.example',
+      '',
+      '实体编码 https&#58;//evil.example/path'
+    ].join('\n'))
+    expect(html).not.toMatch(/https?:\/\/|ftp:\/\/|www\.|mailto:/i)
+    expect(html).toContain('不应展示目标')
 
     const originalSupport = DOMPurify.isSupported
     DOMPurify.isSupported = false
@@ -82,6 +89,11 @@ describe('safe AI output', () => {
     })
     expect(validatedAction(accessor)).toBeNull()
     expect(getterCalls).toBe(0)
+
+    const proxied = new Proxy({
+      type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '前往'
+    }, {})
+    expect(validatedAction(proxied)).toBeNull()
   })
 
   it('navigates through the fixed named route only after a valid action click', async () => {

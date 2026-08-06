@@ -21,10 +21,22 @@ const ALLOWED_TAGS = [
 ]
 
 const ACTION_KEYS = new Set(['type', 'scenic_id', 'label'])
-const URL_TEXT_PATTERN = /\b(?:(?:https?|ftp):\/\/|www\.|mailto:)[^\s<>()]+/giu
+const URL_TEXT_PATTERN = /\b(?:(?:(?:https?|ftp):\/\/|www\.)[a-z0-9._~:/?#@!$&'()*+,;=%-]+|mailto:[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+)/giu
 
 function stripUrlText(value) {
   return String(value || '').replace(URL_TEXT_PATTERN, '')
+}
+
+function stripUrlTextFromHtml(html) {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  const pending = [...template.content.childNodes]
+  while (pending.length) {
+    const node = pending.pop()
+    if (node.nodeType === 3) node.textContent = stripUrlText(node.textContent)
+    else pending.push(...node.childNodes)
+  }
+  return template.innerHTML
 }
 
 function escapeHtml(value) {
@@ -80,18 +92,20 @@ export function renderSafeMarkdown(source) {
     renderer: createRestrictedRenderer()
   })
   if (DOMPurify.isSupported !== true || typeof DOMPurify.sanitize !== 'function') return ''
-  return DOMPurify.sanitize(raw, {
+  const sanitized = DOMPurify.sanitize(raw, {
     ALLOWED_TAGS,
     ALLOWED_ATTR: [],
     ALLOW_ARIA_ATTR: false,
     ALLOW_DATA_ATTR: false,
     ALLOW_UNKNOWN_PROTOCOLS: false
   })
+  return stripUrlTextFromHtml(sanitized)
 }
 
 export function validatedAction(action) {
   if (!action || typeof action !== 'object' || Array.isArray(action)) return null
   try {
+    if (typeof structuredClone !== 'function') return null
     if (Object.getPrototypeOf(action) !== Object.prototype) return null
     const keys = Reflect.ownKeys(action)
     if (keys.length !== ACTION_KEYS.size || keys.some((key) => typeof key !== 'string' || !ACTION_KEYS.has(key))) {
@@ -99,10 +113,13 @@ export function validatedAction(action) {
     }
     const descriptors = Object.getOwnPropertyDescriptors(action)
     if (keys.some((key) => !Object.hasOwn(descriptors[key], 'value'))) return null
+    const cloned = structuredClone(action)
+    if (Object.getPrototypeOf(cloned) !== Object.prototype) return null
+    const clonedDescriptors = Object.getOwnPropertyDescriptors(cloned)
     const snapshot = {
-      type: descriptors.type.value,
-      scenic_id: descriptors.scenic_id.value,
-      label: descriptors.label.value
+      type: clonedDescriptors.type.value,
+      scenic_id: clonedDescriptors.scenic_id.value,
+      label: clonedDescriptors.label.value
     }
     if (snapshot.type !== 'navigate_to_scenic') return null
     if (typeof snapshot.scenic_id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(snapshot.scenic_id)) return null
