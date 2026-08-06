@@ -14,7 +14,7 @@
     <el-tabs v-model="activeTab" class="audit-tabs" @tab-change="handleTabChange">
       <el-tab-pane label="会话列表" name="conversations">
         <el-form class="filter-form" inline @submit.prevent="loadConversations(1)">
-          <el-form-item label="用户">
+          <el-form-item label="用户" :error="userIdError">
             <el-input v-model="filters.userId" placeholder="用户 ID" clearable style="width: 130px" />
           </el-form-item>
           <el-form-item label="开始日期">
@@ -137,6 +137,7 @@ const deleteVisible = ref(false)
 const deleting = ref(false)
 const deleteReason = ref('')
 const deleteTarget = ref(null)
+const userIdError = ref('')
 const filters = reactive({ userId: '', startedAt: '', endedAt: '', status: '', keyword: '' })
 
 const canDelete = computed(() => {
@@ -163,7 +164,23 @@ function conversationParams(targetPage = page.value) {
   return params
 }
 
+function validateUserId() {
+  const value = filters.userId.trim()
+  if (!value) {
+    userIdError.value = ''
+    return true
+  }
+  const userId = Number(value)
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(userId) || userId < 1 || userId > 2147483647) {
+    userIdError.value = '请输入 1-2147483647 范围内的正整数用户 ID'
+    return false
+  }
+  userIdError.value = ''
+  return true
+}
+
 async function loadConversations(targetPage = page.value) {
+  if (!validateUserId()) return
   page.value = targetPage
   loading.value = true
   loadError.value = false
@@ -198,6 +215,7 @@ function handleTabChange(name) {
 
 function resetFilters() {
   Object.assign(filters, { userId: '', startedAt: '', endedAt: '', status: '', keyword: '' })
+  userIdError.value = ''
   loadConversations(1)
 }
 

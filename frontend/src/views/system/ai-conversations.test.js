@@ -50,4 +50,14 @@ describe('AI conversation audit view', () => {
     expect(api.listAdminConversations).toHaveBeenCalledWith({ page: 1, size: 20 })
     expect(api.listDeletionAudits).not.toHaveBeenCalled()
   })
+
+  it('does not send an invalid user filter to the backend', async () => {
+    const wrapper = mount(View, { global: { stubs } })
+    api.listAdminConversations.mockClear()
+    wrapper.vm.filters.userId = 'abc'
+    await wrapper.vm.loadConversations(1)
+
+    expect(api.listAdminConversations).not.toHaveBeenCalled()
+    expect(wrapper.vm.userIdError).toContain('正整数')
+  })
 })
