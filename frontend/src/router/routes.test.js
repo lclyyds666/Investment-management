@@ -20,6 +20,7 @@ const supplyRoutes = [
   ['Customer', '/supplymanagement/customer', 'supply.customer'],
   ['Org', '/supplymanagement/org', 'supply.admin'],
   ['Audit', '/supplymanagement/audit', 'supply.admin'],
+  ['AiConversations', '/supplymanagement/ai-conversations', 'supply.admin'],
   ['Screen', '/supplymanagement/screen', 'supply.dashboard']
 ]
 
@@ -88,6 +89,7 @@ describe('unified portal routes', () => {
   it('keeps superuser-only metadata on administration routes', () => {
     expect(router.resolve({ name: 'Org' }).meta.requiresSuperuser).toBe(true)
     expect(router.resolve({ name: 'Audit' }).meta.requiresSuperuser).toBe(true)
+    expect(router.resolve({ name: 'AiConversations' }).meta.requiresSuperuser).toBe(true)
   })
 
   it('keeps the supply profile company-scoped without inventing a backend resource', () => {

@@ -211,6 +211,20 @@ const routes = [
         }
       },
       {
+        path: 'ai-conversations',
+        name: 'AiConversations',
+        component: () => import('@/views/system/ai-conversations.vue'),
+        meta: {
+          title: 'AI 会话审计',
+          icon: 'ChatLineSquare',
+          group: '系统管理',
+          groupIcon: 'Setting',
+          company: supplyCompany,
+          resource: RESOURCE_CODES.SUPPLY_ADMIN,
+          requiresSuperuser: true
+        }
+      },
+      {
         path: 'profile',
         name: 'Profile',
         component: () => import('@/views/profile/index.vue'),

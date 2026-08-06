@@ -8,6 +8,10 @@ export const renameConversation = (id, title) => request.patch(`/ai-assistant/co
 export const deleteConversation = (id) => request.delete(`/ai-assistant/conversations/${id}`)
 export const getSuggestions = () => request.get('/ai-assistant/suggestions')
 export const stopMessage = (id) => request.post(`/ai-assistant/messages/${id}/stop`)
+export const listAdminConversations = (params = {}) => request.get('/ai-assistant/admin/conversations', { params })
+export const getAdminConversation = (id) => request.get(`/ai-assistant/admin/conversations/${id}`)
+export const deleteAdminConversation = (id, reason) => request.delete(`/ai-assistant/admin/conversations/${id}`, { data: { reason } })
+export const listDeletionAudits = (params = {}) => request.get('/ai-assistant/admin/deletion-audits', { params })
 
 async function responseError(response) {
   let payload = null
