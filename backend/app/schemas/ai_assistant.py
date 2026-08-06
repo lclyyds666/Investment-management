@@ -108,6 +108,32 @@ class ScenicTrendPointOut(StrictAiModel):
     gross_profit: Decimal
 
 
+class StrictToolInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class EmptyToolInput(StrictToolInput):
+    pass
+
+
+class ScenicQueryInput(StrictToolInput):
+    scenic_ids: list[str] = Field(min_length=1, max_length=6)
+    start_date: date
+    end_date: date
+
+
+class ScenicTrendInput(ScenicQueryInput):
+    dimension: Literal["month", "platform"] = "month"
+
+
+class ScenicComparisonInput(ScenicQueryInput):
+    scenic_ids: list[str] = Field(min_length=2, max_length=6)
+
+
+class NavigationInput(StrictToolInput):
+    scenic_id: str = Field(min_length=1, max_length=128)
+
+
 class AdminDeleteRequest(StrictAiModel):
     reason: str = Field(min_length=2, max_length=200)
 
