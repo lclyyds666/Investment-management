@@ -22,7 +22,7 @@ from app.models.ai_assistant import AiConversation, AiDeletionAudit, AiMessage
 from app.schemas.ai_assistant import ScenicNavigationAction
 from app.models.user import User
 from app.services import ai_runtime
-from app.services.ai_orchestrator import AiOrchestrator
+from app.services.ai_orchestrator import AiOrchestrator, _UNAVAILABLE, is_safe_model_text
 from app.services.ai_tools import ToolContext
 from app.services.permissions import has_resource
 
@@ -442,6 +442,7 @@ async def stream_generation(
     terminal_payload: dict = {}
     cancelled = False
     task_cancelled = False
+    policy_rejected = False
 
     try:
         try:
@@ -464,16 +465,24 @@ async def stream_generation(
 
                 if event.kind == "text.delta":
                     text = str(event.payload.get("text", ""))
+                    event_engine = event.payload.get("engine")
+                    if event_engine == "deepseek" and not is_safe_model_text(text):
+                        text = _UNAVAILABLE
+                        event_engine = "local"
+                        policy_rejected = True
                     if text:
                         if first_token_ms is None:
                             first_token_ms = max(0, round((time.perf_counter() - started) * 1000))
                         content_parts.append(text)
-                    event_engine = event.payload.get("engine")
-                    if event_engine == "deepseek" or engine is None:
+                    if policy_rejected:
+                        engine = "local"
+                    elif event_engine == "deepseek" or engine is None:
                         engine = event_engine
                     yield encode_sse("text.delta", _event_payload(
                         request_id, assistant_message.id, {"text": text}
                     ))
+                    if policy_rejected:
+                        break
                     continue
 
                 if event.kind == "action":

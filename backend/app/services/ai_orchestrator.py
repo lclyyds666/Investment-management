@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal
 
 from app.core.config import settings
 from app.schemas.ai_assistant import ToolResult
+from app.services import ai_runtime
 from app.services.ai_dates import resolve_date_range
 from app.services.ai_tools import ToolContext, execute_tool
 from app.services.deepseek_chat import DeepSeekChatClient, IntentDecision
@@ -29,6 +32,72 @@ _FREE_SYSTEM_PROMPT = (
 class OrchestratorEvent:
     kind: Literal["tool.status", "text.delta", "action", "error"]
     payload: dict[str, Any]
+
+
+class ModelOutputRejected(RuntimeError):
+    """Raised when provider output cannot be safely shown or persisted."""
+
+
+_COMPLETE_SEGMENT_RE = re.compile(r"[\u3002\uff01\uff1f!?]+(?:[\"'\u201d\u2019\uff09\u3011]*)|(?:\r?\n)+")
+_URL_RE = re.compile(r"(?:(?:https?|ftp)://|www\.)", re.IGNORECASE)
+_SQL_RE = re.compile(
+    r"(?:select.*from|insertinto|update[a-z_]*set|deletefrom|drop(?:table|database)|"
+    r"altertable|createtable|truncate(?:table)?|unionselect|show(?:tables|columns)|"
+    r"describe[a-z_]*)",
+    re.IGNORECASE,
+)
+_FORMULA_RE = re.compile(
+    r"(?:[=+*/\u00d7\u00f7]|(?:sum|avg|count|round|if)\(|\u516c\u5f0f|\u8ba1\u7b97\u89c4\u5219)",
+    re.IGNORECASE,
+)
+_CREDENTIAL_RE = re.compile(
+    r"(?:api(?:key)?|access(?:token)?|secret|password|passwd|authorization|bearer|"
+    r"token|sk-[a-z0-9_-]+|akia[a-z0-9]+|\u5bc6\u7801|\u5bc6\u94a5|\u4ee4\u724c|\u51ed\u8bc1)",
+    re.IGNORECASE,
+)
+_DATABASE_RE = re.compile(
+    r"(?:database|schema|table|column|information_schema|mysql|postgres(?:ql)?|sqlite|"
+    r"\u6570\u636e\u5e93|\u6570\u636e\u8868|\u5b57\u6bb5|\u8868\u7ed3\u6784|\u5e93\u8868)",
+    re.IGNORECASE,
+)
+_RAW_CONTENT_RE = re.compile(
+    r"(?:daily_json|source_file|ticket_ledger|hotel_ledger|biz_[a-z0-9_]+|"
+    r"raw_?ledger|attachment|upload(?:ed)?_file|\u539f\u59cb\u53f0\u8d26|"
+    r"\u53f0\u8d26(?:\u660e\u7ec6|\u884c|\u8bb0\u5f55)|\u5bf9\u8d26\u660e\u7ec6|"
+    r"\u9644\u4ef6(?:\u5185\u5bb9|\u539f\u6587|\u6587\u4ef6))",
+    re.IGNORECASE,
+)
+_MAX_PENDING_MODEL_CHARS = 4096
+
+
+def _normalized_output(text: str) -> tuple[str, str]:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = "".join(
+        char for char in normalized
+        if not unicodedata.category(char).startswith("C") or char in "\n\r\t"
+    )
+    return normalized, re.sub(r"\s+", "", normalized)
+
+
+def is_safe_model_text(text: str) -> bool:
+    """Return whether provider text contains no forbidden content."""
+    if not text:
+        return False
+    normalized, compact = _normalized_output(text)
+    return not (
+        _URL_RE.search(compact)
+        or _SQL_RE.search(compact)
+        or _FORMULA_RE.search(compact)
+        or _CREDENTIAL_RE.search(compact)
+        or _DATABASE_RE.search(normalized)
+        or _RAW_CONTENT_RE.search(normalized)
+    )
+
+
+def is_safe_model_segment(text: str) -> bool:
+    """Return whether a complete provider segment is safe for display and storage."""
+    boundaries = list(_COMPLETE_SEGMENT_RE.finditer(text))
+    return bool(boundaries and boundaries[-1].end() == len(text) and is_safe_model_text(text))
 
 
 def _allowed_scenics() -> list[dict[str, str]]:
@@ -223,6 +292,30 @@ class AiOrchestrator:
             if chunk:
                 yield chunk
 
+    async def _safe_model_segments(
+        self, prompt: str, context: str, message_id: int | None
+    ) -> AsyncIterator[str]:
+        pending = ""
+        async for chunk in self._stream_model(prompt, context):
+            if message_id is not None and ai_runtime.is_stop_requested(message_id):
+                return
+            pending += chunk
+            if len(pending) > _MAX_PENDING_MODEL_CHARS:
+                raise ModelOutputRejected("model output did not reach a safe boundary")
+            while match := _COMPLETE_SEGMENT_RE.search(pending):
+                segment = pending[:match.end()]
+                pending = pending[match.end():]
+                if not is_safe_model_segment(segment):
+                    raise ModelOutputRejected("model output violates the output policy")
+                yield segment
+        if pending.strip():
+            raise ModelOutputRejected("model output ended without a complete segment")
+
+    @staticmethod
+    def _message_id(context: ToolContext) -> int | None:
+        message_id = getattr(context, "message_id", None)
+        return message_id if isinstance(message_id, int) else None
+
     async def stream(
         self, question: str, context: ToolContext
     ) -> AsyncIterator[OrchestratorEvent]:
@@ -231,7 +324,9 @@ class AiOrchestrator:
         if request is None:
             try:
                 emitted = False
-                async for chunk in self._stream_model(_FREE_SYSTEM_PROMPT, question):
+                async for chunk in self._safe_model_segments(
+                    _FREE_SYSTEM_PROMPT, question, self._message_id(context)
+                ):
                     emitted = True
                     yield OrchestratorEvent("text.delta", {"text": chunk, "engine": "deepseek"})
                 if not emitted:
@@ -267,7 +362,9 @@ class AiOrchestrator:
         )
         used_model = False
         try:
-            async for chunk in self._stream_model(_DATA_SYSTEM_PROMPT, model_context):
+            async for chunk in self._safe_model_segments(
+                _DATA_SYSTEM_PROMPT, model_context, self._message_id(context)
+            ):
                 used_model = True
                 yield OrchestratorEvent("text.delta", {"text": chunk, "engine": "deepseek"})
             if not used_model:
@@ -277,6 +374,10 @@ class AiOrchestrator:
                 yield OrchestratorEvent("text.delta", {
                     "text": "\n\n" + "\n".join(metadata), "engine": "local",
                 })
+        except ModelOutputRejected:
+            yield OrchestratorEvent("text.delta", {
+                "text": _UNAVAILABLE, "engine": "local",
+            })
         except Exception:
             yield OrchestratorEvent("text.delta", {
                 "text": _fallback(decision.intent, data), "engine": "local",
