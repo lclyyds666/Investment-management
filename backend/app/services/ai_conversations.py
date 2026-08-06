@@ -42,6 +42,8 @@ _SCENIC_SUGGESTIONS = [
 ]
 logger = logging.getLogger("app.ai_assistant")
 _MAX_UNTRUSTED_OUTPUT_CHARS = 4096
+_GENERATION_STOP_WAIT_SECONDS = 0.5
+_GENERATION_STOP_POLL_SECONDS = 0.05
 
 
 def _not_found() -> HTTPException:
@@ -172,10 +174,35 @@ def rename_owned_conversation(
     return conversation
 
 
+def _stop_and_wait_for_generation(conversation: AiConversation) -> None:
+    generating_messages = [
+        message
+        for message in conversation.messages
+        if message.role == "assistant" and message.status == "generating"
+    ]
+    for message in generating_messages:
+        ai_runtime.request_stop(message.id)
+
+    active = ai_runtime.is_generation_active(conversation.id)
+    if not active:
+        return
+
+    deadline = time.monotonic() + _GENERATION_STOP_WAIT_SECONDS
+    while active and time.monotonic() < deadline:
+        time.sleep(_GENERATION_STOP_POLL_SECONDS)
+        active = ai_runtime.is_generation_active(conversation.id)
+    if active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
+        )
+
+
 def delete_owned_conversation(
     db: Session, conversation_id: int, user_id: int
 ) -> AiDeletionAudit:
     conversation = get_owned_conversation(db, conversation_id, user_id, with_messages=True)
+    _stop_and_wait_for_generation(conversation)
     receipt = AiDeletionAudit(
         conversation_id=conversation.id,
         owner_id=conversation.owner_id,
@@ -202,6 +229,7 @@ def delete_admin_conversation(
     reason: str,
 ) -> AiDeletionAudit:
     conversation = get_admin_conversation(db, conversation_id)
+    _stop_and_wait_for_generation(conversation)
     receipt = AiDeletionAudit(
         conversation_id=conversation.id,
         owner_id=conversation.owner_id,
@@ -264,13 +292,14 @@ def _expired_conversation_batch(
     db: Session, *, now: datetime
 ) -> list[AiConversation]:
     cutoff = now - timedelta(days=settings.AI_CONVERSATION_RETENTION_DAYS)
-    return db.scalars(
+    rows = db.scalars(
         select(AiConversation)
         .options(selectinload(AiConversation.messages))
         .where(AiConversation.last_active_at < cutoff)
         .order_by(AiConversation.last_active_at, AiConversation.id)
         .limit(500)
     ).all()
+    return [row for row in rows if not ai_runtime.is_generation_active(row.id)]
 
 
 def preview_expired_conversations(

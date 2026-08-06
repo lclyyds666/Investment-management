@@ -15,6 +15,7 @@ from app.services.ai_conversations import (
     CleanupResult,
     cleanup_expired_conversations,
     delete_admin_conversation,
+    delete_owned_conversation,
     get_admin_conversation,
     get_owned_conversation,
     list_admin_conversations,
@@ -72,6 +73,20 @@ class AiRetentionTest(unittest.TestCase):
         for reason in ("", "  "):
             with self.subTest(reason=reason), self.assertRaises(ValueError):
                 AdminDeleteRequest(reason=reason)
+
+    @patch("app.services.ai_conversations.ai_runtime.is_generation_active", side_effect=[True, False])
+    def test_retention_skips_active_conversations_and_counts_deleted_rows(self, active):
+        now = datetime(2026, 8, 5, 1, 0)
+        active_row = SimpleNamespace(id=5, owner_id=2, last_active_at=now - timedelta(days=91), messages=[1, 2])
+        expired_row = SimpleNamespace(id=6, owner_id=3, last_active_at=now - timedelta(days=91), messages=[3])
+        db = Mock()
+        db.scalars.return_value.all.return_value = [active_row, expired_row]
+
+        result = cleanup_expired_conversations(db, now=now)
+
+        self.assertEqual(result, CleanupResult(deleted_conversations=1, deleted_messages=1))
+        self.assertEqual(db.add.call_args.args[0].conversation_id, 6)
+        self.assertEqual(db.delete.call_args.args[0], expired_row)
 
 
 class AiAdminConversationTest(unittest.TestCase):
@@ -140,6 +155,52 @@ class AiAdminConversationTest(unittest.TestCase):
         self.assertIsNone(self.db.get(AiConversation, self.conversation.id))
         self.assertEqual(self.db.scalar(select(func.count()).select_from(AiMessage)), 0)
         self.assertEqual(self.db.scalar(select(func.count()).select_from(AiToolCall)), 0)
+
+    @patch("app.services.ai_conversations._GENERATION_STOP_WAIT_SECONDS", 0)
+    @patch("app.services.ai_conversations.ai_runtime.is_generation_active", return_value=True)
+    @patch("app.services.ai_conversations.ai_runtime.request_stop")
+    def test_admin_delete_does_not_delete_active_generation(self, request_stop, active):
+        generating = AiMessage(
+            conversation_id=self.conversation.id,
+            role="assistant",
+            content="",
+            status="generating",
+            request_id="request-generating",
+            actions_json=[],
+        )
+        self.db.add(generating)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as raised:
+            delete_admin_conversation(self.db, self.conversation.id, actor_id=1, reason="reason")
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "conversation_busy")
+        request_stop.assert_called_once_with(generating.id)
+        self.assertIsNotNone(self.db.get(AiConversation, self.conversation.id))
+
+    @patch("app.services.ai_conversations.ai_runtime.is_generation_active", side_effect=[True, True, False])
+    @patch("app.services.ai_conversations.ai_runtime.request_stop")
+    @patch("app.services.ai_conversations.time.sleep")
+    def test_owner_delete_waits_for_cleared_generation_then_deletes(
+        self, sleep, request_stop, active
+    ):
+        generating = AiMessage(
+            conversation_id=self.conversation.id,
+            role="assistant",
+            content="",
+            status="generating",
+            request_id="request-generating-owner",
+            actions_json=[],
+        )
+        self.db.add(generating)
+        self.db.commit()
+
+        receipt = delete_owned_conversation(self.db, self.conversation.id, user_id=7)
+
+        self.assertEqual(receipt.deleted_message_count, 2)
+        request_stop.assert_called_once_with(generating.id)
+        self.assertIsNone(self.db.get(AiConversation, self.conversation.id))
 
     def test_admin_keyword_searches_message_content(self):
         rows, total = list_admin_conversations(

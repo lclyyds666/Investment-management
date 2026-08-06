@@ -47,6 +47,11 @@ def release_generation(lease: GenerationLease) -> None:
     runtime_store.remove_member(_active_key(lease.user_id), lease.request_id)
 
 
+def is_generation_active(conversation_id: int) -> bool:
+    """Return whether a conversation currently holds a generation lease."""
+    return runtime_store.get(_conversation_key(conversation_id)) is not None
+
+
 def check_submission_rate(user_id: int) -> None:
     count = runtime_store.incr(f"ai:user:{user_id}:rate", ttl=60)
     if count > settings.AI_REQUESTS_PER_MINUTE:
