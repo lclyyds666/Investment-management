@@ -58,7 +58,7 @@ async function confirmDelete(conversation) {
 </script>
 
 <style scoped>
-.conversation-sidebar { display: flex; width: var(--ai-sidebar-width); min-width: var(--ai-sidebar-width); flex-direction: column; border-right: 1px solid var(--ai-rule-strong); background: var(--surface-muted); }
+.conversation-sidebar { display: flex; width: var(--ai-sidebar-width); min-width: var(--ai-sidebar-width); min-height: 0; overflow: hidden; flex-direction: column; border-right: 1px solid var(--ai-rule-strong); background: var(--surface-muted); }
 .conversation-sidebar__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 16px; border-bottom: 1px solid var(--ai-rule); }
 .conversation-sidebar__header p { margin: 0; color: var(--el-text-color-primary); font: 700 14px var(--font-display); }
 .conversation-sidebar__header span { color: var(--el-text-color-secondary); font: 11px var(--font-data); }
