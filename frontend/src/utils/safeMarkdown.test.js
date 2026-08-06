@@ -67,8 +67,14 @@ describe('safe AI output', () => {
       label: '前往遵义动物园'
     })
     expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '前往', url: 'https://evil.example' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'custom-museum-2026', label: '前往' })).toEqual({
+      type: 'navigate_to_scenic', scenic_id: 'custom-museum-2026', label: '前往'
+    })
     expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: '../admin', label: '前往' })).toBeNull()
     expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'ZUNYI', label: '前往' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'custom_name', label: '前往' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'https://evil.example', label: '前往' })).toBeNull()
+    expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: '-unsafe-', label: '前往' })).toBeNull()
     expect(validatedAction({ type: 'open_url', scenic_id: 'zunyi-zoo', label: '前往' })).toBeNull()
     expect(validatedAction({ type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: ' '.repeat(81) })).toBeNull()
 

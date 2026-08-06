@@ -2,7 +2,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app.schemas.ai_assistant import ToolResult
-from app.services.ai_orchestrator import AiOrchestrator, _UNAVAILABLE, is_safe_model_text
+from app.services.ai_orchestrator import (
+    AiOrchestrator,
+    _UNAVAILABLE,
+    _allowed_scenics,
+    _local_intent,
+    _validate_decision,
+    is_safe_model_text,
+)
 from app.services.deepseek_chat import IntentDecision
 
 
@@ -32,6 +39,26 @@ class PoisonedAnswerClient:
 
 
 class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
+    @patch("app.services.ai_orchestrator.list_effective_configs")
+    def test_custom_effective_scenic_name_canonicalizes_to_route_safe_id(self, list_configs):
+        from types import SimpleNamespace
+
+        list_configs.return_value = [
+            SimpleNamespace(scenic_id="custom-museum-2026", scenic_name="Custom Museum"),
+            SimpleNamespace(scenic_id="Unsafe/Scenic", scenic_name="Unsafe"),
+        ]
+        context = Mock()
+        allowed = _allowed_scenics(context)
+        self.assertEqual(allowed, [{
+            "scenic_id": "custom-museum-2026", "scenic_name": "Custom Museum"
+        }])
+        local = _local_intent("打开 Custom Museum", context)
+        self.assertEqual(local.scenic_ids, ["custom-museum-2026"])
+        decision = _validate_decision(
+            IntentDecision(intent="scenic_navigation", scenic_ids=["custom museum"]), context
+        )
+        self.assertEqual(decision.scenic_ids, ["custom-museum-2026"])
+
     def test_defensive_scanner_rejects_adversarial_provider_text(self):
         adversarial_text = (
             "example.com/private",

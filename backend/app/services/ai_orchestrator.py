@@ -11,7 +11,7 @@ from app.schemas.ai_assistant import ToolResult
 from app.services.ai_dates import resolve_date_range
 from app.services.ai_tools import ToolContext, execute_tool
 from app.services.deepseek_chat import DeepSeekChatClient, IntentDecision
-from app.services.scenic_config import SCENIC_SEEDS
+from app.services.scenic_config import SCENIC_SEEDS, list_effective_configs
 
 
 _UNAVAILABLE = "AI 服务暂时不可用，请稍后重试。"
@@ -63,6 +63,7 @@ _RAW_ROW_RE = re.compile(
     r"\{(?:\"?[a-z_][a-z0-9_]*\"?:[^,{}]+,){1,}\"?[a-z_][a-z0-9_]*\"?:",
     re.IGNORECASE,
 )
+_SCENIC_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 
 def _normalized_output(text: str) -> tuple[str, str]:
@@ -90,16 +91,65 @@ def is_safe_model_text(text: str) -> bool:
     )
 
 
-def _allowed_scenics() -> list[dict[str, str]]:
-    return [{"scenic_id": item[0], "scenic_name": item[1]} for item in SCENIC_SEEDS]
+def _db_from_context(context: Any) -> Any:
+    return getattr(context, "db", context)
 
 
-def _local_intent(question: str) -> IntentDecision | None:
-    normalized = "".join((question or "").lower().split())
-    scenic_ids = [
-        item[0] for item in SCENIC_SEEDS
-        if item[0].lower() in normalized or item[1].lower() in normalized
+def _is_safe_scenic_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(_SCENIC_ID_RE.fullmatch(value))
+
+
+def _seed_registry() -> list[dict[str, str]]:
+    return [
+        {"scenic_id": item[0], "scenic_name": item[1]}
+        for item in SCENIC_SEEDS
+        if _is_safe_scenic_id(item[0])
     ]
+
+
+def _effective_registry(context: Any) -> list[dict[str, str]]:
+    """Return route-safe effective scenic entries, with a safe offline fallback."""
+    try:
+        configs = list_effective_configs(_db_from_context(context))
+        registry = []
+        for config in configs:
+            scenic_id = (
+                config.get("scenic_id")
+                if isinstance(config, dict)
+                else getattr(config, "scenic_id", None)
+            )
+            scenic_name = (
+                config.get("scenic_name")
+                if isinstance(config, dict)
+                else getattr(config, "scenic_name", None)
+            )
+            if (
+                _is_safe_scenic_id(scenic_id)
+                and isinstance(scenic_name, str)
+                and scenic_name.strip()
+            ):
+                registry.append({"scenic_id": scenic_id, "scenic_name": scenic_name})
+        if registry:
+            return registry
+    except Exception:  # noqa: BLE001 - test doubles and unavailable config reads use seeds
+        pass
+    return _seed_registry()
+
+
+def _allowed_scenics(context: Any = None) -> list[dict[str, str]]:
+    return _effective_registry(context)
+
+
+def _local_intent(question: str, context: Any = None) -> IntentDecision | None:
+    normalized = "".join((question or "").casefold().split())
+    scenic_ids = []
+    for item in _effective_registry(context):
+        scenic_id = item["scenic_id"]
+        scenic_name = item["scenic_name"]
+        scenic_key = "".join(scenic_id.casefold().split())
+        scenic_name_key = "".join(scenic_name.casefold().split())
+        if scenic_key in normalized or scenic_name_key in normalized:
+            scenic_ids.append(scenic_id)
 
     if scenic_ids:
         if any(word in normalized for word in ("打开", "前往", "跳转", "进入", "带我去")):
@@ -133,10 +183,21 @@ def _local_intent(question: str) -> IntentDecision | None:
     return None
 
 
-def _validate_decision(decision: IntentDecision) -> IntentDecision:
-    allowed = {item[0] for item in SCENIC_SEEDS}
-    if any(scenic_id not in allowed for scenic_id in decision.scenic_ids):
-        return IntentDecision(intent="free_form")
+def _validate_decision(decision: IntentDecision, context: Any = None) -> IntentDecision:
+    lookup: dict[str, str] = {}
+    for item in _effective_registry(context):
+        lookup[item["scenic_id"].casefold()] = item["scenic_id"]
+        lookup[item["scenic_name"].strip().casefold()] = item["scenic_id"]
+    canonical_ids: list[str] = []
+    for scenic_id in decision.scenic_ids:
+        if not isinstance(scenic_id, str):
+            return IntentDecision(intent="free_form")
+        canonical_id = lookup.get(scenic_id.strip().casefold())
+        if canonical_id is None:
+            return IntentDecision(intent="free_form")
+        if canonical_id not in canonical_ids:
+            canonical_ids.append(canonical_id)
+    decision = decision.model_copy(update={"scenic_ids": canonical_ids})
     if decision.intent.startswith("scenic") or decision.intent == "compare_scenics":
         if not decision.scenic_ids:
             return IntentDecision(intent="free_form")
@@ -176,10 +237,16 @@ def _tool_data(result: Any) -> dict:
 
 def _actions(result: Any) -> list[dict]:
     actions = getattr(result, "actions", []) or []
-    return [
-        action.model_dump(mode="json") if hasattr(action, "model_dump") else dict(action)
-        for action in actions
-    ]
+    safe_actions = []
+    for action in actions:
+        payload = (
+            action.model_dump(mode="json")
+            if hasattr(action, "model_dump")
+            else dict(action)
+        )
+        if _is_safe_scenic_id(payload.get("scenic_id")):
+            safe_actions.append(payload)
+    return safe_actions
 
 
 def _metadata_lines(data: dict) -> list[str]:
@@ -268,19 +335,21 @@ class AiOrchestrator:
     def __init__(self, client: DeepSeekChatClient | None = None):
         self.client = client or DeepSeekChatClient()
 
-    async def _decision(self, question: str) -> IntentDecision:
-        local = _local_intent(question)
+    async def _decision(self, question: str, context: Any = None) -> IntentDecision:
+        local = _local_intent(question, context)
         if local is not None:
-            return local
+            return _validate_decision(local, context)
         try:
-            return _validate_decision(await self.client.classify(question, _allowed_scenics()))
+            return _validate_decision(
+                await self.client.classify(question, _allowed_scenics(context)), context
+            )
         except Exception:
             return IntentDecision(intent="free_form")
 
     async def stream(
         self, question: str, context: ToolContext
     ) -> AsyncIterator[OrchestratorEvent]:
-        decision = await self._decision(question)
+        decision = await self._decision(question, context)
         request = _tool_request(decision)
         if request is None:
             yield OrchestratorEvent(

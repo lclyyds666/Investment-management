@@ -21,6 +21,7 @@ const ALLOWED_TAGS = [
 ]
 
 const ACTION_KEYS = new Set(['type', 'scenic_id', 'label'])
+const SCENIC_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
 const URL_TEXT_PATTERN = /\b(?:(?:(?:https?|ftp):\/\/|www\.)[^\s<>"'，。！？；：、（）【】{}]+|mailto:[^\s<>"'，。！？；：、（）【】{}]+)/giu
 
 function stripUrlText(value) {
@@ -122,7 +123,7 @@ export function validatedAction(action) {
       label: clonedDescriptors.label.value
     }
     if (snapshot.type !== 'navigate_to_scenic') return null
-    if (typeof snapshot.scenic_id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(snapshot.scenic_id)) return null
+    if (typeof snapshot.scenic_id !== 'string' || !SCENIC_ID_PATTERN.test(snapshot.scenic_id)) return null
     if (typeof snapshot.label !== 'string') return null
     const label = snapshot.label.trim()
     if (!label || label.length > 80) return null
