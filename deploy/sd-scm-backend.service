@@ -6,14 +6,15 @@
 # =============================================================
 [Unit]
 Description=SD Publishing SCM Backend (FastAPI + Uvicorn)
-After=network.target mysql.service
-Wants=mysql.service
+After=network.target mysql.service redis-server.service
+Wants=mysql.service redis-server.service
 
 [Service]
 Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/sd-scm/backend
+EnvironmentFile=/opt/sd-scm/backend/.env
 Environment="PATH=/opt/sd-scm/backend/.venv/bin"
 # 多进程守护；仅监听本机，由 Nginx 对外代理
 ExecStart=/opt/sd-scm/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
