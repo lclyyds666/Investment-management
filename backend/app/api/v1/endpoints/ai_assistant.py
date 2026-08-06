@@ -1,22 +1,91 @@
 """Authenticated user APIs for AI assistant conversations."""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.ai_assistant import AiConversation, AiMessage
 from app.models.user import User
-from app.schemas.ai_assistant import AiConversationCreate, AiConversationOut, AiConversationUpdate
+from app.schemas.ai_assistant import (
+    AiConversationCreate,
+    AiConversationOut,
+    AiConversationUpdate,
+    AiMessageCreate,
+)
 from app.schemas.common import Response
 from app.services.ai_conversations import (
+    begin_generation,
     create_conversation,
     delete_owned_conversation,
     get_owned_conversation,
     list_owned_conversations,
     rename_owned_conversation,
     suggestions_for_user,
+    stream_generation,
 )
+from app.services.ai_runtime import request_stop
 
 router = APIRouter()
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    summary="发送 AI 消息",
+)
+async def stream_message(
+    conversation_id: int,
+    payload: AiMessageCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conversation = get_owned_conversation(db, conversation_id, current_user.id)
+    user_message, assistant_message, lease, request_id = begin_generation(
+        db,
+        conversation,
+        current_user.id,
+        payload.content,
+        payload.client_message_id,
+    )
+    iterator = stream_generation(
+        db=db,
+        conversation=conversation,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        lease=lease,
+        request_id=request_id,
+        request=request,
+        user=current_user,
+    )
+    return StreamingResponse(
+        iterator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Request-ID": request_id,
+        },
+    )
+
+
+@router.post("/messages/{message_id}/stop", response_model=Response[dict], summary="停止 AI 生成")
+def stop_message(
+    message_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    message = db.scalar(
+        select(AiMessage)
+        .join(AiConversation, AiMessage.conversation_id == AiConversation.id)
+        .where(AiMessage.id == message_id, AiConversation.owner_id == current_user.id)
+    )
+    if message is None or message.role != "assistant":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="消息不存在")
+    if message.status == "generating":
+        request_stop(message.id)
+    return Response.ok({"id": message.id, "status": message.status})
 
 
 @router.get("/suggestions", response_model=Response[list[str]], summary="AI 助手建议问题")

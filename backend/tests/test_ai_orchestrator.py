@@ -74,6 +74,25 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions[0]["scenic_id"], "zunyi-zoo")
         self.assertNotIn("url", actions[0])
 
+    @patch("app.services.ai_orchestrator.execute_tool")
+    async def test_scenic_tool_status_carries_persistable_coverage_metadata(self, execute_tool):
+        execute_tool.return_value = ToolResult(data={"summaries": [{
+            "requested_start": "2026-07-01",
+            "requested_end": "2026-07-31",
+            "covered_start": "2026-07-02",
+            "covered_end": "2026-07-30",
+            "data_updated_at": "2026-08-01T09:30:00",
+        }]})
+        events = [event async for event in AiOrchestrator(
+            client=OfflineClient()
+        ).stream("遵义动物园上月数据", Mock())]
+        completed = next(
+            event for event in events
+            if event.kind == "tool.status" and event.payload["status"] == "completed"
+        )
+        self.assertEqual(completed.payload["metadata"]["data_start_date"], "2026-07-01")
+        self.assertEqual(completed.payload["metadata"]["data_updated_at"], "2026-08-01T09:30:00")
+
 
 if __name__ == "__main__":
     unittest.main()

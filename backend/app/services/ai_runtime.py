@@ -62,5 +62,9 @@ def is_stop_requested(message_id: int) -> bool:
     return runtime_store.get(f"ai:message:{message_id}:stop") == "1"
 
 
+def clear_stop_request(message_id: int) -> None:
+    runtime_store.delete(f"ai:message:{message_id}:stop")
+
+
 def reset_for_tests() -> None:
     runtime_store.clear_prefix("ai:")

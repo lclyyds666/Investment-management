@@ -149,6 +149,33 @@ def _metadata_lines(data: dict) -> list[str]:
     return lines
 
 
+def _stream_metadata(data: dict) -> dict[str, str]:
+    items = data.get("summaries") or data.get("comparisons") or data.get("points") or []
+    if not items:
+        return {}
+
+    def values(key: str) -> list[str]:
+        return [str(item[key]) for item in items if item.get(key)]
+
+    requested_starts = values("requested_start")
+    requested_ends = values("requested_end")
+    covered_starts = values("covered_start")
+    covered_ends = values("covered_end")
+    updated_values = values("data_updated_at")
+    metadata: dict[str, str] = {}
+    if requested_starts:
+        metadata["data_start_date"] = min(requested_starts)
+    if requested_ends:
+        metadata["data_end_date"] = max(requested_ends)
+    if covered_starts:
+        metadata["data_covered_start"] = min(covered_starts)
+    if covered_ends:
+        metadata["data_covered_end"] = max(covered_ends)
+    if updated_values:
+        metadata["data_updated_at"] = max(updated_values)
+    return metadata
+
+
 def _fallback(intent: str, data: dict) -> str:
     if intent == "platform_overview":
         return (
@@ -227,9 +254,12 @@ class AiOrchestrator:
                 "code": "tool_failed", "message": "暂时无法获取所需数据",
             })
             return
-        yield OrchestratorEvent("tool.status", {"tool": tool_name, "status": "completed"})
-
         data = _tool_data(result)
+        yield OrchestratorEvent("tool.status", {
+            "tool": tool_name,
+            "status": "completed",
+            "metadata": _stream_metadata(data),
+        })
         model_context = json.dumps(
             {"intent": decision.intent, "aggregate_result": data},
             ensure_ascii=False,

@@ -1,17 +1,28 @@
 """Conversation ownership, persistence helpers, and safe starter prompts."""
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import re
+import time
 from datetime import datetime, timedelta
+from typing import AsyncIterator
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.core.enums import CompanyCode, ResourceCode
-from app.models.ai_assistant import AiConversation, AiDeletionAudit
+from app.models.ai_assistant import AiConversation, AiDeletionAudit, AiMessage
+from app.schemas.ai_assistant import ScenicNavigationAction
 from app.models.user import User
+from app.services import ai_runtime
+from app.services.ai_orchestrator import AiOrchestrator
+from app.services.ai_tools import ToolContext
 from app.services.permissions import has_resource
 
 _DEFAULT_TITLE = "新会话"
@@ -23,6 +34,7 @@ _SCENIC_SUGGESTIONS = [
     "遵义动物园上个月经营数据。",
     "对比遵义动物园和南阳森林野生动物世界今年经营数据。",
 ]
+logger = logging.getLogger("app.ai_assistant")
 
 
 def _not_found() -> HTTPException:
@@ -143,3 +155,251 @@ def set_generated_title(conversation: AiConversation, question: str) -> None:
     """Set the automatic title once, after the first completed question/answer pair."""
     if conversation.title == _DEFAULT_TITLE:
         conversation.title = title_from_question(question)
+
+
+def encode_sse(event: str, payload: dict) -> str:
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\ndata: {body}\n\n"
+
+
+def _duplicate_submission(
+    db: Session, conversation_id: int, client_message_id: UUID
+) -> bool:
+    return db.scalar(
+        select(AiMessage.id).where(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.client_message_id == str(client_message_id),
+        )
+    ) is not None
+
+
+def begin_generation(
+    db: Session,
+    conversation: AiConversation,
+    user_id: int,
+    content: str,
+    client_message_id: UUID,
+) -> tuple[AiMessage, AiMessage, ai_runtime.GenerationLease, str]:
+    if _duplicate_submission(db, conversation.id, client_message_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="消息已提交")
+
+    ai_runtime.check_submission_rate(user_id)
+    request_id = str(uuid4())
+    lease = ai_runtime.acquire_generation(user_id, conversation.id, request_id)
+    user_message = AiMessage(
+        conversation_id=conversation.id,
+        role="user",
+        content=content,
+        status="completed",
+        client_message_id=str(client_message_id),
+        request_id=request_id,
+        actions_json=[],
+    )
+    assistant_message = AiMessage(
+        conversation_id=conversation.id,
+        role="assistant",
+        content="",
+        status="generating",
+        request_id=request_id,
+        actions_json=[],
+    )
+    try:
+        db.add_all([user_message, assistant_message])
+        db.commit()
+        db.refresh(user_message)
+        db.refresh(assistant_message)
+    except IntegrityError as exc:
+        db.rollback()
+        ai_runtime.release_generation(lease)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="消息已提交") from exc
+    except Exception:
+        db.rollback()
+        ai_runtime.release_generation(lease)
+        raise
+    return user_message, assistant_message, lease, request_id
+
+
+def _iso_date(value):
+    if value is None or not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value).date()
+    except ValueError:
+        return None
+
+
+def _iso_datetime(value):
+    if value is None or not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _apply_metadata(message: AiMessage, metadata: dict) -> None:
+    message.data_start_date = _iso_date(metadata.get("data_start_date"))
+    message.data_end_date = _iso_date(metadata.get("data_end_date"))
+    message.data_covered_start = _iso_date(metadata.get("data_covered_start"))
+    message.data_covered_end = _iso_date(metadata.get("data_covered_end"))
+    message.data_updated_at = _iso_datetime(metadata.get("data_updated_at"))
+
+
+def _event_payload(request_id: str, message_id: int, payload: dict | None = None) -> dict:
+    return {"request_id": request_id, "message_id": message_id, **(payload or {})}
+
+
+async def stream_generation(
+    *,
+    db: Session,
+    conversation: AiConversation,
+    user_message: AiMessage,
+    assistant_message: AiMessage,
+    lease: ai_runtime.GenerationLease,
+    request_id: str,
+    request,
+    user: User,
+) -> AsyncIterator[str]:
+    started = time.perf_counter()
+    content_parts: list[str] = []
+    actions: list[dict] = []
+    engine: str | None = None
+    first_token_ms: int | None = None
+    metadata: dict = {}
+    terminal_status = "completed"
+    error_code: str | None = None
+    terminal_payload: dict = {}
+    cancelled = False
+
+    try:
+        try:
+            yield encode_sse("message.created", _event_payload(request_id, assistant_message.id, {
+                "conversation_id": conversation.id,
+                "user_message_id": user_message.id,
+                "status": "generating",
+            }))
+
+            context = ToolContext(
+                db=db,
+                user=user,
+                request_id=request_id,
+                message_id=assistant_message.id,
+            )
+            async for event in AiOrchestrator().stream(user_message.content, context):
+                if await request.is_disconnected() or ai_runtime.is_stop_requested(assistant_message.id):
+                    terminal_status = "stopped"
+                    break
+
+                if event.kind == "text.delta":
+                    text = str(event.payload.get("text", ""))
+                    if text:
+                        if first_token_ms is None:
+                            first_token_ms = max(0, round((time.perf_counter() - started) * 1000))
+                        content_parts.append(text)
+                    event_engine = event.payload.get("engine")
+                    if event_engine == "deepseek" or engine is None:
+                        engine = event_engine
+                    yield encode_sse("text.delta", _event_payload(
+                        request_id, assistant_message.id, {"text": text}
+                    ))
+                    continue
+
+                if event.kind == "action":
+                    action = ScenicNavigationAction.model_validate(event.payload).model_dump(mode="json")
+                    actions.append(action)
+                    yield encode_sse("action", _event_payload(
+                        request_id, assistant_message.id, {"action": action}
+                    ))
+                    continue
+
+                if event.kind == "tool.status":
+                    if isinstance(event.payload.get("metadata"), dict):
+                        metadata.update(event.payload["metadata"])
+                    yield encode_sse("tool.status", _event_payload(
+                        request_id, assistant_message.id, event.payload
+                    ))
+                    continue
+
+                if event.kind == "error":
+                    terminal_status = "failed"
+                    error_code = str(event.payload.get("code") or "generation_failed")[:64]
+                    terminal_payload = {
+                        "code": error_code,
+                        "message": str(event.payload.get("message") or "AI 服务暂时不可用，请稍后重试。"),
+                    }
+                    break
+            if terminal_status == "completed" and (
+                await request.is_disconnected()
+                or ai_runtime.is_stop_requested(assistant_message.id)
+            ):
+                terminal_status = "stopped"
+        except (asyncio.CancelledError, GeneratorExit):
+            terminal_status = "stopped"
+            cancelled = True
+        except Exception:
+            logger.exception("ai_generation_failed", extra={
+                "request_id": request_id,
+                "message_id": assistant_message.id,
+            })
+            terminal_status = "failed"
+            error_code = "generation_failed"
+            terminal_payload = {
+                "code": error_code,
+                "message": "AI 服务暂时不可用，请稍后重试。",
+            }
+
+        assistant_message.content = "".join(content_parts)
+        assistant_message.actions_json = actions
+        assistant_message.status = terminal_status
+        assistant_message.engine = engine
+        assistant_message.first_token_ms = first_token_ms
+        assistant_message.duration_ms = max(0, round((time.perf_counter() - started) * 1000))
+        assistant_message.error_code = error_code
+        _apply_metadata(assistant_message, metadata)
+
+        now = datetime.now()
+        conversation.last_active_at = now
+        conversation.expires_at = now + timedelta(days=settings.AI_CONVERSATION_RETENTION_DAYS)
+        if terminal_status == "completed":
+            set_generated_title(conversation, user_message.content)
+        db.commit()
+
+        logger.info("ai_generation_completed", extra={
+            "request_id": request_id,
+            "message_id": assistant_message.id,
+            "conversation_id": conversation.id,
+            "status": terminal_status,
+            "engine": engine,
+            "duration_ms": assistant_message.duration_ms,
+            "error_code": error_code,
+        })
+
+        if not cancelled:
+            terminal_event = {
+                "completed": "message.completed",
+                "stopped": "message.stopped",
+                "failed": "error",
+            }[terminal_status]
+            yield encode_sse(terminal_event, _event_payload(
+                request_id,
+                assistant_message.id,
+                {"status": terminal_status, **terminal_payload},
+            ))
+    except Exception:
+        db.rollback()
+        logger.exception("ai_generation_settlement_failed", extra={
+            "request_id": request_id,
+            "message_id": assistant_message.id,
+        })
+        if not cancelled:
+            yield encode_sse("error", _event_payload(request_id, assistant_message.id, {
+                "status": "failed",
+                "code": "persistence_failed",
+                "message": "AI 服务暂时不可用，请稍后重试。",
+            }))
+    finally:
+        ai_runtime.clear_stop_request(assistant_message.id)
+        ai_runtime.release_generation(lease)
+
+    if cancelled:
+        return
