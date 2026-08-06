@@ -1,5 +1,6 @@
 """Strict public contracts for the AI assistant."""
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -65,6 +66,46 @@ class ToolResult(StrictAiModel):
     data: dict[str, Any] = Field(default_factory=dict)
     actions: list[ScenicNavigationAction] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenicSummaryOut(StrictAiModel):
+    scenic_id: str
+    scenic_name: str
+    requested_start: date
+    requested_end: date
+    covered_start: date | None = None
+    covered_end: date | None = None
+    data_updated_at: datetime | None = None
+    partial_coverage: bool
+    sales: Decimal
+    writeoff_count: int
+    positive_count: int
+    writeoff_rate: Decimal
+    existing_scale: Decimal
+    realized_scale: Decimal
+    gross_profit: Decimal
+    capital_occupation_days: float | None = None
+    ticket_total: Decimal
+    hotel_total: Decimal
+
+
+class ScenicTrendPointOut(StrictAiModel):
+    scenic_id: str
+    scenic_name: str
+    dimension: Literal["month", "platform"]
+    key: str
+    label: str
+    requested_start: date
+    requested_end: date
+    covered_start: date | None = None
+    covered_end: date | None = None
+    data_updated_at: datetime | None = None
+    partial_coverage: bool
+    sales: Decimal
+    writeoff_count: int
+    positive_count: int
+    writeoff_rate: Decimal
+    gross_profit: Decimal
 
 
 class AdminDeleteRequest(StrictAiModel):
