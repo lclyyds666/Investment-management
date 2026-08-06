@@ -270,6 +270,7 @@ async def stream_generation(
     error_code: str | None = None
     terminal_payload: dict = {}
     cancelled = False
+    task_cancelled = False
 
     try:
         try:
@@ -333,7 +334,11 @@ async def stream_generation(
                 or ai_runtime.is_stop_requested(assistant_message.id)
             ):
                 terminal_status = "stopped"
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
+            terminal_status = "stopped"
+            cancelled = True
+            task_cancelled = True
+        except GeneratorExit:
             terminal_status = "stopped"
             cancelled = True
         except Exception:
@@ -401,5 +406,7 @@ async def stream_generation(
         ai_runtime.clear_stop_request(assistant_message.id)
         ai_runtime.release_generation(lease)
 
+    if task_cancelled:
+        raise asyncio.CancelledError()
     if cancelled:
         return

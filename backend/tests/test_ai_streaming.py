@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from datetime import date, datetime, timedelta
@@ -330,6 +331,32 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
             first = await anext(response.body_iterator)
             self.assertEqual(_event(first)[0], "message.created")
             await response.body_iterator.aclose()
+
+        self.db.expire_all()
+        assistant = self.db.scalar(select(AiMessage).where(AiMessage.role == "assistant"))
+        self.assertEqual(assistant.status, "stopped")
+        lease = ai_runtime.acquire_generation(
+            self.user.id, self.conversation.id, "subsequent-request"
+        )
+        ai_runtime.release_generation(lease)
+
+    async def test_task_cancellation_settles_releases_and_propagates(self):
+        payload = AiMessageCreate(content="取消任务", client_message_id=uuid4())
+        with patch(
+            "app.services.ai_conversations.AiOrchestrator",
+            return_value=_TwoDeltaOrchestrator(),
+        ):
+            response = await stream_message(
+                conversation_id=self.conversation.id,
+                payload=payload,
+                request=_ConnectedRequest(),
+                db=self.db,
+                current_user=self.user,
+            )
+            first = await anext(response.body_iterator)
+            self.assertEqual(_event(first)[0], "message.created")
+            with self.assertRaises(asyncio.CancelledError):
+                await response.body_iterator.athrow(asyncio.CancelledError())
 
         self.db.expire_all()
         assistant = self.db.scalar(select(AiMessage).where(AiMessage.role == "assistant"))
