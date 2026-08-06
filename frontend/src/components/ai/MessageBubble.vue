@@ -52,7 +52,7 @@
 </template>
 
 <script setup>
-import { computed, toRaw } from 'vue'
+import { computed, isReactive, reactive, toRaw } from 'vue'
 import { Location } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { renderSafeMarkdown, validatedAction } from '@/utils/safeMarkdown'
@@ -69,7 +69,7 @@ const router = useRouter()
 const safeContent = computed(() => renderSafeMarkdown(props.message.content))
 const validActions = computed(() => (
   (Array.isArray(props.message.actions_json) ? props.message.actions_json : [])
-    .map((action) => validatedAction(toRaw(action)))
+    .map((action) => validatedAction(unwrapVueAction(action)))
     .filter(Boolean)
 ))
 const toolStatuses = computed(() => (
@@ -96,6 +96,12 @@ const statusLabel = computed(() => ({
   stopped: '已停止',
   failed: '生成失败'
 }[props.message.status] || ''))
+
+function unwrapVueAction(action) {
+  if (!isReactive(action)) return action
+  const raw = toRaw(action)
+  return reactive(raw) === action ? raw : action
+}
 
 function formatRange(start, end) {
   if (!start || !end) return ''

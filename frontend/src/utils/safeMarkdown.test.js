@@ -30,10 +30,13 @@ describe('safe AI output', () => {
       '',
       '`ftp://evil.example/file` 与 mailto:test@evil.example',
       '',
-      '实体编码 https&#58;//evil.example/path'
+      '实体编码 https&#58;//evil.example/path',
+      '',
+      'IPv6 http://[::1]/health，Unicode https://例子.测试/路径，正文保留。'
     ].join('\n'))
     expect(html).not.toMatch(/https?:\/\/|ftp:\/\/|www\.|mailto:/i)
     expect(html).toContain('不应展示目标')
+    expect(html).toContain('正文保留')
 
     const originalSupport = DOMPurify.isSupported
     DOMPurify.isSupported = false
@@ -139,6 +142,29 @@ describe('safe AI output', () => {
           content: '无操作',
           status: 'completed',
           actions_json: { type: 'navigate_to_scenic' }
+        }
+      },
+      global: { stubs: { ElButton: true, ElIcon: true } }
+    })
+
+    expect(wrapper.find('button').exists()).toBe(false)
+  })
+
+  it('does not trust a native proxy that spoofs Vue reactive flags', () => {
+    const safeRaw = {
+      type: 'navigate_to_scenic', scenic_id: 'zunyi-zoo', label: '伪造动作'
+    }
+    const spoofed = new Proxy(safeRaw, {
+      get(target, key, receiver) {
+        if (key === '__v_isReactive') return true
+        if (key === '__v_raw') return safeRaw
+        return Reflect.get(target, key, receiver)
+      }
+    })
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: {
+          role: 'assistant', content: '无操作', status: 'completed', actions_json: [spoofed]
         }
       },
       global: { stubs: { ElButton: true, ElIcon: true } }

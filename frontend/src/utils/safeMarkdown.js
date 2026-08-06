@@ -21,7 +21,7 @@ const ALLOWED_TAGS = [
 ]
 
 const ACTION_KEYS = new Set(['type', 'scenic_id', 'label'])
-const URL_TEXT_PATTERN = /\b(?:(?:(?:https?|ftp):\/\/|www\.)[a-z0-9._~:/?#@!$&'()*+,;=%-]+|mailto:[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+)/giu
+const URL_TEXT_PATTERN = /\b(?:(?:(?:https?|ftp):\/\/|www\.)[^\s<>"'，。！？；：、（）【】{}]+|mailto:[^\s<>"'，。！？；：、（）【】{}]+)/giu
 
 function stripUrlText(value) {
   return String(value || '').replace(URL_TEXT_PATTERN, '')
