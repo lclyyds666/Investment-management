@@ -17,7 +17,7 @@ from app.models.ai_assistant import AiConversation, AiMessage, AiToolCall
 from app.schemas.ai_assistant import AiMessageCreate
 from app.services import ai_runtime
 from app.services.ai_conversations import encode_sse
-from app.services.ai_orchestrator import OrchestratorEvent
+from app.services.ai_orchestrator import OrchestratorEvent, _UNAVAILABLE
 
 
 def _event(frame: str) -> tuple[str, dict]:
@@ -82,13 +82,24 @@ class _CompletedOrchestrator:
 
 class _TwoDeltaOrchestrator:
     async def stream(self, question, context):
-        yield OrchestratorEvent("text.delta", {"text": "第一段", "engine": "deepseek"})
-        yield OrchestratorEvent("text.delta", {"text": "第二段", "engine": "deepseek"})
+        yield OrchestratorEvent("text.delta", {"text": "第一段", "engine": "local"})
+        yield OrchestratorEvent("text.delta", {"text": "第二段", "engine": "local"})
 
 
 class _OneDeltaOrchestrator:
     async def stream(self, question, context):
-        yield OrchestratorEvent("text.delta", {"text": "唯一一段", "engine": "deepseek"})
+        yield OrchestratorEvent("text.delta", {"text": "唯一一段", "engine": "local"})
+
+
+class _SplitUntrustedOrchestrator:
+    def __init__(self, engine):
+        self.engine = engine
+
+    async def stream(self, question, context):
+        yield OrchestratorEvent("text.delta", {"text": "https", "engine": self.engine})
+        yield OrchestratorEvent(
+            "text.delta", {"text": "://example.com.", "engine": self.engine}
+        )
 
 
 class AiSseContractTest(unittest.TestCase):
@@ -270,6 +281,31 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
             conversation.expires_at - conversation.last_active_at,
             timedelta(days=180),
         )
+
+    async def test_untrusted_split_deltas_never_reach_sse_or_persistence(self):
+        for engine in ("deepseek", "local-copy"):
+            with self.subTest(engine=engine):
+                _, events = await self._stream(
+                    "untrusted output", _SplitUntrustedOrchestrator(engine)
+                )
+
+                self.assertEqual([name for name, _ in events], [
+                    "message.created", "text.delta", "message.completed",
+                ])
+                deltas = [payload["text"] for name, payload in events if name == "text.delta"]
+                self.assertEqual(deltas, [_UNAVAILABLE])
+                serialized = json.dumps(events, ensure_ascii=False)
+                self.assertNotIn("https", serialized)
+                self.assertNotIn("example.com", serialized)
+
+                self.db.expire_all()
+                assistant = self.db.scalar(
+                    select(AiMessage)
+                    .where(AiMessage.role == "assistant")
+                    .order_by(AiMessage.id.desc())
+                )
+                self.assertEqual(assistant.content, _UNAVAILABLE)
+                self.assertEqual(assistant.engine, "local")
 
     async def test_stop_flag_after_delta_emits_stopped_terminal_and_releases_lease(self):
         payload = AiMessageCreate(content="分段回答", client_message_id=uuid4())

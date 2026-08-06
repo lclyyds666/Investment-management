@@ -22,7 +22,12 @@ from app.models.ai_assistant import AiConversation, AiDeletionAudit, AiMessage
 from app.schemas.ai_assistant import ScenicNavigationAction
 from app.models.user import User
 from app.services import ai_runtime
-from app.services.ai_orchestrator import AiOrchestrator, _UNAVAILABLE, is_safe_model_text
+from app.services.ai_orchestrator import (
+    AiOrchestrator,
+    LOCAL_ENGINE,
+    _UNAVAILABLE,
+    is_safe_model_text,
+)
 from app.services.ai_tools import ToolContext
 from app.services.permissions import has_resource
 
@@ -36,6 +41,7 @@ _SCENIC_SUGGESTIONS = [
     "对比遵义动物园和南阳森林野生动物世界今年经营数据。",
 ]
 logger = logging.getLogger("app.ai_assistant")
+_MAX_UNTRUSTED_OUTPUT_CHARS = 4096
 
 
 def _not_found() -> HTTPException:
@@ -442,7 +448,7 @@ async def stream_generation(
     terminal_payload: dict = {}
     cancelled = False
     task_cancelled = False
-    policy_rejected = False
+    untrusted_parts: list[str] = []
 
     try:
         try:
@@ -466,23 +472,24 @@ async def stream_generation(
                 if event.kind == "text.delta":
                     text = str(event.payload.get("text", ""))
                     event_engine = event.payload.get("engine")
-                    if event_engine == "deepseek" and not is_safe_model_text(text):
-                        text = _UNAVAILABLE
-                        event_engine = "local"
-                        policy_rejected = True
+                    if event_engine != LOCAL_ENGINE:
+                        if text:
+                            untrusted_parts.append(text)
+                            combined = "".join(untrusted_parts)
+                            if (
+                                len(combined) > _MAX_UNTRUSTED_OUTPUT_CHARS
+                                or not is_safe_model_text(combined)
+                            ):
+                                break
+                        continue
                     if text:
                         if first_token_ms is None:
                             first_token_ms = max(0, round((time.perf_counter() - started) * 1000))
                         content_parts.append(text)
-                    if policy_rejected:
-                        engine = "local"
-                    elif event_engine == "deepseek" or engine is None:
-                        engine = event_engine
+                    engine = LOCAL_ENGINE
                     yield encode_sse("text.delta", _event_payload(
                         request_id, assistant_message.id, {"text": text}
                     ))
-                    if policy_rejected:
-                        break
                     continue
 
                 if event.kind == "action":
@@ -514,6 +521,14 @@ async def stream_generation(
                 or ai_runtime.is_stop_requested(assistant_message.id)
             ):
                 terminal_status = "stopped"
+            if terminal_status == "completed" and untrusted_parts:
+                if first_token_ms is None:
+                    first_token_ms = max(0, round((time.perf_counter() - started) * 1000))
+                content_parts.append(_UNAVAILABLE)
+                engine = LOCAL_ENGINE
+                yield encode_sse("text.delta", _event_payload(
+                    request_id, assistant_message.id, {"text": _UNAVAILABLE}
+                ))
         except asyncio.CancelledError:
             terminal_status = "stopped"
             cancelled = True

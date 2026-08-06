@@ -1,7 +1,6 @@
 """Local-first AI intent routing, aggregate tools, streaming, and fallbacks."""
 from __future__ import annotations
 
-import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -9,7 +8,6 @@ from typing import Any, AsyncIterator, Literal
 
 from app.core.config import settings
 from app.schemas.ai_assistant import ToolResult
-from app.services import ai_runtime
 from app.services.ai_dates import resolve_date_range
 from app.services.ai_tools import ToolContext, execute_tool
 from app.services.deepseek_chat import DeepSeekChatClient, IntentDecision
@@ -17,15 +15,6 @@ from app.services.scenic_config import SCENIC_SEEDS
 
 
 _UNAVAILABLE = "AI 服务暂时不可用，请稍后重试。"
-_DATA_SYSTEM_PROMPT = (
-    "你是山东出版投资有限公司工作平台的只读 AI 助手。"
-    "仅根据提供的聚合 JSON 作答，不得推测缺失数据，不得输出内部公式、SQL、字段名、"
-    "原始台账、附件、凭据、任意链接或修改操作。语言简洁、专业。"
-)
-_FREE_SYSTEM_PROMPT = (
-    "你是山东出版投资有限公司工作平台的 AI 助手。不得披露或猜测凭据、数据库结构、"
-    "SQL、内部计算公式或原始业务数据，不得生成可执行的业务写操作。"
-)
 
 
 @dataclass(frozen=True)
@@ -34,25 +23,28 @@ class OrchestratorEvent:
     payload: dict[str, Any]
 
 
-class ModelOutputRejected(RuntimeError):
-    """Raised when provider output cannot be safely shown or persisted."""
+LOCAL_ENGINE = "local"
 
 
-_COMPLETE_SEGMENT_RE = re.compile(r"[\u3002\uff01\uff1f!?]+(?:[\"'\u201d\u2019\uff09\u3011]*)|(?:\r?\n)+")
-_URL_RE = re.compile(r"(?:(?:https?|ftp)://|www\.)", re.IGNORECASE)
+_URL_RE = re.compile(
+    r"(?:(?:https?|ftp):?//|//[a-z0-9-]|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,63}\b)",
+    re.IGNORECASE,
+)
 _SQL_RE = re.compile(
     r"(?:select.*from|insertinto|update[a-z_]*set|deletefrom|drop(?:table|database)|"
     r"altertable|createtable|truncate(?:table)?|unionselect|show(?:tables|columns)|"
-    r"describe[a-z_]*)",
+    r"describe[a-z_]*|pragma(?:table_info)?|with[a-z_]+as\(|call[a-z_]+\(|exec(?:ute)?[a-z_]+)",
     re.IGNORECASE,
 )
 _FORMULA_RE = re.compile(
-    r"(?:[=+*/\u00d7\u00f7]|(?:sum|avg|count|round|if)\(|\u516c\u5f0f|\u8ba1\u7b97\u89c4\u5219)",
+    r"(?:[=+*/\u00d7\u00f7]|(?:sum|avg|count|round|if)\(|formula|calculatedas|"
+    r"dividedby|multipliedby|\u516c\u5f0f|\u8ba1\u7b97\u89c4\u5219|\u9664\u4ee5|\u4e58\u4ee5|\u52a0\u4e0a|\u51cf\u53bb)",
     re.IGNORECASE,
 )
 _CREDENTIAL_RE = re.compile(
     r"(?:api(?:key)?|access(?:token)?|secret|password|passwd|authorization|bearer|"
-    r"token|sk-[a-z0-9_-]+|akia[a-z0-9]+|\u5bc6\u7801|\u5bc6\u94a5|\u4ee4\u724c|\u51ed\u8bc1)",
+    r"token|sk-[a-z0-9_-]+|gh[oprsu]_[a-z0-9_]+|akia[a-z0-9]+|"
+    r"eyj[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|\u5bc6\u7801|\u5bc6\u94a5|\u4ee4\u724c|\u51ed\u8bc1)",
     re.IGNORECASE,
 )
 _DATABASE_RE = re.compile(
@@ -67,7 +59,10 @@ _RAW_CONTENT_RE = re.compile(
     r"\u9644\u4ef6(?:\u5185\u5bb9|\u539f\u6587|\u6587\u4ef6))",
     re.IGNORECASE,
 )
-_MAX_PENDING_MODEL_CHARS = 4096
+_RAW_ROW_RE = re.compile(
+    r"\{(?:\"?[a-z_][a-z0-9_]*\"?:[^,{}]+,){1,}\"?[a-z_][a-z0-9_]*\"?:",
+    re.IGNORECASE,
+)
 
 
 def _normalized_output(text: str) -> tuple[str, str]:
@@ -91,13 +86,8 @@ def is_safe_model_text(text: str) -> bool:
         or _CREDENTIAL_RE.search(compact)
         or _DATABASE_RE.search(normalized)
         or _RAW_CONTENT_RE.search(normalized)
+        or _RAW_ROW_RE.search(compact)
     )
-
-
-def is_safe_model_segment(text: str) -> bool:
-    """Return whether a complete provider segment is safe for display and storage."""
-    boundaries = list(_COMPLETE_SEGMENT_RE.finditer(text))
-    return bool(boundaries and boundaries[-1].end() == len(text) and is_safe_model_text(text))
 
 
 def _allowed_scenics() -> list[dict[str, str]]:
@@ -287,52 +277,15 @@ class AiOrchestrator:
         except Exception:
             return IntentDecision(intent="free_form")
 
-    async def _stream_model(self, prompt: str, context: str) -> AsyncIterator[str]:
-        async for chunk in self.client.stream_answer(prompt, context):
-            if chunk:
-                yield chunk
-
-    async def _safe_model_segments(
-        self, prompt: str, context: str, message_id: int | None
-    ) -> AsyncIterator[str]:
-        pending = ""
-        async for chunk in self._stream_model(prompt, context):
-            if message_id is not None and ai_runtime.is_stop_requested(message_id):
-                return
-            pending += chunk
-            if len(pending) > _MAX_PENDING_MODEL_CHARS:
-                raise ModelOutputRejected("model output did not reach a safe boundary")
-            while match := _COMPLETE_SEGMENT_RE.search(pending):
-                segment = pending[:match.end()]
-                pending = pending[match.end():]
-                if not is_safe_model_segment(segment):
-                    raise ModelOutputRejected("model output violates the output policy")
-                yield segment
-        if pending.strip():
-            raise ModelOutputRejected("model output ended without a complete segment")
-
-    @staticmethod
-    def _message_id(context: ToolContext) -> int | None:
-        message_id = getattr(context, "message_id", None)
-        return message_id if isinstance(message_id, int) else None
-
     async def stream(
         self, question: str, context: ToolContext
     ) -> AsyncIterator[OrchestratorEvent]:
         decision = await self._decision(question)
         request = _tool_request(decision)
         if request is None:
-            try:
-                emitted = False
-                async for chunk in self._safe_model_segments(
-                    _FREE_SYSTEM_PROMPT, question, self._message_id(context)
-                ):
-                    emitted = True
-                    yield OrchestratorEvent("text.delta", {"text": chunk, "engine": "deepseek"})
-                if not emitted:
-                    raise RuntimeError("empty model response")
-            except Exception:
-                yield OrchestratorEvent("text.delta", {"text": _UNAVAILABLE, "engine": "local"})
+            yield OrchestratorEvent(
+                "text.delta", {"text": _UNAVAILABLE, "engine": LOCAL_ENGINE}
+            )
             return
 
         tool_name, arguments = request
@@ -355,33 +308,9 @@ class AiOrchestrator:
             "status": "completed",
             "metadata": _stream_metadata(data),
         })
-        model_context = json.dumps(
-            {"intent": decision.intent, "aggregate_result": data},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        used_model = False
-        try:
-            async for chunk in self._safe_model_segments(
-                _DATA_SYSTEM_PROMPT, model_context, self._message_id(context)
-            ):
-                used_model = True
-                yield OrchestratorEvent("text.delta", {"text": chunk, "engine": "deepseek"})
-            if not used_model:
-                raise RuntimeError("empty model response")
-            metadata = _metadata_lines(data)
-            if metadata:
-                yield OrchestratorEvent("text.delta", {
-                    "text": "\n\n" + "\n".join(metadata), "engine": "local",
-                })
-        except ModelOutputRejected:
-            yield OrchestratorEvent("text.delta", {
-                "text": _UNAVAILABLE, "engine": "local",
-            })
-        except Exception:
-            yield OrchestratorEvent("text.delta", {
-                "text": _fallback(decision.intent, data), "engine": "local",
-            })
+        yield OrchestratorEvent("text.delta", {
+            "text": _fallback(decision.intent, data), "engine": LOCAL_ENGINE,
+        })
 
         for action in _actions(result):
             yield OrchestratorEvent("action", action)
