@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictAiModel(BaseModel):
@@ -20,14 +20,37 @@ class ScenicNavigationAction(StrictAiModel):
 class AiConversationCreate(StrictAiModel):
     title: str = Field(default="新会话", min_length=1, max_length=120)
 
+    @field_validator("title")
+    @classmethod
+    def title_must_contain_visible_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("会话标题不能为空")
+        return value
+
 
 class AiConversationUpdate(StrictAiModel):
     title: str = Field(min_length=1, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def title_must_contain_visible_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("会话标题不能为空")
+        return value
 
 
 class AiMessageCreate(StrictAiModel):
     content: str = Field(min_length=1, max_length=2000)
     client_message_id: UUID
+
+    @field_validator("content")
+    @classmethod
+    def content_must_contain_visible_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("消息内容不能为空")
+        return value
 
 
 class AiMessageOut(StrictAiModel):
