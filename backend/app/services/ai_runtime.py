@@ -28,7 +28,10 @@ def acquire_generation(user_id: int, conversation_id: int, request_id: str) -> G
     ttl = settings.AI_GENERATION_LEASE_SECONDS
     conversation_key = _conversation_key(conversation_id)
     if not runtime_store.set_if_absent(conversation_key, request_id, ttl):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该会话正在生成回复")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
+        )
 
     if not runtime_store.set_members(
         _active_key(user_id), request_id, settings.AI_MAX_CONCURRENT_PER_USER, ttl

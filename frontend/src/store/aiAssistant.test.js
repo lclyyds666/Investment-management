@@ -6,6 +6,13 @@ import * as api from '@/api/aiAssistant'
 
 vi.mock('@/api/aiAssistant')
 
+function conflictError(code, message = code) {
+  const error = new Error(message)
+  error.status = 409
+  error.code = code
+  return error
+}
+
 function conversation(id, messages = []) {
   return { id, title: `会话${id}`, messages }
 }
@@ -56,6 +63,47 @@ describe('AI assistant store', () => {
     expect(firstPayload.client_message_id).toBe(secondPayload.client_message_id)
     expect(crypto.randomUUID).toHaveBeenCalledTimes(1)
   })
+
+  it('reloads and clears the retry submission only for duplicate conflicts', async () => {
+    api.streamMessage
+      .mockRejectedValueOnce(conflictError('duplicate_submission'))
+      .mockResolvedValueOnce()
+    crypto.randomUUID
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222')
+    api.getConversation.mockResolvedValue(conversation(1))
+    const store = useAiAssistantStore()
+    store.conversations = [conversation(1)]
+
+    await expect(store.sendMessage(1, 'duplicate prompt')).resolves.toBeUndefined()
+    await store.sendMessage(1, 'duplicate prompt')
+
+    expect(api.getConversation).toHaveBeenCalledWith(1)
+    expect(api.streamMessage.mock.calls[0][1].client_message_id)
+      .not.toBe(api.streamMessage.mock.calls[1][1].client_message_id)
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['conversation_busy', 'unexpected_conflict'])(
+    'keeps retry state and rejects non-duplicate 409 conflicts (%s)',
+    async (code) => {
+      api.streamMessage
+        .mockRejectedValueOnce(conflictError(code))
+        .mockResolvedValueOnce()
+      const store = useAiAssistantStore()
+      store.conversations = [conversation(1)]
+
+      await expect(store.sendMessage(1, 'retry prompt')).rejects.toMatchObject({ code })
+      expect(store.errorByConversation[1]).toMatchObject({ code })
+      await store.sendMessage(1, 'retry prompt')
+
+      expect(api.getConversation).not.toHaveBeenCalled()
+      expect(api.streamMessage.mock.calls[0][1].client_message_id)
+        .toBe(api.streamMessage.mock.calls[1][1].client_message_id)
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(1)
+      expect(store.errorByConversation[1]).toBeNull()
+    }
+  )
 
   it('switching conversations does not abort another conversation stream', async () => {
     let streamOptions

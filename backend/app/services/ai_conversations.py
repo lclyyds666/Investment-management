@@ -358,7 +358,10 @@ def begin_generation(
     client_message_id: UUID,
 ) -> tuple[AiMessage, AiMessage, ai_runtime.GenerationLease, str]:
     if _duplicate_submission(db, conversation.id, client_message_id):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="消息已提交")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "duplicate_submission", "message": "消息已提交"},
+        )
 
     ai_runtime.check_submission_rate(user_id)
     request_id = str(uuid4())
@@ -388,7 +391,10 @@ def begin_generation(
     except IntegrityError as exc:
         db.rollback()
         ai_runtime.release_generation(lease)
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="消息已提交") from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "duplicate_submission", "message": "消息已提交"},
+        ) from exc
     except Exception:
         db.rollback()
         ai_runtime.release_generation(lease)

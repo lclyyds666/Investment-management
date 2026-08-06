@@ -299,7 +299,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', () => {
     } catch (error) {
       if (!isCurrentSession(session)) return
       if (error?.name === 'AbortError') return
-      if (error?.status === 409) {
+      if (error?.status === 409 && error?.code === 'duplicate_submission') {
         retrySubmissions.delete(conversationId)
         await openConversation(conversationId, session)
         return

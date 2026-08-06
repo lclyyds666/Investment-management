@@ -3,11 +3,12 @@ import json
 import unittest
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.endpoints.ai_assistant import stop_message, stream_message
@@ -16,7 +17,7 @@ from app.core import store
 from app.models.ai_assistant import AiConversation, AiMessage, AiToolCall
 from app.schemas.ai_assistant import AiMessageCreate
 from app.services import ai_runtime
-from app.services.ai_conversations import encode_sse
+from app.services.ai_conversations import begin_generation, encode_sse
 from app.services.ai_orchestrator import OrchestratorEvent, _UNAVAILABLE
 
 
@@ -123,11 +124,28 @@ class AiRuntimeTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             ai_runtime.acquire_generation(3, 10, "request-b")
         self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "conversation_busy")
+        self.assertIsInstance(raised.exception.detail["message"], str)
         ai_runtime.release_generation(first)
 
     def test_stop_flag_is_visible_through_runtime_store(self):
         ai_runtime.request_stop(42)
         self.assertTrue(ai_runtime.is_stop_requested(42))
+
+    def test_integrity_duplicate_returns_the_duplicate_submission_code(self):
+        db = MagicMock()
+        db.scalar.return_value = None
+        db.commit.side_effect = IntegrityError("insert", {}, Exception("duplicate"))
+        conversation = SimpleNamespace(id=10)
+
+        with self.assertRaises(HTTPException) as raised:
+            begin_generation(db, conversation, 3, "question", uuid4())
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "duplicate_submission")
+        db.rollback.assert_called_once()
+        lease = ai_runtime.acquire_generation(3, 10, "subsequent-request")
+        ai_runtime.release_generation(lease)
 
     def test_user_can_run_only_configured_number_of_generations(self):
         with patch.object(ai_runtime.settings, "AI_MAX_CONCURRENT_PER_USER", 2):
@@ -234,10 +252,29 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "duplicate_submission")
         count = self.db.scalar(
             select(func.count()).select_from(AiMessage).where(AiMessage.role == "user")
         )
         self.assertEqual(count, 1)
+
+    async def test_active_generation_returns_a_structured_busy_conflict(self):
+        lease = ai_runtime.acquire_generation(self.user.id, self.conversation.id, "active-request")
+        try:
+            with self.assertRaises(HTTPException) as raised:
+                await stream_message(
+                    conversation_id=self.conversation.id,
+                    payload=AiMessageCreate(content="second request", client_message_id=uuid4()),
+                    request=_ConnectedRequest(),
+                    db=self.db,
+                    current_user=self.user,
+                )
+        finally:
+            ai_runtime.release_generation(lease)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "conversation_busy")
+        self.assertIsInstance(raised.exception.detail["message"], str)
 
     async def test_completed_stream_orders_events_and_persists_lifecycle(self):
         response, events = await self._stream("遵义经营数据", _CompletedOrchestrator())

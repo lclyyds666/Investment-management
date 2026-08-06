@@ -20,9 +20,18 @@ async function responseError(response) {
   } catch {
     payload = null
   }
-  const error = new Error(payload?.detail || payload?.message || `请求失败（${response.status}）`)
+  const detail = payload?.detail
+  const detailObject = detail && typeof detail === 'object' && !Array.isArray(detail)
+    ? detail
+    : null
+  const message = (typeof detailObject?.message === 'string' ? detailObject.message : null)
+    || (typeof detail === 'string' ? detail : null)
+    || (typeof payload?.message === 'string' ? payload.message : null)
+    || `请求失败（${response.status}）`
+  const error = new Error(message)
   error.status = response.status
   error.payload = payload
+  error.code = detailObject?.code || payload?.code
   return error
 }
 
