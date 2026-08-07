@@ -31,13 +31,13 @@ Keeping detached ORM instances and reopening the closed request session was reje
 
 ## Error Handling
 
-The wrapper validates that all persisted rows still exist and belong to the captured conversation before delegation. If initialization fails, it clears the stop flag and releases the lease so a conversation cannot remain busy. The existing core iterator continues to convert generation and settlement failures into sanitized SSE errors without logging prompt or answer content.
+The wrapper validates that all persisted rows still exist and belong to the captured conversation before delegation. If initialization fails, it emits one sanitized SSE error, clears the stop flag, and releases the lease exactly once so a conversation cannot remain busy. After delegation begins, the existing core iterator remains the sole owner of terminal SSE events and coordination cleanup. Exceptions raised after delegation, including Redis or session cleanup failures after a terminal event, propagate to the server layer without the wrapper appending a second terminal event.
 
 Cancellation propagates through the existing core iterator after it settles the message as stopped and releases coordination state. The wrapper closes the stream-owned session in every exit path.
 
 ## Verification
 
-A regression test will create a response, close the request session before consuming `body_iterator`, then assert that `message.created`, validated content, and a terminal event are emitted and persisted. Existing streaming tests continue to exercise completion, stop, disconnect, cancellation, lease renewal, provider validation, and settlement behavior.
+A regression test will create a response, close the request session before consuming `body_iterator`, then assert that `message.created`, validated content, and a terminal event are emitted and persisted. Initialization-failure coverage will require one sanitized terminal error and one lease release. Delegated-cleanup failure coverage will require that a previously emitted terminal event is not followed by another SSE error. Existing streaming tests continue to exercise completion, stop, disconnect, cancellation, lease renewal, provider validation, and settlement behavior.
 
 Before redeployment, run all 149+ backend tests, all 113 frontend tests, the production frontend build, both Playwright portal tests, and `git diff --check`. Production verification repeats the authenticated portal and AI smoke test, checks two Uvicorn workers, Redis readiness, the cleanup timer, all four portal routes, sanitized logs, and matching GitHub/production revision markers.
 
