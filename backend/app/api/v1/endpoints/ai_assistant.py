@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.deps import get_current_user, require_superuser
 from app.db.session import get_db
@@ -33,7 +33,7 @@ from app.services.ai_conversations import (
     list_deletion_audits,
     rename_owned_conversation,
     suggestions_for_user,
-    stream_generation,
+    stream_generation_in_session,
 )
 from app.services.ai_runtime import request_stop
 
@@ -153,15 +153,17 @@ async def stream_message(
         payload.content,
         payload.client_message_id,
     )
-    iterator = stream_generation(
-        db=db,
-        conversation=conversation,
-        user_message=user_message,
-        assistant_message=assistant_message,
+    stream_session_factory = sessionmaker(bind=db.get_bind())
+    iterator = stream_generation_in_session(
+        session_factory=stream_session_factory,
+        conversation_id=conversation.id,
+        user_message_id=user_message.id,
+        assistant_message_id=assistant_message.id,
         lease=lease,
         request_id=request_id,
         request=request,
-        user=current_user,
+        user_id=current_user.id,
+        is_superuser=current_user.is_superuser,
     )
     return StreamingResponse(
         iterator,

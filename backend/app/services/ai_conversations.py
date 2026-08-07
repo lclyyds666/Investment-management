@@ -8,7 +8,8 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import AsyncIterator
+from types import SimpleNamespace
+from typing import AsyncIterator, Callable
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -567,6 +568,77 @@ def _apply_metadata(message: AiMessage, metadata: dict) -> None:
 
 def _event_payload(request_id: str, message_id: int, payload: dict | None = None) -> dict:
     return {"request_id": request_id, "message_id": message_id, **(payload or {})}
+
+
+async def stream_generation_in_session(
+    *,
+    session_factory: Callable[[], Session],
+    conversation_id: int,
+    user_message_id: int,
+    assistant_message_id: int,
+    lease: ai_runtime.GenerationLease,
+    request_id: str,
+    request,
+    user_id: int,
+    is_superuser: bool,
+) -> AsyncIterator[str]:
+    """Reload generation state in a session that lives as long as the SSE stream."""
+    delegated = False
+    try:
+        with session_factory() as db:
+            conversation = db.get(AiConversation, conversation_id)
+            user_message = db.get(AiMessage, user_message_id)
+            assistant_message = db.get(AiMessage, assistant_message_id)
+            if (
+                conversation is None
+                or conversation.owner_id != user_id
+                or user_message is None
+                or user_message.conversation_id != conversation_id
+                or user_message.role != "user"
+                or user_message.request_id != request_id
+                or assistant_message is None
+                or assistant_message.conversation_id != conversation_id
+                or assistant_message.role != "assistant"
+                or assistant_message.request_id != request_id
+            ):
+                raise RuntimeError("AI generation records could not be reloaded")
+
+            delegated = True
+            stream_user = SimpleNamespace(id=user_id, is_superuser=is_superuser)
+            generation = stream_generation(
+                db=db,
+                conversation=conversation,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                lease=lease,
+                request_id=request_id,
+                request=request,
+                user=stream_user,
+            )
+            try:
+                async for frame in generation:
+                    yield frame
+            finally:
+                await generation.aclose()
+    except (asyncio.CancelledError, GeneratorExit):
+        raise
+    except Exception:
+        logger.exception("ai_generation_session_failed", extra={
+            "request_id": request_id,
+            "message_id": assistant_message_id,
+            "conversation_id": conversation_id,
+        })
+        if delegated:
+            raise
+        yield encode_sse("error", _event_payload(request_id, assistant_message_id, {
+            "status": "failed",
+            "code": "persistence_failed",
+            "message": "AI 服务暂时不可用，请稍后重试。",
+        }))
+    finally:
+        if not delegated:
+            ai_runtime.clear_stop_request(assistant_message_id)
+            ai_runtime.release_generation(lease)
 
 
 async def stream_generation(

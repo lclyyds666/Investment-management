@@ -17,7 +17,11 @@ from app.core import store
 from app.models.ai_assistant import AiConversation, AiMessage, AiToolCall
 from app.schemas.ai_assistant import AiMessageCreate
 from app.services import ai_runtime
-from app.services.ai_conversations import begin_generation, encode_sse
+from app.services.ai_conversations import (
+    begin_generation,
+    encode_sse,
+    stream_generation_in_session,
+)
 from app.services.ai_orchestrator import AiOrchestrator, OrchestratorEvent, _UNAVAILABLE
 from app.services.deepseek_chat import IntentDecision, ModelAnswerChunk
 
@@ -446,6 +450,94 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
             timedelta(days=180),
         )
 
+    async def test_stream_uses_a_fresh_session_after_request_cleanup(self):
+        payload = AiMessageCreate(content="session lifecycle", client_message_id=uuid4())
+        with patch(
+            "app.services.ai_conversations.AiOrchestrator",
+            return_value=_OneDeltaOrchestrator(),
+        ):
+            response = await stream_message(
+                conversation_id=self.conversation.id,
+                payload=payload,
+                request=_ConnectedRequest(),
+                db=self.db,
+                current_user=self.user,
+            )
+            self.db.close()
+            frames = [frame async for frame in response.body_iterator]
+
+        events = [_event(frame) for frame in frames]
+        self.assertEqual(
+            [name for name, _ in events],
+            ["message.created", "text.delta", "message.completed"],
+        )
+        with Session(self.engine) as verification_db:
+            assistant = verification_db.scalar(
+                select(AiMessage).where(AiMessage.role == "assistant")
+            )
+            self.assertEqual(assistant.status, "completed")
+            self.assertTrue(assistant.content)
+
+    async def test_stream_initialization_failure_emits_one_error_and_releases_once(self):
+        lease = ai_runtime.acquire_generation(
+            self.user.id, self.conversation.id, "init-failure"
+        )
+        with patch.object(
+            ai_runtime, "release_generation", wraps=ai_runtime.release_generation
+        ) as release:
+            frames = [frame async for frame in stream_generation_in_session(
+                session_factory=MagicMock(
+                    side_effect=RuntimeError("database unavailable")
+                ),
+                conversation_id=self.conversation.id,
+                user_message_id=101,
+                assistant_message_id=102,
+                lease=lease,
+                request_id="init-failure",
+                request=_ConnectedRequest(),
+                user_id=self.user.id,
+                is_superuser=False,
+            )]
+
+        self.assertEqual([_event(frame)[0] for frame in frames], ["error"])
+        self.assertEqual(release.call_count, 1)
+
+    async def test_delegated_cleanup_failure_does_not_append_second_terminal(self):
+        payload = AiMessageCreate(content="cleanup failure", client_message_id=uuid4())
+        original_release = ai_runtime.release_generation
+
+        def release_then_fail(lease):
+            original_release(lease)
+            raise RuntimeError("cleanup failed")
+
+        with (
+            patch(
+                "app.services.ai_conversations.AiOrchestrator",
+                return_value=_OneDeltaOrchestrator(),
+            ),
+            patch.object(
+                ai_runtime,
+                "release_generation",
+                side_effect=release_then_fail,
+            ) as release,
+        ):
+            response = await stream_message(
+                conversation_id=self.conversation.id,
+                payload=payload,
+                request=_ConnectedRequest(),
+                db=self.db,
+                current_user=self.user,
+            )
+            events = [_event(await anext(response.body_iterator)) for _ in range(3)]
+            with self.assertRaises(RuntimeError):
+                await anext(response.body_iterator)
+
+        self.assertEqual(
+            [name for name, _ in events],
+            ["message.created", "text.delta", "message.completed"],
+        )
+        self.assertEqual(release.call_count, 1)
+
     async def test_untrusted_split_deltas_never_reach_sse_or_persistence(self):
         for engine in ("deepseek", "local-copy"):
             with self.subTest(engine=engine):
@@ -563,9 +655,7 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
                 self.conversation.id,
             )
 
-            with patch.object(self.db, "commit", wraps=self.db.commit) as commit:
-                response, events = await self._stream("expired generation", orchestrator)
-                self.assertEqual(commit.call_count, 1)
+            response, events = await self._stream("expired generation", orchestrator)
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(
