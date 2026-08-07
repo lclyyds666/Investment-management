@@ -111,6 +111,23 @@ class _LeaseProbeOrchestrator:
         yield OrchestratorEvent("text.delta", {"text": "renewed", "engine": "local"})
 
 
+class _ExpiredLeaseSuccessorOrchestrator:
+    def __init__(self, clock, user_id, conversation_id):
+        self.clock = clock
+        self.user_id = user_id
+        self.conversation_id = conversation_id
+        self.successor = None
+
+    async def stream(self, question, context):
+        self.clock.return_value = 102.0
+        self.successor = ai_runtime.acquire_generation(
+            self.user_id,
+            self.conversation_id,
+            "successor-request",
+        )
+        yield OrchestratorEvent("text.delta", {"text": "stale", "engine": "local"})
+
+
 class _SplitUntrustedOrchestrator:
     def __init__(self, engine):
         self.engine = engine
@@ -470,6 +487,50 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(orchestrator.conflict)
         self.assertEqual(orchestrator.conflict.detail["code"], "conversation_busy")
+
+    async def test_expired_generation_cannot_settle_over_successor(self):
+        memory = store._MemoryStore()
+        with (
+            patch.object(ai_runtime, "runtime_store", memory),
+            patch.object(ai_runtime.settings, "AI_GENERATION_LEASE_SECONDS", 1),
+            patch("app.core.store.time.time") as now,
+            patch.object(
+                ai_runtime.LeaseHeartbeat,
+                "start",
+                autospec=True,
+                side_effect=lambda heartbeat: heartbeat.assert_owned(),
+            ),
+        ):
+            now.return_value = 100.0
+            orchestrator = _ExpiredLeaseSuccessorOrchestrator(
+                now,
+                self.user.id,
+                self.conversation.id,
+            )
+
+            with patch.object(self.db, "commit", wraps=self.db.commit) as commit:
+                response, events = await self._stream("expired generation", orchestrator)
+                self.assertEqual(commit.call_count, 1)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                [name for name, _ in events],
+                ["message.created", "text.delta", "error"],
+            )
+            self.assertEqual(events[-1][1]["code"], "persistence_failed")
+
+            self.db.expire_all()
+            assistant = self.db.scalar(
+                select(AiMessage).where(AiMessage.role == "assistant")
+            )
+            self.assertEqual(assistant.status, "generating")
+            self.assertEqual(assistant.content, "")
+            self.assertIsNotNone(orchestrator.successor)
+            self.assertEqual(
+                memory.get(f"ai:conversation:{self.conversation.id}:lease"),
+                "successor-request",
+            )
+            ai_runtime.release_generation(orchestrator.successor)
 
     async def test_disconnect_after_delta_settles_message_as_stopped(self):
         _, events = await self._stream(

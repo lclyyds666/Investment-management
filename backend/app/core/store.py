@@ -20,7 +20,7 @@ class _MemoryStore:
 
     def __init__(self) -> None:
         self._data: dict[str, tuple[str, float]] = {}
-        self._sets: dict[str, tuple[set[str], float]] = {}
+        self._sets: dict[str, dict[str, float]] = {}
         self._lock = threading.Lock()
 
     def _alive(self, key: str) -> Optional[tuple[str, float]]:
@@ -33,15 +33,21 @@ class _MemoryStore:
             return None
         return item
 
-    def _alive_set(self, key: str) -> Optional[tuple[set[str], float]]:
-        item = self._sets.get(key)
-        if item is None:
+    def _alive_set(self, key: str) -> Optional[dict[str, float]]:
+        members = self._sets.get(key)
+        if members is None:
             return None
-        _, expire = item
-        if expire and expire < time.time():
+        now = time.time()
+        for member in [
+            member
+            for member, expire in members.items()
+            if expire and expire < now
+        ]:
+            members.pop(member, None)
+        if not members:
             self._sets.pop(key, None)
             return None
-        return item
+        return members
 
     def get(self, key: str) -> Optional[str]:
         with self._lock:
@@ -80,26 +86,34 @@ class _MemoryStore:
 
     def set_members(self, key: str, member: str, limit: int, ttl: int) -> bool:
         with self._lock:
-            item = self._alive_set(key)
-            members = item[0] if item else set()
-            if str(member) in members:
-                if ttl:
-                    self._sets[key] = (members, time.time() + ttl)
+            members = self._alive_set(key) or {}
+            member = str(member)
+            if member in members:
+                members[member] = time.time() + ttl if ttl else 0
+                self._sets[key] = members
                 return True
             if len(members) >= limit:
                 return False
-            members.add(str(member))
-            expire = time.time() + ttl if ttl else 0
-            self._sets[key] = (members, expire)
+            members[member] = time.time() + ttl if ttl else 0
+            self._sets[key] = members
+            return True
+
+    def renew_member(self, key: str, member: str, ttl: int) -> bool:
+        with self._lock:
+            members = self._alive_set(key)
+            member = str(member)
+            if members is None or member not in members:
+                return False
+            members[member] = time.time() + ttl if ttl else 0
             return True
 
     def remove_member(self, key: str, member: str) -> bool:
         with self._lock:
-            item = self._alive_set(key)
-            if item is None or str(member) not in item[0]:
+            members = self._alive_set(key)
+            if members is None or str(member) not in members:
                 return False
-            item[0].remove(str(member))
-            if not item[0]:
+            members.pop(str(member), None)
+            if not members:
                 self._sets.pop(key, None)
             return True
 
@@ -167,19 +181,39 @@ class _RedisStore:
 
     def set_members(self, key: str, member: str, limit: int, ttl: int) -> bool:
         script = """
-        if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 then
-            if tonumber(ARGV[3]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
+        local clock = redis.call('TIME')
+        local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
+        local ttl = tonumber(ARGV[3])
+        local expires_at = ttl > 0 and now + ttl or 9007199254740991
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+        if redis.call('ZSCORE', KEYS[1], ARGV[1]) then
+            redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
+            if ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end
             return 1
         end
-        if redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
-        redis.call('SADD', KEYS[1], ARGV[1])
-        if tonumber(ARGV[3]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
+        if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+        redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
+        if ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end
         return 1
         """
         return bool(self._r.eval(script, 1, key, str(member), int(limit), int(ttl)))
 
+    def renew_member(self, key: str, member: str, ttl: int) -> bool:
+        script = """
+        local clock = redis.call('TIME')
+        local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
+        local ttl = tonumber(ARGV[2])
+        local expires_at = ttl > 0 and now + ttl or 9007199254740991
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+        if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
+        redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
+        if ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end
+        return 1
+        """
+        return bool(self._r.eval(script, 1, key, str(member), int(ttl)))
+
     def remove_member(self, key: str, member: str) -> bool:
-        return bool(self._r.srem(key, str(member)))
+        return bool(self._r.zrem(key, str(member)))
 
     def incr(self, key: str, ttl: int) -> int:
         script = """

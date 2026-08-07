@@ -171,10 +171,9 @@ def renew_generation(lease: GenerationLease) -> bool:
         _conversation_key(lease.conversation_id), lease.request_id, ttl
     ):
         return False
-    return runtime_store.set_members(
+    return runtime_store.renew_member(
         _active_key(lease.user_id),
         lease.request_id,
-        settings.AI_MAX_CONCURRENT_PER_USER,
         ttl,
     )
 
