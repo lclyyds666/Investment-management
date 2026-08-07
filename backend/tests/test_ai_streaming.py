@@ -128,6 +128,20 @@ class AiRuntimeTest(unittest.TestCase):
         self.assertIsInstance(raised.exception.detail["message"], str)
         ai_runtime.release_generation(first)
 
+    def test_deletion_reservation_blocks_generation_until_compare_safe_release(self):
+        reservation = ai_runtime.try_acquire_deletion_reservation(10)
+
+        self.assertIsNotNone(reservation)
+        self.assertFalse(ai_runtime.is_generation_active(10))
+        self.assertTrue(ai_runtime.is_conversation_occupied(10))
+        with self.assertRaises(HTTPException) as raised:
+            ai_runtime.acquire_generation(3, 10, "request-during-deletion")
+        self.assertEqual(raised.exception.detail["code"], "conversation_busy")
+
+        ai_runtime.release_deletion_reservation(reservation)
+        lease = ai_runtime.acquire_generation(3, 10, "request-after-deletion")
+        ai_runtime.release_generation(lease)
+
     def test_stop_flag_is_visible_through_runtime_store(self):
         ai_runtime.request_stop(42)
         self.assertTrue(ai_runtime.is_stop_requested(42))

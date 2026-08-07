@@ -11,6 +11,7 @@ from app.api.v1.endpoints.ai_assistant import router
 from app.jobs.cleanup_ai_conversations import run_cleanup
 from app.models.ai_assistant import AiConversation, AiDeletionAudit, AiMessage, AiToolCall
 from app.schemas.ai_assistant import AdminAiConversationOut
+from app.services import ai_runtime
 from app.services.ai_conversations import (
     CleanupResult,
     cleanup_expired_conversations,
@@ -19,6 +20,7 @@ from app.services.ai_conversations import (
     get_admin_conversation,
     get_owned_conversation,
     list_admin_conversations,
+    preview_expired_conversations,
     suggestions_for_user,
 )
 
@@ -47,6 +49,12 @@ class AiConversationOwnershipTest(unittest.TestCase):
 
 
 class AiRetentionTest(unittest.TestCase):
+    def setUp(self):
+        ai_runtime.reset_for_tests()
+
+    def tearDown(self):
+        ai_runtime.reset_for_tests()
+
     @patch("app.services.ai_conversations.settings.AI_CONVERSATION_RETENTION_DAYS", 90)
     def test_changed_retention_applies_to_existing_conversations(self):
         now = datetime(2026, 8, 5, 1, 0)
@@ -74,23 +82,154 @@ class AiRetentionTest(unittest.TestCase):
             with self.subTest(reason=reason), self.assertRaises(ValueError):
                 AdminDeleteRequest(reason=reason)
 
-    @patch("app.services.ai_conversations.ai_runtime.is_generation_active", side_effect=[True, False])
-    def test_retention_skips_active_conversations_and_counts_deleted_rows(self, active):
+    def test_retention_skips_active_conversations_and_counts_deleted_rows(self):
         now = datetime(2026, 8, 5, 1, 0)
         active_row = SimpleNamespace(id=5, owner_id=2, last_active_at=now - timedelta(days=91), messages=[1, 2])
         expired_row = SimpleNamespace(id=6, owner_id=3, last_active_at=now - timedelta(days=91), messages=[3])
         db = Mock()
         db.scalars.return_value.all.return_value = [active_row, expired_row]
+        lease = ai_runtime.acquire_generation(2, active_row.id, "active-retention")
 
-        result = cleanup_expired_conversations(db, now=now)
+        try:
+            result = cleanup_expired_conversations(db, now=now)
+        finally:
+            ai_runtime.release_generation(lease)
 
         self.assertEqual(result, CleanupResult(deleted_conversations=1, deleted_messages=1))
         self.assertEqual(db.add.call_args.args[0].conversation_id, 6)
         self.assertEqual(db.delete.call_args.args[0], expired_row)
 
+    @patch("app.services.ai_conversations.ai_runtime.try_acquire_deletion_reservation")
+    def test_retention_skips_when_generation_wins_after_selection(self, reserve):
+        now = datetime(2026, 8, 5, 1, 0)
+        row = SimpleNamespace(
+            id=8,
+            owner_id=2,
+            last_active_at=now - timedelta(days=91),
+            messages=[1],
+        )
+        db = Mock()
+        db.scalars.return_value.all.return_value = [row]
+        leases = []
+
+        def generation_wins(conversation_id):
+            leases.append(ai_runtime.acquire_generation(2, conversation_id, "late-generation"))
+            return None
+
+        reserve.side_effect = generation_wins
+        try:
+            result = cleanup_expired_conversations(db, now=now)
+        finally:
+            for lease in leases:
+                ai_runtime.release_generation(lease)
+
+        self.assertEqual(result, CleanupResult(0, 0))
+        db.delete.assert_not_called()
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
+
+    @patch("app.services.ai_conversations.ai_runtime.release_deletion_reservation")
+    def test_retention_holds_reservation_through_commit(self, release):
+        now = datetime(2026, 8, 5, 1, 0)
+        row = SimpleNamespace(
+            id=9,
+            owner_id=2,
+            last_active_at=now - timedelta(days=91),
+            messages=[1],
+        )
+        db = Mock()
+        db.scalars.return_value.all.return_value = [row]
+        db.commit.side_effect = lambda: self.assertFalse(release.called)
+
+        result = cleanup_expired_conversations(db, now=now)
+
+        self.assertEqual(result, CleanupResult(1, 1))
+        release.assert_called_once()
+
+    @patch("app.services.ai_conversations.ai_runtime.release_deletion_reservation")
+    @patch("app.services.ai_conversations.ai_runtime.try_acquire_deletion_reservation")
+    def test_retention_scans_past_all_active_first_500(self, reserve, release):
+        now = datetime(2026, 8, 5, 1, 0)
+        stale_at = now - timedelta(days=91)
+        active_rows = [
+            SimpleNamespace(id=index, owner_id=2, last_active_at=stale_at, messages=[index])
+            for index in range(1, 501)
+        ]
+        deletable = SimpleNamespace(
+            id=501, owner_id=3, last_active_at=stale_at, messages=[1, 2]
+        )
+        db = Mock()
+        db.scalars.side_effect = [
+            SimpleNamespace(all=lambda: active_rows),
+            SimpleNamespace(all=lambda: [deletable]),
+        ]
+        reservation = ai_runtime.DeletionReservation(501, "deletion:test-501")
+        reserve.side_effect = lambda conversation_id: (
+            reservation if conversation_id == 501 else None
+        )
+
+        result = cleanup_expired_conversations(db, now=now)
+
+        self.assertEqual(result, CleanupResult(1, 2))
+        self.assertEqual(db.scalars.call_count, 2)
+        db.delete.assert_called_once_with(deletable)
+        release.assert_called_once_with(reservation)
+
+    @patch("app.services.ai_conversations.ai_runtime.is_conversation_occupied")
+    def test_preview_scans_past_active_prefix_without_reserving(self, occupied):
+        now = datetime(2026, 8, 5, 1, 0)
+        stale_at = now - timedelta(days=91)
+        active_rows = [
+            SimpleNamespace(id=index, owner_id=2, last_active_at=stale_at, messages=[index])
+            for index in range(1, 501)
+        ]
+        deletable = SimpleNamespace(
+            id=501, owner_id=3, last_active_at=stale_at, messages=[1, 2, 3]
+        )
+        db = Mock()
+        db.scalars.side_effect = [
+            SimpleNamespace(all=lambda: active_rows),
+            SimpleNamespace(all=lambda: [deletable]),
+        ]
+        occupied.side_effect = lambda conversation_id: conversation_id <= 500
+
+        result = preview_expired_conversations(db, now=now)
+
+        self.assertEqual(result, CleanupResult(1, 3))
+        self.assertEqual(db.scalars.call_count, 2)
+
+    @patch("app.services.ai_conversations.ai_runtime.try_acquire_deletion_reservation", return_value=None)
+    @patch("app.services.ai_conversations.ai_runtime.is_conversation_occupied", return_value=True)
+    def test_preview_and_cleanup_terminate_after_all_busy_pages(self, occupied, reserve):
+        now = datetime(2026, 8, 5, 1, 0)
+        stale_at = now - timedelta(days=91)
+        active_rows = [
+            SimpleNamespace(id=index, owner_id=2, last_active_at=stale_at, messages=[])
+            for index in range(1, 501)
+        ]
+        preview_db = Mock()
+        preview_db.scalars.side_effect = [
+            SimpleNamespace(all=lambda: active_rows),
+            SimpleNamespace(all=lambda: []),
+        ]
+        cleanup_db = Mock()
+        cleanup_db.scalars.side_effect = [
+            SimpleNamespace(all=lambda: active_rows),
+            SimpleNamespace(all=lambda: []),
+        ]
+
+        preview = preview_expired_conversations(preview_db, now=now)
+        cleanup = cleanup_expired_conversations(cleanup_db, now=now)
+
+        self.assertEqual(preview, CleanupResult(0, 0))
+        self.assertEqual(cleanup, CleanupResult(0, 0))
+        self.assertEqual(preview_db.scalars.call_count, 2)
+        self.assertEqual(cleanup_db.scalars.call_count, 2)
+
 
 class AiAdminConversationTest(unittest.TestCase):
     def setUp(self):
+        ai_runtime.reset_for_tests()
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         AiConversation.__table__.create(self.engine)
         AiMessage.__table__.create(self.engine)
@@ -135,6 +274,7 @@ class AiAdminConversationTest(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
+        ai_runtime.reset_for_tests()
 
     def test_admin_detail_includes_sanitized_tool_traces_and_delete_receipt(self):
         detail = get_admin_conversation(self.db, self.conversation.id)
@@ -157,9 +297,9 @@ class AiAdminConversationTest(unittest.TestCase):
         self.assertEqual(self.db.scalar(select(func.count()).select_from(AiToolCall)), 0)
 
     @patch("app.services.ai_conversations._GENERATION_STOP_WAIT_SECONDS", 0)
-    @patch("app.services.ai_conversations.ai_runtime.is_generation_active", return_value=True)
+    @patch("app.services.ai_conversations.ai_runtime.try_acquire_deletion_reservation", return_value=None)
     @patch("app.services.ai_conversations.ai_runtime.request_stop")
-    def test_admin_delete_does_not_delete_active_generation(self, request_stop, active):
+    def test_admin_delete_does_not_delete_active_generation(self, request_stop, reserve):
         generating = AiMessage(
             conversation_id=self.conversation.id,
             role="assistant",
@@ -179,11 +319,12 @@ class AiAdminConversationTest(unittest.TestCase):
         request_stop.assert_called_once_with(generating.id)
         self.assertIsNotNone(self.db.get(AiConversation, self.conversation.id))
 
-    @patch("app.services.ai_conversations.ai_runtime.is_generation_active", side_effect=[True, True, False])
+    @patch("app.services.ai_conversations.ai_runtime.release_deletion_reservation")
+    @patch("app.services.ai_conversations.ai_runtime.try_acquire_deletion_reservation")
     @patch("app.services.ai_conversations.ai_runtime.request_stop")
     @patch("app.services.ai_conversations.time.sleep")
     def test_owner_delete_waits_for_cleared_generation_then_deletes(
-        self, sleep, request_stop, active
+        self, sleep, request_stop, reserve, release
     ):
         generating = AiMessage(
             conversation_id=self.conversation.id,
@@ -195,12 +336,108 @@ class AiAdminConversationTest(unittest.TestCase):
         )
         self.db.add(generating)
         self.db.commit()
+        reservation = ai_runtime.DeletionReservation(
+            self.conversation.id, "deletion:owner-cleared"
+        )
+        reserve.side_effect = [None, reservation]
 
         receipt = delete_owned_conversation(self.db, self.conversation.id, user_id=7)
 
         self.assertEqual(receipt.deleted_message_count, 2)
         request_stop.assert_called_once_with(generating.id)
         self.assertIsNone(self.db.get(AiConversation, self.conversation.id))
+        release.assert_called_once_with(reservation)
+
+    @patch("app.services.ai_conversations._GENERATION_STOP_WAIT_SECONDS", 0)
+    @patch("app.services.ai_conversations.ai_runtime.request_stop")
+    def test_active_lease_without_generating_message_is_not_deleted(
+        self, request_stop
+    ):
+        lease = ai_runtime.acquire_generation(7, self.conversation.id, "generation-wins")
+        try:
+            with self.assertRaises(HTTPException) as raised:
+                delete_owned_conversation(self.db, self.conversation.id, user_id=7)
+        finally:
+            ai_runtime.release_generation(lease)
+
+        self.assertEqual(raised.exception.detail["code"], "conversation_busy")
+        request_stop.assert_not_called()
+        self.assertIsNotNone(self.db.get(AiConversation, self.conversation.id))
+        self.assertEqual(self.db.scalar(select(func.count()).select_from(AiDeletionAudit)), 0)
+
+    @patch("app.services.ai_conversations.time.monotonic", side_effect=[0, 0, 1])
+    @patch("app.services.ai_conversations.time.sleep")
+    def test_generation_reacquisition_wins_before_deletion_reservation(
+        self, sleep, monotonic
+    ):
+        first = ai_runtime.acquire_generation(7, self.conversation.id, "first-generation")
+        current = []
+
+        def reacquire(_seconds):
+            ai_runtime.release_generation(first)
+            current.append(ai_runtime.acquire_generation(
+                7, self.conversation.id, "reacquired-generation"
+            ))
+
+        sleep.side_effect = reacquire
+        try:
+            with self.assertRaises(HTTPException) as raised:
+                delete_owned_conversation(self.db, self.conversation.id, user_id=7)
+        finally:
+            ai_runtime.release_generation(first)
+            for lease in current:
+                ai_runtime.release_generation(lease)
+
+        self.assertEqual(raised.exception.detail["code"], "conversation_busy")
+        self.assertIsNotNone(self.db.get(AiConversation, self.conversation.id))
+        self.assertEqual(self.db.scalar(select(func.count()).select_from(AiDeletionAudit)), 0)
+
+    @patch("app.services.ai_conversations.ai_runtime.request_stop")
+    def test_stale_generating_message_is_stopped_and_deleted_under_reservation(
+        self, request_stop
+    ):
+        stale = AiMessage(
+            conversation_id=self.conversation.id,
+            role="assistant",
+            content="",
+            status="generating",
+            request_id="stale-generating",
+            actions_json=[],
+        )
+        self.db.add(stale)
+        self.db.commit()
+
+        receipt = delete_owned_conversation(self.db, self.conversation.id, user_id=7)
+
+        self.assertEqual(receipt.deleted_message_count, 2)
+        request_stop.assert_called_once_with(stale.id)
+        self.assertIsNone(self.db.get(AiConversation, self.conversation.id))
+
+    @patch("app.services.ai_conversations.ai_runtime.release_deletion_reservation")
+    @patch("app.services.ai_conversations.ai_runtime.try_acquire_deletion_reservation")
+    def test_delete_reloads_messages_after_reservation(self, reserve, release):
+        reservation = ai_runtime.DeletionReservation(
+            self.conversation.id, "deletion:reload-test"
+        )
+
+        def persist_late_message(_conversation_id):
+            self.db.add(AiMessage(
+                conversation_id=self.conversation.id,
+                role="assistant",
+                content="late completion",
+                status="completed",
+                request_id="late-completion",
+                actions_json=[],
+            ))
+            self.db.commit()
+            return reservation
+
+        reserve.side_effect = persist_late_message
+
+        receipt = delete_owned_conversation(self.db, self.conversation.id, user_id=7)
+
+        self.assertEqual(receipt.deleted_message_count, 2)
+        release.assert_called_once_with(reservation)
 
     def test_admin_keyword_searches_message_content(self):
         rows, total = list_admin_conversations(

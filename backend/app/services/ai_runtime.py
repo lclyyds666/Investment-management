@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 from fastapi import HTTPException, status
 
@@ -14,6 +15,15 @@ class GenerationLease:
     user_id: int
     conversation_id: int
     request_id: str
+
+
+@dataclass(frozen=True)
+class DeletionReservation:
+    conversation_id: int
+    token: str
+
+
+_DELETION_RESERVATION_PREFIX = "deletion:"
 
 
 def _conversation_key(conversation_id: int) -> str:
@@ -49,7 +59,32 @@ def release_generation(lease: GenerationLease) -> None:
 
 def is_generation_active(conversation_id: int) -> bool:
     """Return whether a conversation currently holds a generation lease."""
+    value = runtime_store.get(_conversation_key(conversation_id))
+    return value is not None and not value.startswith(_DELETION_RESERVATION_PREFIX)
+
+
+def is_conversation_occupied(conversation_id: int) -> bool:
+    """Return whether generation or deletion currently owns the coordination key."""
     return runtime_store.get(_conversation_key(conversation_id)) is not None
+
+
+def try_acquire_deletion_reservation(
+    conversation_id: int,
+) -> DeletionReservation | None:
+    token = f"{_DELETION_RESERVATION_PREFIX}{uuid4()}"
+    if not runtime_store.set_if_absent(
+        _conversation_key(conversation_id),
+        token,
+        settings.AI_GENERATION_LEASE_SECONDS,
+    ):
+        return None
+    return DeletionReservation(conversation_id=conversation_id, token=token)
+
+
+def release_deletion_reservation(reservation: DeletionReservation) -> None:
+    runtime_store.compare_delete(
+        _conversation_key(reservation.conversation_id), reservation.token
+    )
 
 
 def check_submission_rate(user_id: int) -> None:

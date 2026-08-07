@@ -12,7 +12,7 @@ from typing import AsyncIterator
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -44,6 +44,8 @@ logger = logging.getLogger("app.ai_assistant")
 _MAX_UNTRUSTED_OUTPUT_CHARS = 4096
 _GENERATION_STOP_WAIT_SECONDS = 0.5
 _GENERATION_STOP_POLL_SECONDS = 0.05
+_RETENTION_BATCH_SIZE = 500
+_RETENTION_SCAN_CHUNK_SIZE = 500
 
 
 def _not_found() -> HTTPException:
@@ -174,51 +176,61 @@ def rename_owned_conversation(
     return conversation
 
 
-def _stop_and_wait_for_generation(conversation: AiConversation) -> None:
-    generating_messages = [
-        message
-        for message in conversation.messages
-        if message.role == "assistant" and message.status == "generating"
-    ]
-    for message in generating_messages:
+def _request_stop_for_generating_messages(conversation: AiConversation) -> None:
+    for message in conversation.messages:
+        if message.role != "assistant" or message.status != "generating":
+            continue
         ai_runtime.request_stop(message.id)
 
-    active = ai_runtime.is_generation_active(conversation.id)
-    if not active:
-        return
 
+def _reserve_conversation_for_deletion(
+    conversation: AiConversation,
+) -> ai_runtime.DeletionReservation:
+    _request_stop_for_generating_messages(conversation)
     deadline = time.monotonic() + _GENERATION_STOP_WAIT_SECONDS
-    while active and time.monotonic() < deadline:
+    while True:
+        reservation = ai_runtime.try_acquire_deletion_reservation(conversation.id)
+        if reservation is not None:
+            return reservation
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
+            )
         time.sleep(_GENERATION_STOP_POLL_SECONDS)
-        active = ai_runtime.is_generation_active(conversation.id)
-    if active:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
-        )
+
+
+def _reload_messages_under_reservation(
+    db: Session, conversation: AiConversation
+) -> list[AiMessage]:
+    db.expire(conversation, ["messages"])
+    return list(conversation.messages)
 
 
 def delete_owned_conversation(
     db: Session, conversation_id: int, user_id: int
 ) -> AiDeletionAudit:
     conversation = get_owned_conversation(db, conversation_id, user_id, with_messages=True)
-    _stop_and_wait_for_generation(conversation)
-    receipt = AiDeletionAudit(
-        conversation_id=conversation.id,
-        owner_id=conversation.owner_id,
-        actor_id=user_id,
-        mode="owner",
-        reason="用户主动删除",
-        deleted_message_count=len(conversation.messages),
-        deleted_at=datetime.now(),
-    )
+    reservation = _reserve_conversation_for_deletion(conversation)
     try:
+        messages = _reload_messages_under_reservation(db, conversation)
+        receipt = AiDeletionAudit(
+            conversation_id=conversation.id,
+            owner_id=conversation.owner_id,
+            actor_id=user_id,
+            mode="owner",
+            reason="用户主动删除",
+            deleted_message_count=len(messages),
+            deleted_at=datetime.now(),
+        )
         db.add(receipt)
         db.delete(conversation)
         db.commit()
     except Exception:
         db.rollback()
         raise
+    finally:
+        ai_runtime.release_deletion_reservation(reservation)
     return receipt
 
 
@@ -229,23 +241,26 @@ def delete_admin_conversation(
     reason: str,
 ) -> AiDeletionAudit:
     conversation = get_admin_conversation(db, conversation_id)
-    _stop_and_wait_for_generation(conversation)
-    receipt = AiDeletionAudit(
-        conversation_id=conversation.id,
-        owner_id=conversation.owner_id,
-        actor_id=actor_id,
-        mode="admin",
-        reason=reason,
-        deleted_message_count=len(conversation.messages),
-        deleted_at=datetime.now(),
-    )
+    reservation = _reserve_conversation_for_deletion(conversation)
     try:
+        messages = _reload_messages_under_reservation(db, conversation)
+        receipt = AiDeletionAudit(
+            conversation_id=conversation.id,
+            owner_id=conversation.owner_id,
+            actor_id=actor_id,
+            mode="admin",
+            reason=reason,
+            deleted_message_count=len(messages),
+            deleted_at=datetime.now(),
+        )
         db.add(receipt)
         db.delete(conversation)
         db.commit()
     except Exception:
         db.rollback()
         raise
+    finally:
+        ai_runtime.release_deletion_reservation(reservation)
     db.refresh(receipt)
     return receipt
 
@@ -288,24 +303,80 @@ class CleanupResult:
     deleted_messages: int
 
 
-def _expired_conversation_batch(
-    db: Session, *, now: datetime
+def _expired_conversation_page(
+    db: Session,
+    *,
+    now: datetime,
+    cursor: tuple[datetime, int] | None,
 ) -> list[AiConversation]:
     cutoff = now - timedelta(days=settings.AI_CONVERSATION_RETENTION_DAYS)
-    rows = db.scalars(
+    conditions = [AiConversation.last_active_at < cutoff]
+    if cursor is not None:
+        last_active_at, conversation_id = cursor
+        conditions.append(or_(
+            AiConversation.last_active_at > last_active_at,
+            and_(
+                AiConversation.last_active_at == last_active_at,
+                AiConversation.id > conversation_id,
+            ),
+        ))
+    return db.scalars(
         select(AiConversation)
         .options(selectinload(AiConversation.messages))
-        .where(AiConversation.last_active_at < cutoff)
+        .where(*conditions)
         .order_by(AiConversation.last_active_at, AiConversation.id)
-        .limit(500)
+        .limit(_RETENTION_SCAN_CHUNK_SIZE)
     ).all()
-    return [row for row in rows if not ai_runtime.is_generation_active(row.id)]
+
+
+def _scan_expired_conversations(
+    db: Session,
+    *,
+    now: datetime,
+    reserve_for_deletion: bool,
+) -> tuple[list[AiConversation], list[ai_runtime.DeletionReservation]]:
+    selected: list[AiConversation] = []
+    reservations: list[ai_runtime.DeletionReservation] = []
+    cursor: tuple[datetime, int] | None = None
+    try:
+        while len(selected) < _RETENTION_BATCH_SIZE:
+            page = _expired_conversation_page(db, now=now, cursor=cursor)
+            if not page:
+                break
+
+            for conversation in page:
+                if reserve_for_deletion:
+                    reservation = ai_runtime.try_acquire_deletion_reservation(
+                        conversation.id
+                    )
+                    if reservation is None:
+                        continue
+                    reservations.append(reservation)
+                    _reload_messages_under_reservation(db, conversation)
+                elif ai_runtime.is_conversation_occupied(conversation.id):
+                    continue
+
+                selected.append(conversation)
+                if len(selected) == _RETENTION_BATCH_SIZE:
+                    break
+
+            if len(page) < _RETENTION_SCAN_CHUNK_SIZE:
+                break
+            last = page[-1]
+            cursor = (last.last_active_at, last.id)
+    except Exception:
+        for reservation in reservations:
+            ai_runtime.release_deletion_reservation(reservation)
+        raise
+    return selected, reservations
 
 
 def preview_expired_conversations(
     db: Session, *, now: datetime
 ) -> CleanupResult:
-    rows = _expired_conversation_batch(db, now=now)
+    rows, _ = _scan_expired_conversations(
+        db, now=now, reserve_for_deletion=False
+    )
     return CleanupResult(
         deleted_conversations=len(rows),
         deleted_messages=sum(len(row.messages) for row in rows),
@@ -315,7 +386,9 @@ def preview_expired_conversations(
 def cleanup_expired_conversations(
     db: Session, *, now: datetime
 ) -> CleanupResult:
-    rows = _expired_conversation_batch(db, now=now)
+    rows, reservations = _scan_expired_conversations(
+        db, now=now, reserve_for_deletion=True
+    )
     deleted_messages = sum(len(row.messages) for row in rows)
     try:
         for conversation in rows:
@@ -329,10 +402,14 @@ def cleanup_expired_conversations(
                 deleted_at=now,
             ))
             db.delete(conversation)
-        db.commit()
+        if rows:
+            db.commit()
     except Exception:
         db.rollback()
         raise
+    finally:
+        for reservation in reservations:
+            ai_runtime.release_deletion_reservation(reservation)
     return CleanupResult(
         deleted_conversations=len(rows),
         deleted_messages=deleted_messages,
