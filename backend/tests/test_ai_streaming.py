@@ -92,6 +92,25 @@ class _OneDeltaOrchestrator:
         yield OrchestratorEvent("text.delta", {"text": "唯一一段", "engine": "local"})
 
 
+class _LeaseProbeOrchestrator:
+    def __init__(self, user_id, conversation_id):
+        self.user_id = user_id
+        self.conversation_id = conversation_id
+        self.conflict = None
+
+    async def stream(self, question, context):
+        await asyncio.sleep(1.1)
+        try:
+            ai_runtime.acquire_generation(
+                self.user_id,
+                self.conversation_id,
+                "probe-during-slow-generation",
+            )
+        except HTTPException as exc:
+            self.conflict = exc
+        yield OrchestratorEvent("text.delta", {"text": "renewed", "engine": "local"})
+
+
 class _SplitUntrustedOrchestrator:
     def __init__(self, engine):
         self.engine = engine
@@ -141,6 +160,53 @@ class AiRuntimeTest(unittest.TestCase):
         ai_runtime.release_deletion_reservation(reservation)
         lease = ai_runtime.acquire_generation(3, 10, "request-after-deletion")
         ai_runtime.release_generation(lease)
+
+    def test_generation_heartbeat_renews_conversation_and_user_membership(self):
+        memory = store._MemoryStore()
+        with (
+            patch.object(ai_runtime, "runtime_store", memory),
+            patch.object(ai_runtime.settings, "AI_GENERATION_LEASE_SECONDS", 1),
+            patch.object(ai_runtime.settings, "AI_MAX_CONCURRENT_PER_USER", 1),
+            patch("app.core.store.time.time") as now,
+        ):
+            now.return_value = 100.0
+            lease = ai_runtime.acquire_generation(3, 10, "request-a")
+            heartbeat = ai_runtime.generation_heartbeat(lease)
+
+            now.return_value = 100.75
+            heartbeat.assert_owned()
+            now.return_value = 101.25
+
+            with self.assertRaises(HTTPException) as same_conversation:
+                ai_runtime.acquire_generation(3, 10, "request-b")
+            self.assertEqual(same_conversation.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as same_user:
+                ai_runtime.acquire_generation(3, 11, "request-c")
+            self.assertEqual(same_user.exception.status_code, 429)
+            ai_runtime.release_generation(lease)
+
+    def test_expired_reservation_guard_detects_successor_and_stale_release_is_safe(self):
+        memory = store._MemoryStore()
+        with (
+            patch.object(ai_runtime, "runtime_store", memory),
+            patch.object(ai_runtime.settings, "AI_GENERATION_LEASE_SECONDS", 1),
+            patch("app.core.store.time.time") as now,
+        ):
+            now.return_value = 100.0
+            reservation = ai_runtime.try_acquire_deletion_reservation(10)
+            heartbeat = ai_runtime.DeletionReservationHeartbeat([reservation])
+
+            now.return_value = 102.0
+            successor = ai_runtime.acquire_generation(3, 10, "successor")
+            with self.assertRaises(ai_runtime.LeaseOwnershipLost):
+                heartbeat.assert_owned()
+
+            ai_runtime.release_deletion_reservation(reservation)
+            self.assertEqual(
+                memory.get("ai:conversation:10:lease"),
+                "successor",
+            )
+            ai_runtime.release_generation(successor)
 
     def test_stop_flag_is_visible_through_runtime_store(self):
         ai_runtime.request_stop(42)
@@ -389,6 +455,21 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
             self.user.id, self.conversation.id, "subsequent-request"
         )
         ai_runtime.release_generation(lease)
+
+    @patch.object(ai_runtime.settings, "AI_GENERATION_LEASE_SECONDS", 1)
+    async def test_stream_heartbeat_blocks_reacquisition_past_original_ttl(self):
+        orchestrator = _LeaseProbeOrchestrator(
+            self.user.id, self.conversation.id
+        )
+
+        _, events = await self._stream("slow generation", orchestrator)
+
+        self.assertEqual(
+            [name for name, _ in events],
+            ["message.created", "text.delta", "message.completed"],
+        )
+        self.assertIsNotNone(orchestrator.conflict)
+        self.assertEqual(orchestrator.conflict.detail["code"], "conversation_busy")
 
     async def test_disconnect_after_delta_settles_message_as_stopped(self):
         _, events = await self._stream(

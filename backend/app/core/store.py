@@ -67,6 +67,17 @@ class _MemoryStore:
             self._data.pop(key, None)
             return True
 
+    def compare_expire(self, key: str, expected: str, ttl: int) -> bool:
+        with self._lock:
+            item = self._alive(key)
+            if item is None or item[0] != str(expected):
+                return False
+            self._data[key] = (
+                item[0],
+                time.time() + ttl if ttl else 0,
+            )
+            return True
+
     def set_members(self, key: str, member: str, limit: int, ttl: int) -> bool:
         with self._lock:
             item = self._alive_set(key)
@@ -144,6 +155,15 @@ class _RedisStore:
         return 0
         """
         return bool(self._r.eval(script, 1, key, str(expected)))
+
+    def compare_expire(self, key: str, expected: str, ttl: int) -> bool:
+        script = """
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+            return redis.call('EXPIRE', KEYS[1], ARGV[2])
+        end
+        return 0
+        """
+        return bool(self._r.eval(script, 1, key, str(expected), int(ttl)))
 
     def set_members(self, key: str, member: str, limit: int, ttl: int) -> bool:
         script = """

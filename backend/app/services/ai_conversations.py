@@ -183,6 +183,13 @@ def _request_stop_for_generating_messages(conversation: AiConversation) -> None:
         ai_runtime.request_stop(message.id)
 
 
+def _conversation_busy() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
+    )
+
+
 def _reserve_conversation_for_deletion(
     conversation: AiConversation,
 ) -> ai_runtime.DeletionReservation:
@@ -193,10 +200,7 @@ def _reserve_conversation_for_deletion(
         if reservation is not None:
             return reservation
         if time.monotonic() >= deadline:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
-            )
+            raise _conversation_busy()
         time.sleep(_GENERATION_STOP_POLL_SECONDS)
 
 
@@ -212,7 +216,9 @@ def delete_owned_conversation(
 ) -> AiDeletionAudit:
     conversation = get_owned_conversation(db, conversation_id, user_id, with_messages=True)
     reservation = _reserve_conversation_for_deletion(conversation)
+    heartbeat = ai_runtime.DeletionReservationHeartbeat([reservation])
     try:
+        heartbeat.start()
         messages = _reload_messages_under_reservation(db, conversation)
         receipt = AiDeletionAudit(
             conversation_id=conversation.id,
@@ -225,11 +231,16 @@ def delete_owned_conversation(
         )
         db.add(receipt)
         db.delete(conversation)
+        heartbeat.assert_owned()
         db.commit()
+    except ai_runtime.LeaseOwnershipLost as exc:
+        db.rollback()
+        raise _conversation_busy() from exc
     except Exception:
         db.rollback()
         raise
     finally:
+        heartbeat.stop()
         ai_runtime.release_deletion_reservation(reservation)
     return receipt
 
@@ -242,7 +253,9 @@ def delete_admin_conversation(
 ) -> AiDeletionAudit:
     conversation = get_admin_conversation(db, conversation_id)
     reservation = _reserve_conversation_for_deletion(conversation)
+    heartbeat = ai_runtime.DeletionReservationHeartbeat([reservation])
     try:
+        heartbeat.start()
         messages = _reload_messages_under_reservation(db, conversation)
         receipt = AiDeletionAudit(
             conversation_id=conversation.id,
@@ -255,11 +268,16 @@ def delete_admin_conversation(
         )
         db.add(receipt)
         db.delete(conversation)
+        heartbeat.assert_owned()
         db.commit()
+    except ai_runtime.LeaseOwnershipLost as exc:
+        db.rollback()
+        raise _conversation_busy() from exc
     except Exception:
         db.rollback()
         raise
     finally:
+        heartbeat.stop()
         ai_runtime.release_deletion_reservation(reservation)
     db.refresh(receipt)
     return receipt
@@ -334,47 +352,46 @@ def _scan_expired_conversations(
     *,
     now: datetime,
     reserve_for_deletion: bool,
-) -> tuple[list[AiConversation], list[ai_runtime.DeletionReservation]]:
+    reservations: list[ai_runtime.DeletionReservation] | None = None,
+    heartbeat: ai_runtime.DeletionReservationHeartbeat | None = None,
+) -> list[AiConversation]:
     selected: list[AiConversation] = []
-    reservations: list[ai_runtime.DeletionReservation] = []
     cursor: tuple[datetime, int] | None = None
-    try:
-        while len(selected) < _RETENTION_BATCH_SIZE:
-            page = _expired_conversation_page(db, now=now, cursor=cursor)
-            if not page:
-                break
+    while len(selected) < _RETENTION_BATCH_SIZE:
+        page = _expired_conversation_page(db, now=now, cursor=cursor)
+        if not page:
+            break
 
-            for conversation in page:
-                if reserve_for_deletion:
-                    reservation = ai_runtime.try_acquire_deletion_reservation(
-                        conversation.id
-                    )
-                    if reservation is None:
-                        continue
-                    reservations.append(reservation)
-                    _reload_messages_under_reservation(db, conversation)
-                elif ai_runtime.is_conversation_occupied(conversation.id):
+        for conversation in page:
+            if reserve_for_deletion:
+                if reservations is None or heartbeat is None:
+                    raise RuntimeError("retention deletion requires a reservation heartbeat")
+                reservation = ai_runtime.try_acquire_deletion_reservation(
+                    conversation.id
+                )
+                if reservation is None:
                     continue
+                reservations.append(reservation)
+                heartbeat.add(reservation)
+                _reload_messages_under_reservation(db, conversation)
+            elif ai_runtime.is_conversation_occupied(conversation.id):
+                continue
 
-                selected.append(conversation)
-                if len(selected) == _RETENTION_BATCH_SIZE:
-                    break
-
-            if len(page) < _RETENTION_SCAN_CHUNK_SIZE:
+            selected.append(conversation)
+            if len(selected) == _RETENTION_BATCH_SIZE:
                 break
-            last = page[-1]
-            cursor = (last.last_active_at, last.id)
-    except Exception:
-        for reservation in reservations:
-            ai_runtime.release_deletion_reservation(reservation)
-        raise
-    return selected, reservations
+
+        if len(page) < _RETENTION_SCAN_CHUNK_SIZE:
+            break
+        last = page[-1]
+        cursor = (last.last_active_at, last.id)
+    return selected
 
 
 def preview_expired_conversations(
     db: Session, *, now: datetime
 ) -> CleanupResult:
-    rows, _ = _scan_expired_conversations(
+    rows = _scan_expired_conversations(
         db, now=now, reserve_for_deletion=False
     )
     return CleanupResult(
@@ -386,11 +403,19 @@ def preview_expired_conversations(
 def cleanup_expired_conversations(
     db: Session, *, now: datetime
 ) -> CleanupResult:
-    rows, reservations = _scan_expired_conversations(
-        db, now=now, reserve_for_deletion=True
-    )
-    deleted_messages = sum(len(row.messages) for row in rows)
+    rows: list[AiConversation] = []
+    reservations: list[ai_runtime.DeletionReservation] = []
+    heartbeat = ai_runtime.DeletionReservationHeartbeat()
     try:
+        heartbeat.start()
+        rows = _scan_expired_conversations(
+            db,
+            now=now,
+            reserve_for_deletion=True,
+            reservations=reservations,
+            heartbeat=heartbeat,
+        )
+        deleted_messages = sum(len(row.messages) for row in rows)
         for conversation in rows:
             db.add(AiDeletionAudit(
                 conversation_id=conversation.id,
@@ -403,11 +428,16 @@ def cleanup_expired_conversations(
             ))
             db.delete(conversation)
         if rows:
+            heartbeat.assert_owned()
             db.commit()
+    except ai_runtime.LeaseOwnershipLost:
+        db.rollback()
+        return CleanupResult(deleted_conversations=0, deleted_messages=0)
     except Exception:
         db.rollback()
         raise
     finally:
+        heartbeat.stop()
         for reservation in reservations:
             ai_runtime.release_deletion_reservation(reservation)
     return CleanupResult(
@@ -561,8 +591,10 @@ async def stream_generation(
     cancelled = False
     task_cancelled = False
     untrusted_parts: list[str] = []
+    heartbeat = ai_runtime.generation_heartbeat(lease)
 
     try:
+        heartbeat.start()
         try:
             yield encode_sse("message.created", _event_payload(request_id, assistant_message.id, {
                 "conversation_id": conversation.id,
@@ -577,6 +609,10 @@ async def stream_generation(
                 message_id=assistant_message.id,
             )
             async for event in AiOrchestrator().stream(user_message.content, context):
+                if heartbeat.ownership_lost:
+                    raise ai_runtime.LeaseOwnershipLost(
+                        "generation lease ownership was lost"
+                    )
                 if await request.is_disconnected() or ai_runtime.is_stop_requested(assistant_message.id):
                     terminal_status = "stopped"
                     break
@@ -648,6 +684,8 @@ async def stream_generation(
         except GeneratorExit:
             terminal_status = "stopped"
             cancelled = True
+        except ai_runtime.LeaseOwnershipLost:
+            raise
         except Exception:
             logger.exception("ai_generation_failed", extra={
                 "request_id": request_id,
@@ -674,6 +712,7 @@ async def stream_generation(
         conversation.expires_at = now + timedelta(days=settings.AI_CONVERSATION_RETENTION_DAYS)
         if terminal_status == "completed":
             set_generated_title(conversation, user_message.content)
+        heartbeat.assert_owned()
         db.commit()
 
         logger.info("ai_generation_completed", extra={
@@ -710,6 +749,7 @@ async def stream_generation(
                 "message": "AI 服务暂时不可用，请稍后重试。",
             }))
     finally:
+        heartbeat.stop()
         ai_runtime.clear_stop_request(assistant_message.id)
         ai_runtime.release_generation(lease)
 
