@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import json
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal
 
@@ -23,7 +24,12 @@ class OrchestratorEvent:
     payload: dict[str, Any]
 
 
+class InvalidScenicIntent(RuntimeError):
+    """A provider scenic target was not present in the effective registry."""
+
+
 LOCAL_ENGINE = "local"
+MODEL_ENGINE = "deepseek"
 
 
 _URL_RE = re.compile(
@@ -63,6 +69,12 @@ _RAW_ROW_RE = re.compile(
     r"\{(?:\"?[a-z_][a-z0-9_]*\"?:[^,{}]+,){1,}\"?[a-z_][a-z0-9_]*\"?:",
     re.IGNORECASE,
 )
+_PROMPT_INJECTION_RE = re.compile(
+    r"(?:ignore\s+(?:all\s+)?(?:previous|above)|system\s+prompt|developer\s+message|"
+    r"jailbreak|reveal\s+(?:your|the)\s+instructions|do\s+not\s+follow|"
+    r"忽略(?:之前|以上|前面).*?(?:指令|要求)|系统(?:提示词|指令)|越狱|提示注入)",
+    re.IGNORECASE,
+)
 _SCENIC_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 
@@ -88,6 +100,23 @@ def is_safe_model_text(text: str) -> bool:
         or _DATABASE_RE.search(normalized)
         or _RAW_CONTENT_RE.search(normalized)
         or _RAW_ROW_RE.search(compact)
+    )
+
+
+def is_safe_ai_input(text: str) -> bool:
+    """Reject requests that must never be sent to a provider."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    normalized, compact = _normalized_output(text)
+    return not (
+        _URL_RE.search(compact)
+        or _SQL_RE.search(compact)
+        or _FORMULA_RE.search(compact)
+        or _CREDENTIAL_RE.search(compact)
+        or _DATABASE_RE.search(normalized)
+        or _RAW_CONTENT_RE.search(normalized)
+        or _RAW_ROW_RE.search(compact)
+        or _PROMPT_INJECTION_RE.search(normalized)
     )
 
 
@@ -340,20 +369,66 @@ class AiOrchestrator:
         if local is not None:
             return _validate_decision(local, context)
         try:
-            return _validate_decision(
-                await self.client.classify(question, _allowed_scenics(context)), context
-            )
+            classified = await self.client.classify(question, _allowed_scenics(context))
+            decision = _validate_decision(classified, context)
+            if (
+                classified.intent in {"scenic_summary", "scenic_trend", "compare_scenics", "scenic_navigation"}
+                and decision.intent == "free_form"
+            ):
+                raise InvalidScenicIntent()
+            return decision
+        except InvalidScenicIntent:
+            raise
         except Exception:
             return IntentDecision(intent="free_form")
+
+    async def _model_answer(self, *, question: str, aggregate: dict | None = None) -> str | None:
+        """Buffer provider output so unapproved prefixes can never leave this boundary."""
+        system_prompt = (
+            "Answer only the supplied safe question using the supplied aggregate data when present. "
+            "Never mention or invent URLs, SQL, formulas, credentials, attachments, raw records, "
+            "tokens, or database structure. Keep the answer concise."
+        )
+        context = json.dumps(
+            {"question": question, "aggregate": aggregate or {}},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        parts: list[str] = []
+        try:
+            async for chunk in self.client.stream_answer(system_prompt, context):
+                parts.append(str(chunk))
+                if sum(map(len, parts)) > 4096:
+                    return None
+        except Exception:
+            return None
+        answer = "".join(parts).strip()
+        return answer if is_safe_model_text(answer) else None
 
     async def stream(
         self, question: str, context: ToolContext
     ) -> AsyncIterator[OrchestratorEvent]:
-        decision = await self._decision(question, context)
-        request = _tool_request(decision)
-        if request is None:
+        if not is_safe_ai_input(question):
             yield OrchestratorEvent(
                 "text.delta", {"text": _UNAVAILABLE, "engine": LOCAL_ENGINE}
+            )
+            return
+        try:
+            decision = await self._decision(question, context)
+        except InvalidScenicIntent:
+            yield OrchestratorEvent(
+                "text.delta", {"text": _UNAVAILABLE, "engine": LOCAL_ENGINE}
+            )
+            return
+        request = _tool_request(decision)
+        if request is None:
+            answer = await self._model_answer(question=question)
+            yield OrchestratorEvent(
+                "text.delta", {
+                    "text": answer or _UNAVAILABLE,
+                    "engine": MODEL_ENGINE if answer else LOCAL_ENGINE,
+                    "validated": bool(answer),
+                }
             )
             return
 
@@ -377,8 +452,13 @@ class AiOrchestrator:
             "status": "completed",
             "metadata": _stream_metadata(data),
         })
+        answer = None
+        if decision.intent in {"scenic_summary", "scenic_trend", "compare_scenics"}:
+            answer = await self._model_answer(question=question, aggregate=data)
         yield OrchestratorEvent("text.delta", {
-            "text": _fallback(decision.intent, data), "engine": LOCAL_ENGINE,
+            "text": answer or _fallback(decision.intent, data),
+            "engine": MODEL_ENGINE if answer else LOCAL_ENGINE,
+            "validated": bool(answer),
         })
 
         for action in _actions(result):

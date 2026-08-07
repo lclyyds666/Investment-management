@@ -19,9 +19,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, require_company_resource, require_roles
 from app.core.config import settings
-from app.core.enums import Role
+from app.core.enums import CompanyCode, ResourceCode, Role
 from app.db.session import get_db
 from app.models.hotel_ledger import HotelLedger
 from app.models.user import User
@@ -38,7 +38,9 @@ from app.schemas.hotel_ledger import (
 )
 from app.services import hotel_ledger as hl_svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SCENIC_ANALYTICS
+))])
 
 _XLSX_EXT = {".xlsx", ".xls"}
 _MAX_BYTES = 30 * 1024 * 1024

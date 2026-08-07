@@ -277,6 +277,19 @@ class RedisMemberCompatibilityTest(_RedisIntegrationTest):
             {"request-b", "request-c"},
         )
 
+    def test_legacy_member_ages_out_while_a_v2_member_keeps_renewing(self):
+        key = "ai:user:9:active"
+        redis_store = _RedisStore(self.redis)
+        self.redis.execute("SADD", key, "legacy-crashed")
+        self.redis.execute("EXPIRE", key, 30)
+        self.assertTrue(redis_store.set_members(key, "v2-active", limit=2, ttl=30))
+
+        # Simulate the bounded legacy expiry passing while the v2 request renews.
+        self.redis.execute("ZADD", _member_expiry_key(key), 0, "legacy-crashed")
+        self.assertTrue(redis_store.renew_member(key, "v2-active", ttl=30))
+        self.assertTrue(redis_store.renew_member(key, "v2-active", ttl=30))
+        self.assertEqual(set(self.redis.execute("SMEMBERS", key).splitlines()), {"v2-active"})
+
     def test_existing_round_three_sorted_set_is_handled_without_wrongtype(self):
         key = "ai:user:7:active"
         self.redis.execute("ZADD", key, 9999999999, "round-three-request")

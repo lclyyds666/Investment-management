@@ -367,6 +367,23 @@ describe('AI assistant store', () => {
     expect(store.messagesByConversation[1][1].status).toBe('failed')
   })
 
+  it('reconciles a truncated stream as failed', async () => {
+    api.streamMessage.mockImplementation((_id, _payload, options) => {
+      options.onEvent({
+        event: 'message.created',
+        data: { request_id: 'r1', message_id: 99, user_message_id: 98 }
+      })
+      return Promise.reject(new Error('SSE 流在终态事件前结束'))
+    })
+    const store = useAiAssistantStore()
+    store.conversations = [conversation(1)]
+
+    await expect(store.sendMessage(1, 'truncated stream')).rejects.toThrow('终态事件')
+    expect(store.messagesByConversation[1][1]).toMatchObject({
+      status: 'failed', error_code: 'stream_incomplete'
+    })
+  })
+
   it('aborts after waiting for a message id without calling stop', async () => {
     vi.useFakeTimers()
     try {

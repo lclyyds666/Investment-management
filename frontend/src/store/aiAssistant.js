@@ -304,6 +304,12 @@ export const useAiAssistantStore = defineStore('aiAssistant', () => {
         await openConversation(conversationId, session)
         return
       }
+      const messageId = assistantMessageIds.get(conversationId)
+      const assistant = messagesFor(conversationId).find((message) => message.id === messageId)
+      if (assistant?.status === 'generating') {
+        assistant.status = 'failed'
+        assistant.error_code = 'stream_incomplete'
+      }
       errorByConversation.value = { ...errorByConversation.value, [conversationId]: error }
       throw error
     } finally {

@@ -9,5 +9,6 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/sd-scm/backend
 EnvironmentFile=/opt/sd-scm/backend/.env
+Environment="AI_SHARED_STORE_REQUIRED=true"
 Environment="PATH=/opt/sd-scm/backend/.venv/bin"
 ExecStart=/opt/sd-scm/backend/.venv/bin/python -m app.jobs.cleanup_ai_conversations

@@ -25,6 +25,7 @@ from app.services import ai_runtime
 from app.services.ai_orchestrator import (
     AiOrchestrator,
     LOCAL_ENGINE,
+    MODEL_ENGINE,
     _UNAVAILABLE,
     is_safe_model_text,
 )
@@ -620,7 +621,11 @@ async def stream_generation(
                 if event.kind == "text.delta":
                     text = str(event.payload.get("text", ""))
                     event_engine = event.payload.get("engine")
-                    if event_engine != LOCAL_ENGINE:
+                    if event_engine != LOCAL_ENGINE and not (
+                        event_engine == MODEL_ENGINE
+                        and event.payload.get("validated") is True
+                        and is_safe_model_text(text)
+                    ):
                         if text:
                             untrusted_parts.append(text)
                             combined = "".join(untrusted_parts)

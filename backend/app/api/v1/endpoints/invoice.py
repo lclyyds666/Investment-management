@@ -5,15 +5,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
-from app.core.enums import DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, Role
+from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.core.enums import CompanyCode, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, ResourceCode, Role
 from app.db.session import get_db
 from app.models.invoice import Invoice
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.invoice import InvoiceCreate, InvoiceOut, InvoiceStats, InvoiceUpdate
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_FINANCE
+))])
 
 WRITE_ROLES = (*FINANCE_ROLES, *DIRECTOR_ROLES)
 # 智慧财务 查看：业务经办/业务复核 + 财务 + 负责人/总经理 + 超管（法务风控、法律顾问不可见）

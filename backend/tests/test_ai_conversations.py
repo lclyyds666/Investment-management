@@ -590,6 +590,14 @@ class AiAdminConversationTest(unittest.TestCase):
         cleanup.assert_not_called()
         session_factory.return_value.close.assert_called_once_with()
 
+    @patch("app.jobs.cleanup_ai_conversations.validate_shared_store_requirement")
+    @patch("app.jobs.cleanup_ai_conversations.SessionLocal")
+    def test_cleanup_fails_closed_when_shared_store_is_required(self, session_factory, validate):
+        validate.side_effect = RuntimeError("Redis is unavailable")
+
+        self.assertEqual(run_cleanup(), 1)
+        session_factory.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

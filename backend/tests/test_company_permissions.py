@@ -3,10 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_company_resource, require_roles
+from app.api.deps import get_current_user
+from app.db.session import get_db
+from app.main import create_app
 from app.api.v1.endpoints.user import create_user, update_user
 from app.core.enums import CompanyCode, ResourceCode, Role
 from app.models.portal import UserCompanyRole
@@ -115,6 +119,25 @@ class CompanyPermissionDependencyTest(unittest.TestCase):
             user,
         )
         db.scalar.assert_not_called()
+
+
+class SupplyApiAuthorizationTest(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app()
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id=7, role=Role.BUSINESS_HANDLER, is_superuser=False, is_active=True
+        )
+        self.app.dependency_overrides[get_db] = lambda: Mock()
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.app.dependency_overrides.clear()
+
+    def test_supply_resource_endpoints_deny_stale_legacy_role_without_membership(self):
+        for path in ("/api/v1/channels", "/api/v1/contracts", "/api/v1/approval-forms"):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 403)
 
 
 class UserCompanyRoleSchemaTest(unittest.TestCase):

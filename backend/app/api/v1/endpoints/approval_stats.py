@@ -12,15 +12,18 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
-from app.core.enums import ContractStatus, form_role_at_step, role_at_step
+from app.api.deps import get_current_user, require_company_resource
+from app.core.enums import CompanyCode, ContractStatus, ResourceCode, form_role_at_step, role_at_step
 from app.db.session import get_db
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
 from app.models.user import User
 from app.schemas.common import Response
+from app.services.permissions import get_company_role
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_APPROVAL
+))])
 
 
 @router.get("/pending-count", response_model=Response[dict], summary="待我审批数量(合同/业务审批,供导航角标)")
@@ -29,7 +32,9 @@ def pending_count(
     current_user: User = Depends(get_current_user),
 ):
     is_super = current_user.is_superuser
-    my_role = current_user.role
+    my_role = current_user.role if current_user.is_superuser else get_company_role(
+        db, current_user, CompanyCode.SUPPLY_MANAGEMENT
+    )
 
     # 合同(法律)类审批
     contracts = db.scalars(

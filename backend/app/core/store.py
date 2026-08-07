@@ -212,6 +212,11 @@ class _RedisStore:
             end
         end
 
+        local legacy_missing = legacy_type == 'none'
+        if legacy_type == 'set' then
+            -- Legacy processes store members without per-member expiry.  Assign a
+            -- one-time bounded v2 expiry; later v2 renewals update only v2 members.
+        end
         if legacy_type == 'none' then legacy_type = 'set' end
         if expiry_type == 'zset' then
             local active = redis.call('ZRANGE', KEYS[2], 0, -1, 'WITHSCORES')
@@ -238,11 +243,22 @@ class _RedisStore:
         redis.call('ZADD', KEYS[2], expires_at, ARGV[1])
         if legacy_type == 'set' then
             redis.call('SADD', KEYS[1], ARGV[1])
+            -- Existing v1 Set members get a single v2 expiry stamp.  Renewing
+            -- another v2 member never changes this score.
+            local legacy_members = redis.call('SMEMBERS', KEYS[1])
+            for _, legacy_member in ipairs(legacy_members) do
+                local legacy_score = redis.call('ZSCORE', KEYS[2], legacy_member)
+                if legacy_score == false then
+                    redis.call('ZADD', KEYS[2], expires_at, legacy_member)
+                end
+            end
         else
             redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
         end
         if ttl > 0 then
-            redis.call('EXPIRE', KEYS[1], ttl)
+            -- Never renew an existing legacy Set: that would keep crashed v1
+            -- members alive forever while a v2 request renews its own lease.
+            if legacy_missing then redis.call('EXPIRE', KEYS[1], ttl) end
             redis.call('EXPIRE', KEYS[2], ttl)
         end
         return 1
@@ -273,6 +289,7 @@ class _RedisStore:
         local ttl = tonumber(ARGV[2])
         local expires_at = ttl > 0 and now + ttl or 9007199254740991
 
+        local legacy_missing = legacy_type == 'none'
         if legacy_type == 'set' then
             local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now)
             if #expired > 0 then
@@ -288,6 +305,15 @@ class _RedisStore:
         if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
 
         redis.call('ZADD', KEYS[2], expires_at, ARGV[1])
+        if legacy_type == 'set' then
+            local legacy_members = redis.call('SMEMBERS', KEYS[1])
+            for _, legacy_member in ipairs(legacy_members) do
+                local legacy_score = redis.call('ZSCORE', KEYS[2], legacy_member)
+                if legacy_score == false then
+                    redis.call('ZADD', KEYS[2], expires_at, legacy_member)
+                end
+            end
+        end
         if legacy_type == 'none' then legacy_type = 'set' end
         local active = redis.call('ZRANGE', KEYS[2], 0, -1, 'WITHSCORES')
         for index = 1, #active, 2 do
@@ -298,7 +324,7 @@ class _RedisStore:
             end
         end
         if ttl > 0 then
-            redis.call('EXPIRE', KEYS[1], ttl)
+            if legacy_missing then redis.call('EXPIRE', KEYS[1], ttl) end
             redis.call('EXPIRE', KEYS[2], ttl)
         end
         return 1

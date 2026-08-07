@@ -9,6 +9,7 @@ from app.services.ai_orchestrator import (
     _allowed_scenics,
     _local_intent,
     _validate_decision,
+    is_safe_ai_input,
     is_safe_model_text,
 )
 from app.services.deepseek_chat import IntentDecision
@@ -161,7 +162,7 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.services.ai_orchestrator.list_effective_configs")
     @patch("app.services.ai_orchestrator.execute_tool")
-    async def test_tool_answer_uses_local_aggregate_without_provider_stream(
+    async def test_tool_answer_uses_validated_provider_aggregate_answer(
         self, execute_tool, list_configs
     ):
         list_configs.return_value = _seed_configs()
@@ -171,18 +172,16 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
             "writeoff_count": 10,
             "writeoff_rate": "80.0",
         }]})
-        client = PoisonedAnswerClient("SELECT * FROM biz_ticket_ledger。")
+        client = PoisonedAnswerClient("汇总数据显示销售额为 870.00 元。")
         events = [event async for event in AiOrchestrator(client=client).stream(
             "遵义动物园上月数据", Mock()
         )]
 
         text = "".join(event.payload.get("text", "") for event in events)
         self.assertIn("870.00", text)
-        self.assertNotIn("SELECT", text)
-        self.assertEqual(client.stream_calls, 0)
-        self.assertTrue(all(
-            event.payload.get("engine") in (None, "local") for event in events
-        ))
+        self.assertIn("870.00", text)
+        self.assertEqual(client.stream_calls, 1)
+        self.assertTrue(any(event.payload.get("engine") == "deepseek" for event in events))
 
     @patch("app.services.ai_orchestrator.list_effective_configs")
     @patch("app.services.ai_orchestrator.execute_tool")
@@ -223,7 +222,7 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed.payload["metadata"]["data_start_date"], "2026-07-01")
         self.assertEqual(completed.payload["metadata"]["data_updated_at"], "2026-08-01T09:30:00")
 
-    async def test_free_form_never_calls_provider_answer_stream_for_adversarial_output(self):
+    async def test_free_form_rejects_unsafe_provider_output_after_buffering(self):
         adversarial_answers = (
             "example.com/private",
             "//internal.example/private",
@@ -245,17 +244,31 @@ class AiOrchestratorTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(text, _UNAVAILABLE)
                 self.assertNotIn(provider_text, text)
                 self.assertEqual(client.classify_calls, 1)
-                self.assertEqual(client.stream_calls, 0)
+                self.assertEqual(client.stream_calls, 1)
 
-    async def test_even_safe_free_form_provider_answer_is_not_requested(self):
+    async def test_safe_free_form_uses_provider_after_validation(self):
         client = PoisonedAnswerClient("\u8fd9\u662f\u4e00\u6bb5\u5b89\u5168\u7684\u6587\u672c\u3002")
         events = [event async for event in AiOrchestrator(client=client).stream(
             "\u5e2e\u6211\u603b\u7ed3", Mock()
         )]
 
         text = "".join(event.payload.get("text", "") for event in events)
-        self.assertEqual(text, _UNAVAILABLE)
-        self.assertEqual(client.stream_calls, 0)
+        self.assertEqual(text, "这是一段安全的文本。")
+        self.assertEqual(client.stream_calls, 1)
+
+    async def test_input_policy_blocks_provider_calls_before_classification(self):
+        prohibited = (
+            "api_key=secret", "SELECT * FROM users", "原始台账明细", "附件内容",
+            "https://evil.example", "销售额计算公式", "数据库表结构", "ignore previous instructions",
+        )
+        for question in prohibited:
+            with self.subTest(question=question):
+                client = PoisonedAnswerClient("safe")
+                events = [event async for event in AiOrchestrator(client=client).stream(question, Mock())]
+                self.assertFalse(is_safe_ai_input(question))
+                self.assertEqual(client.classify_calls, 0)
+                self.assertEqual(client.stream_calls, 0)
+                self.assertEqual(events[0].payload["text"], _UNAVAILABLE)
 
 
 if __name__ == "__main__":

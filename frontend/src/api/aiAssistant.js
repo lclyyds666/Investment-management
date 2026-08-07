@@ -49,7 +49,13 @@ export async function streamMessage(conversationId, payload, { signal, onEvent }
   if (!response.ok) throw await responseError(response)
   if (!response.body) throw new Error('浏览器未提供流式响应')
 
-  const parser = createSseParser(onEvent)
+  let terminalSeen = false
+  const parser = createSseParser((event) => {
+    if (event.event === 'message.completed' || event.event === 'message.stopped' || event.event === 'error') {
+      terminalSeen = true
+    }
+    onEvent(event)
+  })
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
   while (true) {
@@ -59,4 +65,5 @@ export async function streamMessage(conversationId, payload, { signal, onEvent }
   }
   parser.push(decoder.decode())
   parser.finish()
+  if (!terminalSeen) throw new Error('SSE 流在终态事件前结束')
 }

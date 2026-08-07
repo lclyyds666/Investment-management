@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
-from app.core.enums import ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, Role
+from app.api.deps import require_company_resource, require_roles
+from app.core.enums import CompanyCode, ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, ResourceCode, Role
 
 # 经营数据查看：全部非法律顾问 + 超管（这些接口 首页战略总览/大屏 也在用，故不能再排除法务风控）
 _view_guard = require_roles(
@@ -33,7 +33,9 @@ from app.schemas.operation import (
 from app.services.ai_agent import diagnose as ai_diagnose_service
 from app.services import financial as financial_svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_OPERATION
+))])
 
 
 @router.get(

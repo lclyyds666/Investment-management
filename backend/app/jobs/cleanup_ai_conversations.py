@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 
 from app.db.session import SessionLocal
+from app.core.store import validate_shared_store_requirement
 from app.services.ai_conversations import (
     cleanup_expired_conversations,
     preview_expired_conversations,
@@ -20,6 +21,11 @@ def run_cleanup(*, dry_run: bool = False) -> int:
     batches = 0
     conversations = 0
     messages = 0
+    try:
+        validate_shared_store_requirement()
+    except RuntimeError:
+        logger.error("ai_retention_cleanup_shared_store_required")
+        return 1
     db = SessionLocal()
     try:
         if dry_run:

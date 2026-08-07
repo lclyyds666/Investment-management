@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
-from app.core.enums import Role
+from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.core.enums import CompanyCode, ResourceCode, Role
 from app.db.session import get_db
 from app.models.scenic import ScenicLedger
 from app.models.scenic_config import ScenicConfig
@@ -25,7 +25,9 @@ from app.schemas.scenic_config import ScenicConfigOut, ScenicConfigUpdate
 from app.services import scenic_config as scenic_config_svc
 from app.services.scenic_analytics import ScenicAnalyticsService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SCENIC_ANALYTICS
+))])
 
 # 渠道业务(文旅) 查看角色：业务经办/业务复核/财务经办/供管负责人/投资总经理 + 超管
 _view_guard = require_roles(

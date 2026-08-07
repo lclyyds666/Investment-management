@@ -22,7 +22,7 @@ describe('streamMessage', () => {
   })
 
   it('decodes an event split within a UTF-8 character', async () => {
-    const eventText = 'event: text.delta\ndata: {"text":"你好"}\n\n'
+    const eventText = 'event: text.delta\ndata: {"text":"你好"}\n\nevent: message.completed\ndata: {}\n\n'
     const bytes = new TextEncoder().encode(eventText)
     const splitAt = bytes.indexOf(0xe4) + 1
     const events = []
@@ -42,6 +42,27 @@ describe('streamMessage', () => {
       onEvent: (event) => events.push(event)
     })
 
-    expect(events).toEqual([{ event: 'text.delta', data: { text: '你好' } }])
+    expect(events).toEqual([
+      { event: 'text.delta', data: { text: '你好' } },
+      { event: 'message.completed', data: {} }
+    ])
+  })
+
+  it('rejects a clean EOF before a terminal event', async () => {
+    const bytes = new TextEncoder().encode('event: text.delta\ndata: {"text":"partial"}\n\n')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes)
+          controller.close()
+        }
+      })
+    }))
+
+    await expect(streamMessage(1, { content: 'test' }, {
+      signal: new AbortController().signal,
+      onEvent: vi.fn()
+    })).rejects.toThrow('终态事件')
   })
 })

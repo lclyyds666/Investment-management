@@ -4,8 +4,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
-from app.core.enums import Role
+from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.core.enums import CompanyCode, ResourceCode, Role
 from app.core.masking import mask_phone
 from app.db.session import get_db
 from app.models.customer import Customer
@@ -15,7 +15,9 @@ from app.schemas.common import Response
 from app.schemas.customer import CustomerCreate, CustomerOut, CustomerUpdate
 from app.services import customer_research as research_svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CUSTOMER
+))])
 
 # 可维护客户档案(新建/编辑/删除/资料上传删除/生成尽调)的角色：业务经办 + 信息维护(超管)
 WRITE_ROLES = (Role.BUSINESS_HANDLER,)

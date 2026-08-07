@@ -26,12 +26,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, require_company_resource, require_roles
 from app.core.config import settings
 from app.core.enums import (
     APPROVAL_CHAIN,
     ApprovalAction,
     ContractStatus,
+    CompanyCode,
+    ResourceCode,
     Role,
     is_final_step,
     role_at_step,
@@ -46,11 +48,14 @@ from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 from app.services import contract_review as review_svc
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
+from app.services.permissions import get_company_role
 
 _OPINION_ROLES = {r for r, _ in legal_doc_svc.OPINION_ROLES}
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CONTRACT
+))])
 
 # 合同附件允许的扩展名（与前端 accept 对齐）
 _ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
@@ -80,14 +85,20 @@ def _to_out(contract: Contract, creator_name: str = "") -> ContractOut:
     return out
 
 
-def _ensure_current_approver(contract: Contract, user: User) -> Role:
+def _effective_supply_role(db: Session, user: User) -> Role | None:
+    return user.role if user.is_superuser else get_company_role(
+        db, user, CompanyCode.SUPPLY_MANAGEMENT
+    )
+
+
+def _ensure_current_approver(db: Session, contract: Contract, user: User) -> Role:
     """校验合同处于审批中且当前用户是本级审批人（超管放行）。返回本级期望角色。"""
     if contract.status != ContractStatus.PENDING:
         raise HTTPException(status_code=400, detail="该合同当前不处于审批中，无法操作")
     expected = role_at_step(contract.current_step)
     if expected is None:
         raise HTTPException(status_code=400, detail="审批流状态异常")
-    if not user.is_superuser and user.role != expected:
+    if not user.is_superuser and _effective_supply_role(db, user) != expected:
         raise HTTPException(
             status_code=403,
             detail=f"当前审批环节应由【{expected.label}】处理，您无权审批",
@@ -105,7 +116,7 @@ def list_contracts(
 ):
     """业务经办仅见本人合同；其余角色（复核/审核/负责人）作为审批与监督方见全部。"""
     stmt = select(Contract).order_by(Contract.id.desc())
-    if not current_user.is_superuser and current_user.role == Role.BUSINESS_HANDLER:
+    if not current_user.is_superuser and _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
         stmt = stmt.where(Contract.created_by == current_user.id)
     rows = db.scalars(stmt).all()
     names = _names_map(db, {c.created_by for c in rows})
@@ -125,7 +136,7 @@ def list_todo(
     ).all()
     todo = [
         c for c in rows
-        if current_user.is_superuser or role_at_step(c.current_step) == current_user.role
+        if current_user.is_superuser or role_at_step(c.current_step) == _effective_supply_role(db, current_user)
     ]
     names = _names_map(db, {c.created_by for c in todo})
     return Response.ok([_to_out(c, names.get(c.created_by, "")) for c in todo])
@@ -301,7 +312,7 @@ def approve_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    _ensure_current_approver(contract, current_user)
+    _ensure_current_approver(db, contract, current_user)
 
     step = contract.current_step
     db.add(
@@ -309,7 +320,7 @@ def approve_contract(
             contract_id=contract.id,
             approver_id=current_user.id,
             step=step,
-            approver_role=current_user.role.value,
+            approver_role=_effective_supply_role(db, current_user).value,
             action=ApprovalAction.APPROVE,
             comment=payload.comment or "",
             signature_snapshot=current_user.signature,  # 自动电子签章
@@ -336,14 +347,14 @@ def reject_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    _ensure_current_approver(contract, current_user)
+    _ensure_current_approver(db, contract, current_user)
 
     db.add(
         Approval(
             contract_id=contract.id,
             approver_id=current_user.id,
             step=contract.current_step,
-            approver_role=current_user.role.value,
+            approver_role=_effective_supply_role(db, current_user).value,
             action=ApprovalAction.REJECT,
             comment=payload.comment,
             signature_snapshot=None,
