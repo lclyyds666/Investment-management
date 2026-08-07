@@ -15,6 +15,7 @@ const scenicAction = {
 let mockServer
 let activeStream
 let viteProcess
+let stopEndpointCalls = 0
 
 function now() {
   return new Date().toISOString()
@@ -91,13 +92,14 @@ function startMockSseServer() {
           }
         }
       } else {
-        setTimeout(finish, 120)
+        setTimeout(finish, 500)
       }
       return
     }
 
     const stopMatch = url.pathname.match(/^\/api\/v1\/ai-assistant\/messages\/\d+\/stop$/)
     if (request.method === 'POST' && stopMatch) {
+      stopEndpointCalls += 1
       activeStream?.stop()
       return json(response, { id: assistantMessageId, status: 'stopped' })
     }
@@ -175,6 +177,9 @@ test.afterAll(async () => {
   stopMockSseServer()
   await stopViteServer()
 })
+test.beforeEach(() => {
+  stopEndpointCalls = 0
+})
 
 async function authenticateAndMockPortal(page) {
   await page.addInitScript(() => localStorage.setItem('token', 'e2e-token'))
@@ -233,6 +238,7 @@ test('desktop streams an answer and navigates only after action click', async ({
   await expect(page.locator('[data-testid="application-entry"]')).toHaveCount(3)
   await page.locator('#assistant-question').fill('Show Zunyi Zoo operating data')
   await page.getByRole('button', { name: '发送问题' }).click()
+  await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible()
   await expect(page.getByText('The platform answer is ready.')).toBeVisible()
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('button', { name: scenicAction.label })).toBeVisible()
@@ -256,6 +262,7 @@ test('mobile opens conversations, stops generation, and keeps business entries i
   const stopButton = page.getByRole('button', { name: '停止生成' })
   await expect(stopButton).toBeVisible()
   await stopButton.click()
+  await expect.poll(() => stopEndpointCalls).toBe(1)
   await expect(page.getByRole('button', { name: '发送问题' })).toBeVisible()
 
   const applications = page.locator('[data-testid="application-region"]')
