@@ -151,9 +151,18 @@ def acquire_generation(user_id: int, conversation_id: int, request_id: str) -> G
             detail={"code": "conversation_busy", "message": "该会话正在生成回复"},
         )
 
-    if not runtime_store.set_members(
-        _active_key(user_id), request_id, settings.AI_MAX_CONCURRENT_PER_USER, ttl
-    ):
+    try:
+        admitted = runtime_store.set_members(
+            _active_key(user_id),
+            request_id,
+            settings.AI_MAX_CONCURRENT_PER_USER,
+            ttl,
+        )
+    except Exception:
+        runtime_store.compare_delete(conversation_key, request_id)
+        raise
+
+    if not admitted:
         runtime_store.compare_delete(conversation_key, request_id)
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="同时生成的会话过多")
 

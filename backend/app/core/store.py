@@ -15,6 +15,10 @@ from typing import Optional
 from app.core.config import settings
 
 
+def _member_expiry_key(key: str) -> str:
+    return f"{key}:expiries:v2"
+
+
 class _MemoryStore:
     """进程内存实现：dict[key] = (value, expire_ts)。线程安全、惰性过期。"""
 
@@ -181,39 +185,164 @@ class _RedisStore:
 
     def set_members(self, key: str, member: str, limit: int, ttl: int) -> bool:
         script = """
+        local expiry_type = redis.call('TYPE', KEYS[2]).ok
+        local legacy_type = redis.call('TYPE', KEYS[1]).ok
+        if expiry_type ~= 'none' and expiry_type ~= 'zset' then return 0 end
+        if legacy_type ~= 'none' and legacy_type ~= 'set' and legacy_type ~= 'zset' then
+            return 0
+        end
+
         local clock = redis.call('TIME')
         local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
         local ttl = tonumber(ARGV[3])
         local expires_at = ttl > 0 and now + ttl or 9007199254740991
-        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
-        if redis.call('ZSCORE', KEYS[1], ARGV[1]) then
-            redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
-            if ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end
-            return 1
+
+        if expiry_type == 'zset' then
+            if legacy_type == 'set' then
+                local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now)
+                if #expired > 0 then
+                    redis.call('SREM', KEYS[1], unpack(expired))
+                    redis.call('ZREM', KEYS[2], unpack(expired))
+                end
+            else
+                redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+                if legacy_type == 'zset' then
+                    redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+                end
+            end
         end
-        if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
-        redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
-        if ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end
+
+        if legacy_type == 'none' then legacy_type = 'set' end
+        if expiry_type == 'zset' then
+            local active = redis.call('ZRANGE', KEYS[2], 0, -1, 'WITHSCORES')
+            for index = 1, #active, 2 do
+                if legacy_type == 'set' then
+                    redis.call('SADD', KEYS[1], active[index])
+                else
+                    redis.call('ZADD', KEYS[1], active[index + 1], active[index])
+                end
+            end
+        end
+
+        local present
+        local count
+        if legacy_type == 'set' then
+            present = redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
+            count = redis.call('SCARD', KEYS[1])
+        else
+            present = redis.call('ZSCORE', KEYS[1], ARGV[1]) ~= false
+            count = redis.call('ZCARD', KEYS[1])
+        end
+        if not present and count >= tonumber(ARGV[2]) then return 0 end
+
+        redis.call('ZADD', KEYS[2], expires_at, ARGV[1])
+        if legacy_type == 'set' then
+            redis.call('SADD', KEYS[1], ARGV[1])
+        else
+            redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
+        end
+        if ttl > 0 then
+            redis.call('EXPIRE', KEYS[1], ttl)
+            redis.call('EXPIRE', KEYS[2], ttl)
+        end
         return 1
         """
-        return bool(self._r.eval(script, 1, key, str(member), int(limit), int(ttl)))
+        return bool(
+            self._r.eval(
+                script,
+                2,
+                key,
+                _member_expiry_key(key),
+                str(member),
+                int(limit),
+                int(ttl),
+            )
+        )
 
     def renew_member(self, key: str, member: str, ttl: int) -> bool:
         script = """
+        local expiry_type = redis.call('TYPE', KEYS[2]).ok
+        local legacy_type = redis.call('TYPE', KEYS[1]).ok
+        if expiry_type ~= 'zset' then return 0 end
+        if legacy_type ~= 'none' and legacy_type ~= 'set' and legacy_type ~= 'zset' then
+            return 0
+        end
+
         local clock = redis.call('TIME')
         local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
         local ttl = tonumber(ARGV[2])
         local expires_at = ttl > 0 and now + ttl or 9007199254740991
-        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
-        if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
-        redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
-        if ttl > 0 then redis.call('EXPIRE', KEYS[1], ttl) end
+
+        if legacy_type == 'set' then
+            local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now)
+            if #expired > 0 then
+                redis.call('SREM', KEYS[1], unpack(expired))
+                redis.call('ZREM', KEYS[2], unpack(expired))
+            end
+        else
+            redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+            if legacy_type == 'zset' then
+                redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+            end
+        end
+        if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
+
+        redis.call('ZADD', KEYS[2], expires_at, ARGV[1])
+        if legacy_type == 'none' then legacy_type = 'set' end
+        local active = redis.call('ZRANGE', KEYS[2], 0, -1, 'WITHSCORES')
+        for index = 1, #active, 2 do
+            if legacy_type == 'set' then
+                redis.call('SADD', KEYS[1], active[index])
+            else
+                redis.call('ZADD', KEYS[1], active[index + 1], active[index])
+            end
+        end
+        if ttl > 0 then
+            redis.call('EXPIRE', KEYS[1], ttl)
+            redis.call('EXPIRE', KEYS[2], ttl)
+        end
         return 1
         """
-        return bool(self._r.eval(script, 1, key, str(member), int(ttl)))
+        return bool(
+            self._r.eval(
+                script,
+                2,
+                key,
+                _member_expiry_key(key),
+                str(member),
+                int(ttl),
+            )
+        )
 
     def remove_member(self, key: str, member: str) -> bool:
-        return bool(self._r.zrem(key, str(member)))
+        script = """
+        local expiry_type = redis.call('TYPE', KEYS[2]).ok
+        local legacy_type = redis.call('TYPE', KEYS[1]).ok
+        if expiry_type ~= 'none' and expiry_type ~= 'zset' then return 0 end
+        if legacy_type ~= 'none' and legacy_type ~= 'set' and legacy_type ~= 'zset' then
+            return 0
+        end
+
+        local removed = 0
+        if expiry_type == 'zset' then
+            removed = redis.call('ZREM', KEYS[2], ARGV[1])
+        end
+        if legacy_type == 'set' then
+            if redis.call('SREM', KEYS[1], ARGV[1]) == 1 then removed = 1 end
+        elseif legacy_type == 'zset' then
+            if redis.call('ZREM', KEYS[1], ARGV[1]) == 1 then removed = 1 end
+        end
+        return removed
+        """
+        return bool(
+            self._r.eval(
+                script,
+                2,
+                key,
+                _member_expiry_key(key),
+                str(member),
+            )
+        )
 
     def incr(self, key: str, ttl: int) -> int:
         script = """

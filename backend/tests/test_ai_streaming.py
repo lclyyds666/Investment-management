@@ -254,6 +254,21 @@ class AiRuntimeTest(unittest.TestCase):
             ai_runtime.release_generation(first)
             ai_runtime.release_generation(second)
 
+    def test_membership_acquisition_error_releases_owned_conversation_lease(self):
+        memory = store._MemoryStore()
+        runtime_store = MagicMock(wraps=memory)
+        runtime_store.set_members.side_effect = RuntimeError("redis unavailable")
+
+        with patch.object(ai_runtime, "runtime_store", runtime_store):
+            with self.assertRaisesRegex(RuntimeError, "redis unavailable"):
+                ai_runtime.acquire_generation(3, 10, "failed-request")
+
+        runtime_store.compare_delete.assert_called_once_with(
+            "ai:conversation:10:lease",
+            "failed-request",
+        )
+        self.assertIsNone(memory.get("ai:conversation:10:lease"))
+
     def test_submission_rate_is_limited(self):
         with patch.object(ai_runtime.settings, "AI_REQUESTS_PER_MINUTE", 2):
             ai_runtime.check_submission_rate(3)
