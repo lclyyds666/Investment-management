@@ -224,6 +224,9 @@ class _RedisStore:
                     redis.call('ZADD', KEYS[2], expires_at, legacy_member)
                 end
             end
+            -- A full Set can return below, so bound the sidecar before that
+            -- capacity check leaves these migration scores behind.
+            if ttl > 0 then redis.call('EXPIRE', KEYS[2], ttl) end
         end
         if expiry_type == 'zset' then
             local active = redis.call('ZRANGE', KEYS[2], 0, -1, 'WITHSCORES')

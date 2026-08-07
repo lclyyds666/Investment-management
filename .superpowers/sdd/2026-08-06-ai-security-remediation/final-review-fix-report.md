@@ -30,6 +30,10 @@ Commits: `a318e9a`, `e7134bc`.
 - `frontend/src/api/aiAssistant.test.js`
 - `frontend/src/store/aiAssistant.js`
 - `frontend/src/store/aiAssistant.test.js`
+- `backend/app/api/deps.py`
+- `backend/app/api/v1/endpoints/user.py`
+- `backend/app/services/deepseek_chat.py`
+- `backend/tests/test_ai_streaming.py`
 
 ## Security changes
 
@@ -55,3 +59,13 @@ Commits: `a318e9a`, `e7134bc`.
 
 - Deployment must provide a reachable shared Redis store for the cleanup unit; it intentionally refuses process-local fallback.
 - Provider responses remain availability-dependent, but policy failures and provider errors use the local fallback without persisting unvalidated model text.
+
+## Residual scoped re-review fixes
+
+- `GET /users` now requires superuser authorization, and the direct API denial matrix covers users without supply membership.
+- Prompt-injection detection normalizes whitespace and punctuation before rejecting instruction replacement, role-play, and Chinese variants. A final review also covered connective-word variants such as "ignore the prior instructions" and "abandon your earlier instructions"; the regression client records zero provider classify or answer calls.
+- DeepSeek answer chunks preserve `finish_reason`. Only an explicit `stop` permits validated model text; length limits, clean EOF, missing metadata, and cancellation persist the local fallback in end-to-end streaming tests.
+- Operation handlers now require their actual dashboard or operation resource, and approval counts allow either contract or approval access. Positive API tests cover dashboard-only and contract-only roles.
+- Redis applies the companion ZSET TTL immediately after legacy-score migration, including full-capacity rejection paths.
+
+Verification for this residual pass: focused backend 71 tests, full backend 149 tests, frontend 113 tests, production build, Playwright 2/2, and `git diff --check` passed.

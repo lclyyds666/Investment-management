@@ -18,7 +18,8 @@ from app.models.ai_assistant import AiConversation, AiMessage, AiToolCall
 from app.schemas.ai_assistant import AiMessageCreate
 from app.services import ai_runtime
 from app.services.ai_conversations import begin_generation, encode_sse
-from app.services.ai_orchestrator import OrchestratorEvent, _UNAVAILABLE
+from app.services.ai_orchestrator import AiOrchestrator, OrchestratorEvent, _UNAVAILABLE
+from app.services.deepseek_chat import IntentDecision, ModelAnswerChunk
 
 
 def _event(frame: str) -> tuple[str, dict]:
@@ -137,6 +138,20 @@ class _SplitUntrustedOrchestrator:
         yield OrchestratorEvent(
             "text.delta", {"text": "://example.com.", "engine": self.engine}
         )
+
+
+class _IncompleteProviderClient:
+    def __init__(self, finish_reason=None, emit_terminal=True):
+        self.finish_reason = finish_reason
+        self.emit_terminal = emit_terminal
+
+    async def classify(self, *args, **kwargs):
+        return IntentDecision(intent="free_form")
+
+    async def stream_answer(self, *args, **kwargs):
+        yield ModelAnswerChunk(text="安全但不完整的回答")
+        if self.emit_terminal:
+            yield ModelAnswerChunk(finish_reason=self.finish_reason)
 
 
 class AiSseContractTest(unittest.TestCase):
@@ -453,6 +468,31 @@ class AiStreamingEndpointTest(unittest.IsolatedAsyncioTestCase):
                     .where(AiMessage.role == "assistant")
                     .order_by(AiMessage.id.desc())
                 )
+                self.assertEqual(assistant.content, _UNAVAILABLE)
+                self.assertEqual(assistant.engine, "local")
+
+    async def test_incomplete_provider_completion_never_persists_model_text(self):
+        cases = {
+            "length": _IncompleteProviderClient(finish_reason="length"),
+            "missing": _IncompleteProviderClient(),
+            "eof": _IncompleteProviderClient(emit_terminal=False),
+            "cancelled": _IncompleteProviderClient(finish_reason="cancelled"),
+        }
+        for name, client in cases.items():
+            with self.subTest(name=name):
+                _, events = await self._stream(
+                    "帮我总结", AiOrchestrator(client=client)
+                )
+                deltas = [payload["text"] for event, payload in events if event == "text.delta"]
+                self.assertEqual(deltas, [_UNAVAILABLE])
+
+                self.db.expire_all()
+                assistant = self.db.scalar(
+                    select(AiMessage)
+                    .where(AiMessage.role == "assistant")
+                    .order_by(AiMessage.id.desc())
+                )
+                self.assertEqual(assistant.status, "completed")
                 self.assertEqual(assistant.content, _UNAVAILABLE)
                 self.assertEqual(assistant.engine, "local")
 

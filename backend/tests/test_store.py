@@ -298,6 +298,9 @@ class RedisMemberCompatibilityTest(_RedisIntegrationTest):
 
         self.assertFalse(redis_store.set_members(key, "v2-blocked", limit=1, ttl=30))
         self.assertIsNotNone(self.redis.execute("ZSCORE", _member_expiry_key(key), "legacy-crashed"))
+        sidecar_ttl = int(self.redis.execute("TTL", _member_expiry_key(key)))
+        self.assertGreater(sidecar_ttl, 0)
+        self.assertLessEqual(sidecar_ttl, 30)
 
     def test_existing_round_three_sorted_set_is_handled_without_wrongtype(self):
         key = "ai:user:7:active"

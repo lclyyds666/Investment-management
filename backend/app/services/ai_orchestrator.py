@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.schemas.ai_assistant import ToolResult
 from app.services.ai_dates import resolve_date_range
 from app.services.ai_tools import ToolContext, execute_tool
-from app.services.deepseek_chat import DeepSeekChatClient, IntentDecision
+from app.services.deepseek_chat import DeepSeekChatClient, IntentDecision, ModelAnswerChunk
 from app.services.scenic_config import SCENIC_SEEDS, list_effective_configs
 
 
@@ -70,9 +70,19 @@ _RAW_ROW_RE = re.compile(
     re.IGNORECASE,
 )
 _PROMPT_INJECTION_RE = re.compile(
-    r"(?:ignore\s+(?:all\s+)?(?:previous|above)|system\s+prompt|developer\s+message|"
-    r"jailbreak|reveal\s+(?:your|the)\s+instructions|do\s+not\s+follow|"
-    r"忽略(?:之前|以上|前面).*?(?:指令|要求)|系统(?:提示词|指令)|越狱|提示注入)",
+    r"(?:ignore|disregard|forget|override|replace|discard|bypass)"
+    r"(?:all|everything)?(?:previous|prior|above|earlier|existing|given|system)"
+    r"(?:instructions?|directions?|rules?|context|messages?)?"
+    r"|(?:ignore|disregard|forget|override|replace|discard|bypass|abandon|overwrite)"
+    r"(?:the|all|any|my|your|our|these|those|existing|previous|prior|above|earlier|given|current|old)*"
+    r"(?:instructions?|directions?|rules?|context|messages?)"
+    r"|(?:obey|follow|comply)(?:the|my|next|new|these)*(?:message|instructions?|directions?|rules?)"
+    r"|(?:pretend|act|roleplay|simulate)(?:youare|tobe|as)(?:a|an|the)?(?:system|developer|assistant|admin)"
+    r"|(?:systemprompt|developermessage|jailbreak|reveal(?:your|the)instructions|donotfollow)"
+    r"|(?:忽略|无视|跳过|覆盖|替换|忘记)(?:所有|全部|之前|此前|前面|上面|以上|先前|原有|已有)+(?:指令|要求|规则|提示词|提示|内容)?"
+    r"|(?:扮演|假装|模拟|充当|作为)(?:你是|系统|开发者|助手|管理员)"
+    r"|(?:遵循|服从|执行)(?:下一条|新|我的|这些)*(?:消息|指令|要求|规则)"
+    r"|(?:系统提示词|系统指令|越狱|提示注入)",
     re.IGNORECASE,
 )
 _SCENIC_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -108,6 +118,7 @@ def is_safe_ai_input(text: str) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     normalized, compact = _normalized_output(text)
+    injection_text = re.sub(r"[\W_]+", "", normalized)
     return not (
         _URL_RE.search(compact)
         or _SQL_RE.search(compact)
@@ -116,7 +127,7 @@ def is_safe_ai_input(text: str) -> bool:
         or _DATABASE_RE.search(normalized)
         or _RAW_CONTENT_RE.search(normalized)
         or _RAW_ROW_RE.search(compact)
-        or _PROMPT_INJECTION_RE.search(normalized)
+        or _PROMPT_INJECTION_RE.search(injection_text)
     )
 
 
@@ -395,15 +406,21 @@ class AiOrchestrator:
             separators=(",", ":"),
         )
         parts: list[str] = []
+        completed = False
         try:
             async for chunk in self.client.stream_answer(system_prompt, context):
-                parts.append(str(chunk))
+                if not isinstance(chunk, ModelAnswerChunk):
+                    return None
+                parts.append(chunk.text)
                 if sum(map(len, parts)) > 4096:
                     return None
+                if chunk.finish_reason is not None:
+                    completed = chunk.finish_reason == "stop"
+                    break
         except Exception:
             return None
         answer = "".join(parts).strip()
-        return answer if is_safe_model_text(answer) else None
+        return answer if completed and is_safe_model_text(answer) else None
 
     async def stream(
         self, question: str, context: ToolContext

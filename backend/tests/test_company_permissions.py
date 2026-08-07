@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app.api.deps import require_company_resource, require_roles
 from app.api.deps import get_current_user
@@ -14,6 +15,9 @@ from app.main import create_app
 from app.api.v1.endpoints.user import create_user, update_user
 from app.core.enums import CompanyCode, ResourceCode, Role
 from app.models.portal import UserCompanyRole
+from app.models.approval_form import ApprovalForm
+from app.models.contract import Contract
+from app.models.operation import OperationData
 from app.models.user import User
 from app.schemas.user import CompanyRoleAssignment, UserCreate, UserOut, UserUpdate
 from app.services.permissions import allowed_resources, get_company_role, has_resource
@@ -135,9 +139,65 @@ class SupplyApiAuthorizationTest(unittest.TestCase):
         self.app.dependency_overrides.clear()
 
     def test_supply_resource_endpoints_deny_stale_legacy_role_without_membership(self):
-        for path in ("/api/v1/channels", "/api/v1/contracts", "/api/v1/approval-forms"):
+        for path in (
+            "/api/v1/channels",
+            "/api/v1/contracts",
+            "/api/v1/approval-forms",
+            "/api/v1/users",
+        ):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 403)
+
+
+class ResourceSpecificEndpointTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        for table in (
+            UserCompanyRole.__table__,
+            OperationData.__table__,
+            Contract.__table__,
+            ApprovalForm.__table__,
+        ):
+            table.create(self.engine)
+        self.db = Session(self.engine)
+        self.current_user = SimpleNamespace(id=7, is_superuser=False)
+        self.app = create_app()
+        self.app.dependency_overrides[get_current_user] = lambda: self.current_user
+        self.app.dependency_overrides[get_db] = lambda: self.db
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.app.dependency_overrides.clear()
+        self.db.close()
+        self.engine.dispose()
+
+    def _assign_supply_role(self, user_id: int, role: Role):
+        self.db.add(UserCompanyRole(
+            user_id=user_id,
+            company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
+            role=role,
+        ))
+        self.db.commit()
+
+    def test_dashboard_only_role_can_load_operation_dashboard(self):
+        self._assign_supply_role(7, Role.RISK_AUDITOR)
+
+        response = self.client.get("/api/v1/operation/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_contract_only_role_can_load_shared_pending_count(self):
+        self.current_user = SimpleNamespace(id=8, is_superuser=False)
+        self._assign_supply_role(8, Role.LEGAL_COUNSEL)
+
+        response = self.client.get("/api/v1/approval/pending-count")
+
+        self.assertEqual(response.status_code, 200)
 
 
 class UserCompanyRoleSchemaTest(unittest.TestCase):

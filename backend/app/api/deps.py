@@ -75,6 +75,21 @@ def require_company_resource(company: CompanyCode, resource: ResourceCode):
     return checker
 
 
+def require_any_company_resource(company: CompanyCode, *resources: ResourceCode):
+    if not resources:
+        raise ValueError("at least one resource is required")
+
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not any(has_resource(db, current_user, company, resource) for resource in resources):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        return current_user
+
+    return checker
+
+
 def require_superuser(current_user: User = Depends(get_current_user)) -> User:
     """要求当前用户为超级管理员。用户管理等敏感操作使用。"""
     if not current_user.is_superuser:

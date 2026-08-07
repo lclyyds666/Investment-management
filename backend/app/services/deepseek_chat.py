@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import AsyncIterator, Literal
 
 from openai import AsyncOpenAI
@@ -25,6 +26,12 @@ class IntentDecision(BaseModel):
     scenic_ids: list[str] = Field(default_factory=list, max_length=6)
     date_text: str | None = Field(default=None, max_length=80)
     dimension: Literal["month", "platform"] | None = None
+
+
+@dataclass(frozen=True)
+class ModelAnswerChunk:
+    text: str = ""
+    finish_reason: str | None = None
 
 
 def deepseek_client_options() -> dict:
@@ -76,7 +83,7 @@ class DeepSeekChatClient:
 
     async def stream_answer(
         self, system_prompt: str, context: str
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ModelAnswerChunk]:
         stream = await self._require_client().chat.completions.create(
             model=settings.DEEPSEEK_MODEL,
             messages=[
@@ -87,6 +94,8 @@ class DeepSeekChatClient:
             temperature=0.2,
         )
         async for chunk in stream:
-            delta = chunk.choices[0].delta.content or ""
-            if delta:
-                yield delta
+            for choice in chunk.choices:
+                text = choice.delta.content or ""
+                finish_reason = choice.finish_reason
+                if text or finish_reason is not None:
+                    yield ModelAnswerChunk(text=text, finish_reason=finish_reason)

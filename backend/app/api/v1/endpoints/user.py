@@ -118,7 +118,7 @@ def list_users(
     role: Role | None = None,
     is_active: bool | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(require_superuser),
 ):
     """按审批链角色排序展示人员，支持关键字（账号/姓名/部门）、角色、状态筛选。"""
     stmt = select(User).options(selectinload(User.company_roles))

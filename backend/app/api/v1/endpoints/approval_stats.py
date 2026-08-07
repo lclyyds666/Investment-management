@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource
+from app.api.deps import get_current_user, require_any_company_resource
 from app.core.enums import CompanyCode, ContractStatus, ResourceCode, form_role_at_step, role_at_step
 from app.db.session import get_db
 from app.models.approval_form import ApprovalForm
@@ -21,12 +21,19 @@ from app.models.user import User
 from app.schemas.common import Response
 from app.services.permissions import get_company_role
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_APPROVAL
-))])
+router = APIRouter()
 
 
-@router.get("/pending-count", response_model=Response[dict], summary="待我审批数量(合同/业务审批,供导航角标)")
+@router.get(
+    "/pending-count",
+    response_model=Response[dict],
+    summary="待我审批数量(合同/业务审批,供导航角标)",
+    dependencies=[Depends(require_any_company_resource(
+        CompanyCode.SUPPLY_MANAGEMENT,
+        ResourceCode.SUPPLY_CONTRACT,
+        ResourceCode.SUPPLY_APPROVAL,
+    ))],
+)
 def pending_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
