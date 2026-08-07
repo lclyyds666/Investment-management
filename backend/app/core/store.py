@@ -213,11 +213,18 @@ class _RedisStore:
         end
 
         local legacy_missing = legacy_type == 'none'
-        if legacy_type == 'set' then
-            -- Legacy processes store members without per-member expiry.  Assign a
-            -- one-time bounded v2 expiry; later v2 renewals update only v2 members.
-        end
         if legacy_type == 'none' then legacy_type = 'set' end
+        if legacy_type == 'set' then
+            -- Stamp legacy members before the capacity check, including a full
+            -- Set, so migration cannot be blocked by an unbounded v1 member.
+            local legacy_members = redis.call('SMEMBERS', KEYS[1])
+            for _, legacy_member in ipairs(legacy_members) do
+                local legacy_score = redis.call('ZSCORE', KEYS[2], legacy_member)
+                if legacy_score == false then
+                    redis.call('ZADD', KEYS[2], expires_at, legacy_member)
+                end
+            end
+        end
         if expiry_type == 'zset' then
             local active = redis.call('ZRANGE', KEYS[2], 0, -1, 'WITHSCORES')
             for index = 1, #active, 2 do
@@ -243,15 +250,6 @@ class _RedisStore:
         redis.call('ZADD', KEYS[2], expires_at, ARGV[1])
         if legacy_type == 'set' then
             redis.call('SADD', KEYS[1], ARGV[1])
-            -- Existing v1 Set members get a single v2 expiry stamp.  Renewing
-            -- another v2 member never changes this score.
-            local legacy_members = redis.call('SMEMBERS', KEYS[1])
-            for _, legacy_member in ipairs(legacy_members) do
-                local legacy_score = redis.call('ZSCORE', KEYS[2], legacy_member)
-                if legacy_score == false then
-                    redis.call('ZADD', KEYS[2], expires_at, legacy_member)
-                end
-            end
         else
             redis.call('ZADD', KEYS[1], expires_at, ARGV[1])
         end

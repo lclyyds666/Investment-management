@@ -290,6 +290,15 @@ class RedisMemberCompatibilityTest(_RedisIntegrationTest):
         self.assertTrue(redis_store.renew_member(key, "v2-active", ttl=30))
         self.assertEqual(set(self.redis.execute("SMEMBERS", key).splitlines()), {"v2-active"})
 
+    def test_full_legacy_set_is_migrated_before_v2_capacity_rejection(self):
+        key = "ai:user:10:active"
+        redis_store = _RedisStore(self.redis)
+        self.redis.execute("SADD", key, "legacy-crashed")
+        self.redis.execute("EXPIRE", key, 30)
+
+        self.assertFalse(redis_store.set_members(key, "v2-blocked", limit=1, ttl=30))
+        self.assertIsNotNone(self.redis.execute("ZSCORE", _member_expiry_key(key), "legacy-crashed"))
+
     def test_existing_round_three_sorted_set_is_handled_without_wrongtype(self):
         key = "ai:user:7:active"
         self.redis.execute("ZADD", key, 9999999999, "round-three-request")

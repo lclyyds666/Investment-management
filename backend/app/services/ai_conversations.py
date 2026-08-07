@@ -639,7 +639,7 @@ async def stream_generation(
                         if first_token_ms is None:
                             first_token_ms = max(0, round((time.perf_counter() - started) * 1000))
                         content_parts.append(text)
-                    engine = LOCAL_ENGINE
+                    engine = event_engine if event_engine == MODEL_ENGINE else LOCAL_ENGINE
                     yield encode_sse("text.delta", _event_payload(
                         request_id, assistant_message.id, {"text": text}
                     ))
