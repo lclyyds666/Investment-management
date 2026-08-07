@@ -38,7 +38,14 @@ class ScenicLedgerCalculatorTest(unittest.TestCase):
 
     def test_quancheng_hotel_excel_uses_common_engine(self):
         source = ROOT / "泉州酒店" / "2026.1.1-1.25明细.xlsx"
-        parsed = hotel_ledger.parse_hotel_file(source.read_bytes(), source.name)
+        parsed = hotel_ledger.parse_hotel_file(
+            source.read_bytes(),
+            source.name,
+            scenic_id="quancheng-ouleb",
+            rate_hexiao=Decimal("0.90"),
+            rate_settle=Decimal("0.94"),
+            commission_rate=Decimal("0.06"),
+        )
         douyin = next(item for item in parsed["platforms"] if item["platform"] == "抖音")
         expected = {
             "supplier_commission": Decimal("9049.97"),

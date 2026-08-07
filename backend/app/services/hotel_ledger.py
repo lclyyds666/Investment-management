@@ -10,9 +10,9 @@
     结算基数(出版应得) = 到账 − 佣金
 - 美团(26列)：结算基数 = Σ结算金额
 - 携程(24列)：结算基数 = Σ结算价
-统一：景区核销 = 结算基数 × 核销率(0.9)。服务费/结算两种算法（compute_row.fee_algo）：
+统一：景区核销 = 结算基数 × 景区配置核销率。服务费/结算两种算法（compute_row.fee_algo）：
   算法1(默认)：服务费 = 间夜 × 44；结算金额 = 核销 + 服务费。
-  算法2       ：结算金额 = 结算基数 × 结算费率(0.94)；服务费 = 结算金额 − 核销。
+  算法2       ：结算金额 = 结算基数 × 景区配置结算费率；服务费 = 结算金额 − 核销。
 """
 from __future__ import annotations
 
@@ -253,12 +253,20 @@ def calculate_hotel_ledger(scenic_id: str, excel_data, **kwargs) -> dict | None:
 calculateHotelLedger = calculate_hotel_ledger
 
 
-def daily_defaults(platform: str, daily: dict[str, dict],
-                   rate_hexiao: Decimal = DEFAULT_RATE_HEXIAO,
-                   fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT) -> dict:
+def daily_defaults(
+    platform: str,
+    daily: dict[str, dict],
+    *,
+    rate_hexiao: Decimal,
+    rate_settle: Decimal,
+    commission_rate: Decimal,
+    scenic_id: str,
+    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
+) -> dict:
     """解析时的按日精准默认值（算法1；佣金取逐日自动值）。"""
     res = recompute_from_days(platform, _days_from_daily(daily), rate_hexiao,
-                              DEFAULT_RATE_SETTLE, fee_per_night, 1, None)
+                              rate_settle, fee_per_night, 1, None, None,
+                              commission_rate, scenic_id)
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
                 "service_fee": Decimal("0"), "jinying": Decimal("0")}
@@ -266,7 +274,15 @@ def daily_defaults(platform: str, daily: dict[str, dict],
             "service_fee": res["service_fee"], "jinying": res["jinying_amount"]}
 
 
-def parse_hotel_file(content: bytes, filename: str = "") -> dict:
+def parse_hotel_file(
+    content: bytes,
+    filename: str = "",
+    *,
+    scenic_id: str,
+    rate_hexiao: Decimal,
+    rate_settle: Decimal,
+    commission_rate: Decimal,
+) -> dict:
     """解析一份酒店对账明细，按平台聚合。**按日期分组 → 逐日计算舍入 → 累加**。"""
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
     year = _year_from_filename(filename)
@@ -367,7 +383,14 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             continue
         d = agg[plat]
         base_received = _q(d["base_received"])
-        defs = daily_defaults(plat, d["daily"])   # 按日计算的精准默认值
+        defs = daily_defaults(
+            plat,
+            d["daily"],
+            rate_hexiao=rate_hexiao,
+            rate_settle=rate_settle,
+            commission_rate=commission_rate,
+            scenic_id=scenic_id,
+        )
         p_text = ""
         if d["pstart"] and d["pend"]:
             s, e = d["pstart"], d["pend"]
@@ -381,6 +404,9 @@ def parse_hotel_file(content: bytes, filename: str = "") -> dict:
             "positive_count": d["positive_count"],
             "base_received": base_received,
             "suggested_commission": defs["commission"],
+            "commission_rate": commission_rate,
+            "rate_hexiao": rate_hexiao,
+            "rate_settle": rate_settle,
             "def_hexiao": defs["hexiao"],
             "def_service_fee": defs["service_fee"],
             "def_jinying": defs["jinying"],

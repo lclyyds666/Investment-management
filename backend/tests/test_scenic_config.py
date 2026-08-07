@@ -17,6 +17,11 @@ class ScenicConfigTest(unittest.TestCase):
         )
 
     def test_target_scenic_fallbacks_match_initial_configuration(self):
+        fuzhou = get_effective_config(None, "fuzhou-ouleb")
+        self.assertEqual(fuzhou.ticket_rate_hexiao, Decimal("0.91"))
+        self.assertEqual(fuzhou.ticket_rate_settle, Decimal("0.95"))
+        self.assertEqual(fuzhou.ticket_commission_rate, Decimal("0.08"))
+
         zunyi = get_effective_config(None, "zunyi-zoo")
         self.assertEqual(zunyi.default_ticket_product, "遵义动物园")
         self.assertEqual(zunyi.ticket_rate_hexiao, Decimal("0.84"))
