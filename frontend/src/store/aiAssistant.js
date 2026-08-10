@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '@/api/aiAssistant'
 import { useUserStore } from '@/store/user'
+import { createUuid } from '@/utils/uuid'
 
 const STOP_TIMEOUT_MS = 5000
 
@@ -255,7 +256,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', () => {
     const retry = retrySubmissions.get(conversationId)
     const clientMessageId = retry?.content === normalized
       ? retry.clientMessageId
-      : crypto.randomUUID()
+      : createUuid()
     retrySubmissions.set(conversationId, { content: normalized, clientMessageId })
 
     const messages = messagesFor(conversationId)
