@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from datetime import datetime
 from decimal import Decimal
@@ -132,8 +133,8 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         ctrip.append([49, "订单成本", 3, None, datetime(2026, 6, 1), datetime(2026, 6, 5)])
 
         tongcheng = wb.create_sheet("同程6.1-6.15")
-        tongcheng.append(["商家应收", "订单票数", "旅游日期"])
-        tongcheng.append([92.12, 2, datetime(2026, 6, 10)])
+        tongcheng.append(["订单金额", "商家应收", "订单票数", "旅游日期"])
+        tongcheng.append([100, 92.12, 2, datetime(2026, 6, 10)])
 
         output = BytesIO()
         wb.save(output)
@@ -150,12 +151,99 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         self.assertEqual(by_platform["美团"]["order_count"], 2)
         self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("49.00"))
         self.assertEqual(by_platform["携程"]["order_count"], 3)
-        self.assertEqual(by_platform["同程"]["supplier_received"], Decimal("92.12"))
+        self.assertEqual(by_platform["同程"]["supplier_received"], Decimal("100.00"))
         self.assertEqual(by_platform["同程"]["order_count"], 2)
         for item in by_platform.values():
             self.assertEqual(item["period_start"].isoformat(), "2026-05-25")
             self.assertEqual(item["period_end"].isoformat(), "2026-06-21")
             self.assertTrue(item["daily_json"])
+
+    def test_tongcheng_requires_order_amount(self):
+        wb = Workbook()
+        tongcheng = wb.active
+        tongcheng.title = "同程"
+        tongcheng.append(["商家应收", "订单票数", "旅游日期"])
+        tongcheng.append([92.12, 2, datetime(2026, 6, 10)])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        with self.assertRaisesRegex(ValueError, "订单金额"):
+            ticket_ledger.parse_reconciliation(output.getvalue(), "同程6.1-6.15.xlsx")
+
+    def test_zunyi_douyin_signed_reversal_uses_statement_columns(self):
+        wb = Workbook()
+        douyin = wb.active
+        douyin.title = "抖音"
+        douyin.append([
+            "订单实收金额", "软件服务费", "达人服务费", "团长服务费",
+            "服务商服务费", "核销时间",
+        ])
+        douyin.append([
+            323652, -16182.66, -1041.14, 0, -15127.42,
+            datetime(2026, 4, 20, 10, 0),
+        ])
+        douyin.append([
+            -154, 7.70, 0.36, 0, 7.36,
+            datetime(2026, 4, 21, 10, 0),
+        ])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(), "遵义动物园4.20-4.21.xlsx", scenic_id="zunyi-zoo"
+        )
+        self.assertEqual(parsed["supplier_received"], Decimal("307337.16"))
+
+    def test_fuzhou_douyin_exempts_configured_product_from_commission(self):
+        wb = Workbook()
+        douyin = wb.active
+        douyin.title = "抖音"
+        douyin.append([
+            "商品ID", "订单实收金额", "软件服务费", "达人服务费",
+            "团长服务费", "服务商服务费", "核销时间",
+        ])
+        douyin.append([
+            1870851250521100, 20111, 0, 0, 0, -20111,
+            datetime(2026, 7, 3, 10, 0),
+        ])
+        douyin.append([
+            999, 100, -5, -2, -1, -92,
+            datetime(2026, 7, 3, 11, 0),
+        ])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(),
+            "福州欧乐堡7.3-7.3.xlsx",
+            scenic_id="fuzhou-ouleb",
+            commission_rate=Decimal("0.08"),
+        )
+        douyin_result = next(
+            item for item in parsed["platforms"] if item["platform"] == "抖音"
+        )
+        self.assertEqual(douyin_result["supplier_received"], Decimal("20203.00"))
+        self.assertEqual(douyin_result["suggested_commission"], Decimal("5.00"))
+        daily = json.loads(douyin_result["daily_json"])
+        self.assertEqual(daily[0]["cs"], "100")
+        self.assertEqual(daily[0]["cd"], "-2")
+        self.assertEqual(daily[0]["ct"], "-1")
+
+    def test_fuzhou_douyin_requires_product_id(self):
+        with self.assertRaisesRegex(
+            ValueError, "福州欧乐堡抖音明细缺少必要列：商品ID"
+        ):
+            ticket_ledger.parse_reconciliation(
+                self._target_scenic_workbook(),
+                "福州欧乐堡8.1-8.1.xlsx",
+                scenic_id="fuzhou-ouleb",
+            )
 
     @staticmethod
     def _target_scenic_workbook(include_meituan_tech_fee: bool = True) -> bytes:

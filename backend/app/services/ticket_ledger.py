@@ -46,6 +46,7 @@ COL_DAREN = "达人服务费"
 COL_TUANZHANG = "团长服务费"
 COL_FUWUSHANG = "服务商服务费"
 COL_HEXIAO_TIME = "核销时间"
+COL_PRODUCT_ID = "商品ID"
 # 携程门票对账明细。携程没有抖音的订单实收/佣金列，结算价即服务商到账口径。
 COL_XC_JIESUAN = "结算价金额"
 COL_XC_FLOW_TYPE = "流水类型"
@@ -60,8 +61,9 @@ COL_MT_SETTLE_TYPE = "结算方式"
 COL_MT_COUNT = "张数"
 COL_MT_TIME = "时间"
 MT_CONSUMPTION_SETTLEMENT = "消费结算"
-# 同程门票结算明细。商家应收为平台最终结算给商家的净额。
-COL_TC_AMOUNT = "商家应收"
+# 同程门票结算明细。订单金额是服务商到账口径；商家应收仅用于识别账单。
+COL_TC_ORDER_AMOUNT = "订单金额"
+COL_TC_MERCHANT_RECEIVABLE = "商家应收"
 COL_TC_COUNT = "订单票数"
 COL_TC_DATE = "旅游日期"
 _HEADER_SCAN_ROWS = 20
@@ -74,6 +76,10 @@ _RECEIVED_RULES = {
     ("zunyi-zoo", "抖音"): "zunyi_douyin",
     ("zunyi-zoo", "美团"): "zunyi_meituan",
     ("nanyang-wildlife", "抖音"): "nanyang_douyin",
+}
+
+_COMMISSION_EXEMPT_PRODUCTS = {
+    ("fuzhou-ouleb", "1870851250521100"),
 }
 
 
@@ -118,6 +124,15 @@ def _to_date(v):
     return None
 
 
+def _product_id(value) -> str:
+    """商品 ID 统一为字符串，整数型 Excel 数值不保留 .0。"""
+    if isinstance(value, (int, float, Decimal)):
+        parsed = Decimal(str(value))
+        if parsed == parsed.to_integral_value():
+            return str(parsed.to_integral_value())
+    return str(value or "").strip()
+
+
 def _header_index(header: list, name: str) -> int:
     """在表头行里按名找列索引；找不到返回 -1。"""
     for i, h in enumerate(header):
@@ -137,12 +152,19 @@ def _detect_platform(header: list) -> str | None:
         ("抖音", {COL_SHISHOU, COL_HEXIAO_TIME}),
         ("美团", {COL_MT_AMOUNT, COL_MT_SETTLE_TYPE, COL_MT_COUNT, COL_MT_TIME}),
         ("携程", {COL_XC_JIESUAN, COL_XC_FLOW_TYPE}),
-        ("同程", {COL_TC_AMOUNT, COL_TC_COUNT, COL_TC_DATE}),
     )
-    return next(
+    platform = next(
         (platform for platform, required in signatures if required.issubset(names)),
         None,
     )
+    if platform:
+        return platform
+    if (
+        {COL_TC_COUNT, COL_TC_DATE}.issubset(names)
+        and {COL_TC_ORDER_AMOUNT, COL_TC_MERCHANT_RECEIVABLE} & names
+    ):
+        return "同程"
+    return None
 
 
 def _find_platform_header(rows_iter) -> tuple[str, list] | None:
@@ -204,11 +226,6 @@ def _row_count(value, default: int = 1) -> int:
     if parsed is None:
         return default
     return max(int(parsed), 0)
-
-
-def _fee_charge(value: Decimal | None) -> Decimal:
-    """平台费用列正负号不统一，业务公式统一按正向费用金额扣减。"""
-    return abs(value or Decimal("0"))
 
 
 def parse_reconciliation(
@@ -280,7 +297,12 @@ def parse_reconciliation(
                 i_fees = [_header_index(header, c) for c in _FEE_COLS]
                 i_fuwushang = _header_index(header, COL_FUWUSHANG)
                 i_time = _header_index(header, COL_HEXIAO_TIME)
+                i_product_id = _header_index(header, COL_PRODUCT_ID)
                 received_rule = _RECEIVED_RULES.get((scenic_id, "抖音"), "default")
+                if scenic_id == "fuzhou-ouleb" and i_product_id < 0:
+                    raise ValueError(
+                        f"福州欧乐堡抖音明细缺少必要列：{COL_PRODUCT_ID}"
+                    )
                 if received_rule == "zunyi_douyin":
                     missing = [
                         name for name, idx in (
@@ -307,8 +329,8 @@ def parse_reconciliation(
                     if received_rule == "zunyi_douyin":
                         base = (
                             (shishou or Decimal("0"))
-                            - _fee_charge(fee_vals[1])
-                            - _fee_charge(fuwushang)
+                            + (fee_vals[1] or Decimal("0"))
+                            + (fuwushang or Decimal("0"))
                         )
                     elif received_rule == "nanyang_douyin":
                         base = shishou or Decimal("0")
@@ -327,11 +349,23 @@ def parse_reconciliation(
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),
                         "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                        "commission_shishou": Decimal("0"),
+                        "commission_daren": Decimal("0"),
+                        "commission_tuanzhang": Decimal("0"),
                     })
                     dd["received"] += base
                     dd["shishou"] += (shishou or Decimal("0"))
                     dd["daren"] += (fee_vals[1] or Decimal("0"))
                     dd["tuanzhang"] += (fee_vals[2] or Decimal("0"))
+                    product_id = (
+                        _product_id(raw[i_product_id])
+                        if 0 <= i_product_id < len(raw)
+                        else ""
+                    )
+                    if (scenic_id, product_id) not in _COMMISSION_EXEMPT_PRODUCTS:
+                        dd["commission_shishou"] += shishou or Decimal("0")
+                        dd["commission_daren"] += fee_vals[1] or Decimal("0")
+                        dd["commission_tuanzhang"] += fee_vals[2] or Decimal("0")
                 continue
 
             if platform == "携程":
@@ -370,6 +404,9 @@ def parse_reconciliation(
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),
                         "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                        "commission_shishou": Decimal("0"),
+                        "commission_daren": Decimal("0"),
+                        "commission_tuanzhang": Decimal("0"),
                     })
                     dd["received"] += base
                 continue
@@ -414,6 +451,9 @@ def parse_reconciliation(
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),
                         "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                        "commission_shishou": Decimal("0"),
+                        "commission_daren": Decimal("0"),
+                        "commission_tuanzhang": Decimal("0"),
                     })
                     dd["received"] += base
                 continue
@@ -421,9 +461,11 @@ def parse_reconciliation(
             if platform == "同程":
                 aggregate = platform_aggregate("同程")
                 aggregate["sheets"].append(ws.title)
-                i_amount = _header_index(header, COL_TC_AMOUNT)
+                i_amount = _header_index(header, COL_TC_ORDER_AMOUNT)
                 i_count = _header_index(header, COL_TC_COUNT)
                 i_date = _header_index(header, COL_TC_DATE)
+                if i_amount < 0:
+                    raise ValueError(f"同程明细缺少必要列：{COL_TC_ORDER_AMOUNT}")
                 for raw in rows_iter:
                     if not raw:
                         continue
@@ -441,6 +483,9 @@ def parse_reconciliation(
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),
                         "daren": Decimal("0"), "tuanzhang": Decimal("0"),
+                        "commission_shishou": Decimal("0"),
+                        "commission_daren": Decimal("0"),
+                        "commission_tuanzhang": Decimal("0"),
                     })
                     dd["received"] += base
     finally:
@@ -514,6 +559,9 @@ def _days_from_daily(daily: dict[str, dict]) -> list[dict]:
     return [{
         "recv": dd["received"], "shishou": dd["shishou"],
         "daren": dd["daren"], "tuanzhang": dd["tuanzhang"],
+        "commission_shishou": dd["commission_shishou"],
+        "commission_daren": dd["commission_daren"],
+        "commission_tuanzhang": dd["commission_tuanzhang"],
     } for dd in daily.values()]
 
 
@@ -522,6 +570,9 @@ def serialize_daily(daily: dict[str, dict]) -> str:
     out = [{
         "r": str(dd["received"]), "s": str(dd["shishou"]),
         "d": str(dd["daren"]), "t": str(dd["tuanzhang"]),
+        "cs": str(dd["commission_shishou"]),
+        "cd": str(dd["commission_daren"]),
+        "ct": str(dd["commission_tuanzhang"]),
     } for dd in daily.values()]
     return json.dumps(out, ensure_ascii=False)
 
