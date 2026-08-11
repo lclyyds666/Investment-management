@@ -53,6 +53,9 @@ class RecalculateTicketLedgersCliTest(unittest.TestCase):
         self.session.rollback.assert_called_once()
         self.session.close.assert_called_once()
 
+    def test_cli_registers_ticket_ledger_foreign_key_target(self):
+        self.assertEqual(cli.User.__tablename__, "sys_user")
+
 
 if __name__ == "__main__":
     unittest.main()

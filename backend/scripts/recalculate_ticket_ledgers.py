@@ -8,6 +8,7 @@ from typing import Sequence
 
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.user import User  # noqa: F401 - registers TicketLedger FK target
 from app.services.ticket_ledger_repair import (
     apply_repair_plan,
     build_repair_plan,
