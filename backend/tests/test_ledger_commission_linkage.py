@@ -5,6 +5,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.services import ledger_calculator as calculator
 from app.api.v1.endpoints import hotel_ledger as hotel_api
 from app.api.v1.endpoints import ticket_ledger as ticket_api
 from app.models.hotel_ledger import HotelLedger
@@ -476,6 +477,54 @@ class CommissionLinkageTest(unittest.TestCase):
             None,
         )
         self.assertEqual(hotel_row.supplier_commission, Decimal("7.25"))
+
+    def test_ticket_commission_uses_explicit_eligible_daily_basis(self):
+        daily_json = json.dumps([
+            {"r": "20111", "s": "20111", "d": "0", "t": "0",
+             "cs": "0", "cd": "0", "ct": "0"},
+            {"r": "97", "s": "100", "d": "-2", "t": "-1",
+             "cs": "100", "cd": "-2", "ct": "-1"},
+        ])
+
+        result = ticket_api.tl_svc.recompute_from_json(
+            daily_json,
+            Decimal("0.91"),
+            Decimal("0.95"),
+            None,
+            Decimal("0.08"),
+            "抖音",
+            scenic_id="fuzhou-ouleb",
+        )
+
+        self.assertEqual(result["supplier_commission"], Decimal("5.00"))
+        self.assertEqual(result["publisher_due"], Decimal("20203.00"))
+
+    def test_manual_commission_is_distributed_only_by_eligible_receipts(self):
+        days = [
+            {"r": "20111", "s": "20111", "cs": "0", "cd": "0", "ct": "0"},
+            {"r": "100", "s": "100", "cs": "100", "cd": "0", "ct": "0"},
+        ]
+
+        distributed, total = calculator._distribute_commission(
+            days, Decimal("10"), Decimal("0.08")
+        )
+
+        self.assertEqual(distributed, [Decimal("0.00"), Decimal("10.00")])
+        self.assertEqual(total, Decimal("10.00"))
+
+    def test_manual_commission_distribution_preserves_rounded_total(self):
+        days = [
+            {"s": "1", "cs": "1"},
+            {"s": "1", "cs": "1"},
+        ]
+
+        distributed, total = calculator._distribute_commission(
+            days, Decimal("0.01"), Decimal("0")
+        )
+
+        self.assertEqual(distributed, [Decimal("0.01"), Decimal("0.00")])
+        self.assertEqual(total, Decimal("0.01"))
+        self.assertEqual(sum(distributed), total)
 
 
 if __name__ == "__main__":

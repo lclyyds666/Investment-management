@@ -50,25 +50,47 @@ def _dec(value) -> Decimal:
         return Decimal("0")
 
 
+def _first_present(day: Mapping, *keys: str):
+    for key in keys:
+        if key in day:
+            return day[key]
+    return 0
+
+
+def _commission_inputs(day: Mapping) -> tuple[Decimal, Decimal, Decimal]:
+    return (
+        _dec(_first_present(day, "commission_shishou", "cs", "shishou", "s")),
+        _dec(_first_present(day, "commission_daren", "cd", "daren", "d")),
+        _dec(_first_present(day, "commission_tuanzhang", "ct", "tuanzhang", "t")),
+    )
+
+
 def _distribute_commission(days: list[dict], commission_override, commission_rate: Decimal):
     rate = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
-    auto = [quantize_money(
-        _dec(d.get("shishou", d.get("s", 0))) * rate
-        + _dec(d.get("daren", d.get("d", 0)))
-        + _dec(d.get("tuanzhang", d.get("t", 0)))
-    ) for d in days]
+    auto = [
+        quantize_money(received * rate + daren + tuanzhang)
+        for received, daren, tuanzhang in map(_commission_inputs, days)
+    ]
     total = quantize_money(sum(auto, Decimal("0")))
     if commission_override is None or abs(_dec(commission_override) - total) < Decimal("0.005"):
         return auto, total
 
     delta = _dec(commission_override) - total
-    received_total = sum((_dec(d.get("shishou", d.get("s", 0))) for d in days), Decimal("0"))
+    received_total = sum((_commission_inputs(day)[0] for day in days), Decimal("0"))
     count = len(days) or 1
     adjusted = []
     for item, day in zip(auto, days):
-        received = _dec(day.get("shishou", day.get("s", 0)))
+        received = _commission_inputs(day)[0]
         share = received / received_total if received_total > 0 else Decimal("1") / count
         adjusted.append(quantize_money(item + delta * share))
+    residual = quantize_money(_dec(commission_override) - sum(adjusted, Decimal("0")))
+    if residual:
+        target = next(
+            (index for index in range(len(days) - 1, -1, -1)
+             if _commission_inputs(days[index])[0] > 0),
+            len(days) - 1,
+        )
+        adjusted[target] = quantize_money(adjusted[target] + residual)
     return adjusted, quantize_money(commission_override)
 
 

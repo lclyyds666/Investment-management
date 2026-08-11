@@ -535,11 +535,20 @@ def _days_from_json(daily_json: str) -> list[dict]:
         return []
     days = []
     for d in raw:
+        commission_inputs = {
+            key: d[key]
+            for key in (
+                "commission_shishou", "commission_daren", "commission_tuanzhang",
+                "cs", "cd", "ct",
+            )
+            if key in d
+        }
         days.append({
             "recv": _num(d.get("r")) or Decimal("0"),
             "shishou": _num(d.get("s")) or Decimal("0"),
             "daren": _num(d.get("d")) or Decimal("0"),
             "tuanzhang": _num(d.get("t")) or Decimal("0"),
+            **commission_inputs,
         })
     return days
 
