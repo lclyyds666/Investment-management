@@ -8,6 +8,11 @@ from typing import Sequence
 
 from app.core.config import settings
 from app.db.session import SessionLocal
+try:
+    import app.models.portal  # noqa: F401
+except ModuleNotFoundError as exc:
+    if exc.name != "app.models.portal":
+        raise
 from app.models.user import User  # noqa: F401 - registers TicketLedger FK target
 from app.services.ticket_ledger_repair import (
     apply_repair_plan,
