@@ -12,6 +12,7 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.ticket_ledger import TicketLedger
+from app.services import scenic_config as scenic_config_svc
 from app.services import ticket_ledger as tl_svc
 
 
@@ -142,6 +143,8 @@ def _period_calculation(
 def plan_repair_row(
     row: TicketLedger,
     platform_info: Mapping[str, Any],
+    *,
+    default_commission_override: Decimal | None = None,
 ) -> RepairPlanItem:
     """Return a repair decision without assigning any ORM attribute."""
     if platform_info.get("platform") != row.platform:
@@ -151,7 +154,9 @@ def plan_repair_row(
         )
 
     old_received = _snapshot_received(row.daily_json or "")
-    old_calc = _recompute(row, row.daily_json or "")
+    old_calc = _recompute(
+        row, row.daily_json or "", default_commission_override
+    )
     protected_supplier_received = not _money_equal(
         row.supplier_received, old_received
     )
@@ -166,7 +171,7 @@ def plan_repair_row(
     )
 
     new_daily_json = str(platform_info["daily_json"])
-    new_calc = _recompute(row, new_daily_json)
+    new_calc = _recompute(row, new_daily_json, default_commission_override)
     supplier_received = _money(
         row.supplier_received
         if protected_supplier_received
@@ -268,6 +273,9 @@ def build_repair_plan(
     for key, group in grouped.items():
         representative = group[0]
         source = sources[key]
+        config = scenic_config_svc.get_effective_config(
+            db, representative.scenic_id
+        )
         parsed = tl_svc.parse_reconciliation(
             source.read_bytes(),
             filename=(
@@ -287,7 +295,7 @@ def build_repair_plan(
                 "commission_rate",
                 tl_svc.DEFAULT_COMMISSION_RATE,
             ),
-            commission_override=None,
+            commission_override=config.ticket_default_commission,
             ticket_product=(
                 representative.ticket_product or tl_svc.DEFAULT_TICKET_PRODUCT
             ),
@@ -302,7 +310,13 @@ def build_repair_plan(
                     f"row {row.id} requires exactly one parsed {row.platform!r} "
                     f"platform result, found {len(matches)}"
                 )
-            items.append(plan_repair_row(row, matches[0]))
+            items.append(
+                plan_repair_row(
+                    row,
+                    matches[0],
+                    default_commission_override=config.ticket_default_commission,
+                )
+            )
     return items
 
 

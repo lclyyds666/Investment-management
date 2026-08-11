@@ -221,6 +221,40 @@ class TicketLedgerRepairPlanningTest(unittest.TestCase):
         self.assertEqual(item.after["jinying_amount"], Decimal("95.88"))
         self.assertEqual(item.after["service_fee"], Decimal("4.08"))
 
+    def test_configured_zero_commission_is_detected_as_automatic(self):
+        row = _automatic_row()
+        old_calc = repair.tl_svc.recompute_from_json(
+            row.daily_json,
+            row.rate_hexiao,
+            row.rate_settle,
+            Decimal("0"),
+            row.commission_rate,
+            row.platform,
+            scenic_id=row.scenic_id,
+        )
+        for field in (
+            "supplier_commission",
+            "publisher_due",
+            "hexiao_amount",
+            "jinying_amount",
+            "service_fee",
+        ):
+            setattr(row, field, old_calc[field])
+
+        item = repair.plan_repair_row(
+            row,
+            _platform_info(),
+            default_commission_override=Decimal("0"),
+        )
+
+        self.assertFalse(item.protected_commission)
+        self.assertFalse(item.protected_hexiao)
+        self.assertFalse(item.protected_jinying)
+        self.assertEqual(item.after["supplier_commission"], Decimal("0.00"))
+        self.assertEqual(item.after["publisher_due"], Decimal("110.00"))
+        self.assertEqual(item.after["hexiao_amount"], Decimal("99.00"))
+        self.assertEqual(item.after["jinying_amount"], Decimal("103.40"))
+
     def test_supplier_received_protection_uses_unrounded_tolerance(self):
         row = _automatic_row()
         row.daily_json = _daily("100.005")
@@ -318,6 +352,9 @@ class TicketLedgerRepairOrchestrationTest(unittest.TestCase):
 
         self.assertEqual(len(items), 2)
         parse.assert_called_once()
+        self.assertEqual(
+            parse.call_args.kwargs["commission_override"], Decimal("0")
+        )
 
     def test_apply_updates_fields_flushes_once_and_groups_period_balances(self):
         period_one_douyin = _automatic_row()
