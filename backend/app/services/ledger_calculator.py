@@ -84,7 +84,7 @@ def _distribute_commission(days: list[dict], commission_override, commission_rat
         share = received / received_total if received_total > 0 else Decimal("1") / count
         adjusted.append(quantize_money(item + delta * share))
     residual = quantize_money(_dec(commission_override) - sum(adjusted, Decimal("0")))
-    if residual:
+    if residual and adjusted:
         target = next(
             (index for index in range(len(days) - 1, -1, -1)
              if _commission_inputs(days[index])[0] > 0),

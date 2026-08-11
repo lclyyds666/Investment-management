@@ -526,6 +526,14 @@ class CommissionLinkageTest(unittest.TestCase):
         self.assertEqual(total, Decimal("0.01"))
         self.assertEqual(sum(distributed), total)
 
+    def test_manual_commission_with_no_days_does_not_raise(self):
+        distributed, total = calculator._distribute_commission(
+            [], Decimal("10"), Decimal("0.08")
+        )
+
+        self.assertEqual(distributed, [])
+        self.assertEqual(total, Decimal("10.00"))
+
 
 if __name__ == "__main__":
     unittest.main()
