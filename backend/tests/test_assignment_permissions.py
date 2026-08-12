@@ -321,15 +321,40 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
             GovernanceScope,
             ExternalAssignment,
         )
-        return {
-            model.__tablename__: tuple(
-                tuple(row)
-                for row in self.db.execute(
-                    select(*model.__table__.columns).order_by(model.id)
+        with self.db.no_autoflush:
+            return {
+                model.__tablename__: tuple(
+                    tuple(row)
+                    for row in self.db.execute(
+                        select(*model.__table__.columns).order_by(model.id)
+                    )
                 )
-            )
-            for model in models
-        }
+                for model in models
+            }
+
+    def test_authorization_state_does_not_flush_pending_rows(self):
+        user = self.add_user("pending-assignment", Role.UNASSIGNED)
+        organization_id = self.db.scalar(
+            select(Organization.id).where(Organization.code == "supplymanagement")
+        )
+        position_id = self.db.scalar(
+            select(Position.id).where(Position.code == "supply.business_handler")
+        )
+        pending_assignment = UserAssignment(
+            user_id=user.id,
+            organization_id=organization_id,
+            position_id=position_id,
+            valid_from=date.today(),
+            status=AssignmentStatus.ACTIVE,
+            source="manual",
+        )
+        self.db.add(pending_assignment)
+
+        state = self.authorization_state()
+
+        self.assertIn(pending_assignment, self.db.new)
+        self.assertIsNone(pending_assignment.id)
+        self.assertEqual(state[UserAssignment.__tablename__], ())
 
     def test_repeat_migration_creates_no_duplicate_assignments(self):
         user = self.add_user("handler", Role.BUSINESS_HANDLER)
