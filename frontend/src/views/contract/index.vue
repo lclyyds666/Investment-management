@@ -559,9 +559,10 @@ function openAction(row, act) {
   actionFormRef.value?.clearValidate?.()
 }
 async function confirmAction() {
-  await actionFormRef.value?.validate()
+  if (actionSaving.value) return
   actionSaving.value = true
   try {
+    await actionFormRef.value?.validate()
     if (action.value === 'approve') {
       await approveContract(actionCurrent.value.id, actionForm.comment)
       ElMessage.success('已通过并附加电子签名')

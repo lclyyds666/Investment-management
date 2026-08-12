@@ -118,7 +118,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Search, Refresh, Download } from '@element-plus/icons-vue'
 import { listAuditLogs, getAuditMeta, fetchAuditExportBlob } from '@/api/audit'
@@ -137,6 +137,7 @@ const reassignmentPage = ref(1)
 const reassignmentPageSize = 10
 const reassignmentLoading = ref(false)
 const reassignmentError = ref('')
+let reassignmentRequestGeneration = 0
 const metaLoading = ref(false)
 const metaError = ref('')
 
@@ -214,18 +215,22 @@ async function loadMeta() {
 }
 
 async function loadReassignmentAudits() {
+  const requestGeneration = ++reassignmentRequestGeneration
+  const requestedPage = reassignmentPage.value
   reassignmentLoading.value = true
   reassignmentError.value = ''
   try {
-    const result = await listReassignmentAudits({ page: reassignmentPage.value, page_size: reassignmentPageSize })
+    const result = await listReassignmentAudits({ page: requestedPage, page_size: reassignmentPageSize })
+    if (requestGeneration !== reassignmentRequestGeneration || requestedPage !== reassignmentPage.value) return
     reassignmentAudits.value = result.items || []
     reassignmentTotal.value = result.total || 0
   } catch {
+    if (requestGeneration !== reassignmentRequestGeneration || requestedPage !== reassignmentPage.value) return
     reassignmentAudits.value = []
     reassignmentTotal.value = 0
     reassignmentError.value = '改派审计加载失败'
   } finally {
-    reassignmentLoading.value = false
+    if (requestGeneration === reassignmentRequestGeneration && requestedPage === reassignmentPage.value) reassignmentLoading.value = false
   }
 }
 
@@ -259,6 +264,8 @@ onMounted(async () => {
   loadReassignmentAudits()
   load()
 })
+
+onUnmounted(() => { reassignmentRequestGeneration += 1 })
 
 defineExpose({ meta, metaLoading, metaError, reassignmentAudits, reassignmentTotal, reassignmentLoading, reassignmentError, onReassignmentPage })
 </script>

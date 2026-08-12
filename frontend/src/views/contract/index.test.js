@@ -27,6 +27,16 @@ vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), 
 
 import ContractView from './index.vue'
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function mountView() {
   return shallowMount(ContractView, {
     global: {
@@ -141,5 +151,23 @@ describe('contract active-task actions', () => {
     expect(wrapper.vm.actionVisible).toBe(false)
     expect(contractApi.listContracts).toHaveBeenCalledTimes(2)
     expect(messages.warning).toHaveBeenCalledWith('该节点已由 王审批 办理')
+  })
+
+  it('sends one action request when validation is still pending', async () => {
+    const validation = deferred()
+    contractApi.approveContract.mockResolvedValue({})
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openAction({ id: 8, active_task: { id: 81 }, can_act: true }, 'approve')
+    const validate = vi.fn(() => validation.promise)
+    wrapper.vm.actionFormRef = { validate }
+
+    const first = wrapper.vm.confirmAction()
+    const second = wrapper.vm.confirmAction()
+    validation.resolve(true)
+    await Promise.all([first, second])
+
+    expect(validate).toHaveBeenCalledTimes(1)
+    expect(contractApi.approveContract).toHaveBeenCalledTimes(1)
   })
 })

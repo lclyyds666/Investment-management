@@ -139,6 +139,24 @@ describe('approval active-task actions', () => {
     expect(messages.warning).toHaveBeenCalledWith('该节点已由 李复核 办理')
   })
 
+  it('sends one action request when validation is still pending', async () => {
+    const validation = deferred()
+    approvalApi.approveForm.mockResolvedValue({})
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openAction({ id: 10, active_task: { id: 101 }, can_act: true }, 'approve')
+    const validate = vi.fn(() => validation.promise)
+    wrapper.vm.actionFormRef = { validate }
+
+    const first = wrapper.vm.confirmAction()
+    const second = wrapper.vm.confirmAction()
+    validation.resolve(true)
+    await Promise.all([first, second])
+
+    expect(validate).toHaveBeenCalledTimes(1)
+    expect(approvalApi.approveForm).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps form details visible and exposes retry when timeline fails', async () => {
     approvalApi.getForm.mockResolvedValue({ id: 10, workflow_instance_id: 100, workflow_version: 2 })
     workflowApi.getWorkflowTimeline.mockRejectedValueOnce(new Error('denied')).mockResolvedValueOnce([])

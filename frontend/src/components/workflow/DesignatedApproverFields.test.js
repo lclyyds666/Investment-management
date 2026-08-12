@@ -29,6 +29,16 @@ const global = { stubs: { ElSelect: SelectStub, ElOption: OptionStub, ElSkeleton
 
 let candidates
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function mountFields(props = {}) {
   return mount(DesignatedApproverFields, {
     props: { workflowCode: 'supply.contract.v2', modelValue: {}, ...props },
@@ -116,6 +126,61 @@ describe('DesignatedApproverFields', () => {
       await flushPromises()
       wrapper.unmount()
     }
+  })
+
+  it('ignores late candidate responses from the previous workflow', async () => {
+    const requests = new Map()
+    api.listWorkflowCandidates.mockImplementation((workflowCode, nodeCode) => {
+      const request = deferred()
+      requests.set(`${workflowCode}:${nodeCode}`, request)
+      return request.promise
+    })
+    const wrapper = mountFields()
+    await wrapper.setProps({ workflowCode: 'supply.payment.v2' })
+
+    requests.get('supply.payment.v2:company_leader').resolve([
+      { user_id: 41, full_name: '付款负责人', organization_name: '供应链公司', position_name: '公司负责人' }
+    ])
+    requests.get('supply.payment.v2:supply_governance_leader').resolve([
+      { user_id: 42, full_name: '付款分管领导', organization_name: '投资集团', position_name: '供应链分管领导' }
+    ])
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="approver-node"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('付款负责人')
+    expect(wrapper.text()).toContain('付款分管领导')
+    expect(wrapper.find('[data-node-code="legal_counsel"]').exists()).toBe(false)
+
+    requests.get('supply.contract.v2:company_leader').resolve(candidateFixture.company_leader)
+    requests.get('supply.contract.v2:legal_counsel').resolve(candidateFixture.legal_counsel)
+    requests.get('supply.contract.v2:supply_governance_leader').resolve(candidateFixture.supply_governance_leader)
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="approver-node"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('付款负责人')
+    expect(wrapper.text()).toContain('付款分管领导')
+    expect(wrapper.text()).not.toContain('王律师')
+  })
+
+  it('applies concurrent retries for different nodes independently', async () => {
+    const wrapper = mountFields()
+    await flushPromises()
+    const companyRetry = deferred()
+    const legalRetry = deferred()
+    api.listWorkflowCandidates.mockImplementation((_workflowCode, nodeCode) => (
+      nodeCode === 'company_leader' ? companyRetry.promise : legalRetry.promise
+    ))
+
+    const companyLoad = wrapper.vm.reloadNode('company_leader')
+    const legalLoad = wrapper.vm.reloadNode('legal_counsel')
+    legalRetry.resolve([{ user_id: 51, full_name: '新法律顾问', organization_name: '律所', position_name: '法律顾问' }])
+    await legalLoad
+    companyRetry.resolve([{ user_id: 52, full_name: '新公司负责人', organization_name: '供应链公司', position_name: '公司负责人' }])
+    await companyLoad
+
+    expect(wrapper.text()).toContain('新法律顾问')
+    expect(wrapper.text()).toContain('新公司负责人')
+    expect(wrapper.text()).not.toContain('候选人加载失败')
   })
 
   it('defensively excludes the submitting user even if the API returns them', async () => {

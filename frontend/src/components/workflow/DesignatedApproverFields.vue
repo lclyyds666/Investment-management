@@ -113,6 +113,9 @@ const errorsByNode = ref({})
 const loading = ref(false)
 const validationError = ref('')
 const invalidNodes = ref(new Set())
+let candidateRequestGeneration = 0
+let candidateLoadGeneration = 0
+const candidateRequestOwners = new Map()
 
 const completedCount = computed(() => nodes.value.filter((node) => selected.value[node.code]).length)
 const isComplete = computed(() => completedCount.value === nodes.value.length && nodes.value.length > 0)
@@ -175,38 +178,57 @@ function retainEligibleSelections(previous) {
 }
 
 async function reloadNode(nodeCode) {
+  const requestGeneration = ++candidateRequestGeneration
+  const workflowCode = props.workflowCode
+  candidateRequestOwners.set(nodeCode, requestGeneration)
   errorsByNode.value = { ...errorsByNode.value, [nodeCode]: undefined }
   try {
-    const candidates = eligibleCandidates(await listWorkflowCandidates(props.workflowCode, nodeCode))
+    const candidates = eligibleCandidates(await listWorkflowCandidates(workflowCode, nodeCode))
+    if (candidateRequestOwners.get(nodeCode) !== requestGeneration || workflowCode !== props.workflowCode) return false
     candidatesByNode.value = { ...candidatesByNode.value, [nodeCode]: candidates }
     const nextErrors = { ...errorsByNode.value }
     delete nextErrors[nodeCode]
     errorsByNode.value = nextErrors
     retainEligibleSelections(selected.value)
+    return true
   } catch (error) {
+    if (candidateRequestOwners.get(nodeCode) !== requestGeneration || workflowCode !== props.workflowCode) return false
     errorsByNode.value = { ...errorsByNode.value, [nodeCode]: error }
+    return false
   }
 }
 
 async function reloadCandidates({ preserve = true } = {}) {
+  const requestGeneration = ++candidateRequestGeneration
+  const loadGeneration = ++candidateLoadGeneration
+  const workflowCode = props.workflowCode
+  const nodeSnapshot = nodes.value.map((node) => ({ ...node }))
+  nodeSnapshot.forEach((node) => candidateRequestOwners.set(node.code, requestGeneration))
   const previous = preserve ? { ...selected.value } : {}
   loading.value = true
   errorsByNode.value = {}
-  const results = await Promise.allSettled(nodes.value.map(async (node) => ({
-    nodeCode: node.code,
-    candidates: eligibleCandidates(await listWorkflowCandidates(props.workflowCode, node.code))
-  })))
-  const nextCandidates = preserve ? { ...candidatesByNode.value } : {}
-  const nextErrors = {}
-  results.forEach((result, index) => {
-    const nodeCode = nodes.value[index].code
-    if (result.status === 'fulfilled') nextCandidates[nodeCode] = result.value.candidates
-    else nextErrors[nodeCode] = result.reason
+  if (!preserve) candidatesByNode.value = {}
+  const results = await Promise.all(nodeSnapshot.map(async (node) => {
+    try {
+      return { status: 'fulfilled', nodeCode: node.code, candidates: eligibleCandidates(await listWorkflowCandidates(workflowCode, node.code)) }
+    } catch (reason) {
+      return { status: 'rejected', nodeCode: node.code, reason }
+    }
+  }))
+  if (loadGeneration !== candidateLoadGeneration || workflowCode !== props.workflowCode) return false
+  const nextCandidates = { ...candidatesByNode.value }
+  const nextErrors = { ...errorsByNode.value }
+  results.forEach((result) => {
+    if (candidateRequestOwners.get(result.nodeCode) !== requestGeneration) return
+    if (result.status === 'fulfilled') {
+      nextCandidates[result.nodeCode] = result.candidates
+      delete nextErrors[result.nodeCode]
+    } else nextErrors[result.nodeCode] = result.reason
   })
   candidatesByNode.value = nextCandidates
   errorsByNode.value = nextErrors
   retainEligibleSelections(previous)
-  loading.value = false
+  if (loadGeneration === candidateLoadGeneration) loading.value = false
   return Object.keys(nextErrors).length === 0
 }
 
