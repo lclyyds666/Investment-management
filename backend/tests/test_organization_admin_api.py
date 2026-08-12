@@ -3,7 +3,12 @@ from datetime import date
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
 
+from app.api.deps import get_current_user
+from app.db.session import get_db
+from app.main import create_app
 from app.core.enums import DataScope, PositionCategory, Role
 from app.db.base import Base
 from app.models.organization import Organization, Position, UserAssignment
@@ -222,3 +227,110 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
 
         self.assertEqual(assignments[0].external_detail.provider_name, "Counsel Firm")
         self.assertEqual(assignments[0].external_detail.service_scopes, ["contract_review"])
+
+
+class OrganizationAdminApiTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
+        self.business_user = User(
+            username="directory-user",
+            full_name="Directory User",
+            hashed_password="test",
+            role=Role.UNASSIGNED,
+        )
+        self.admin = User(
+            username="admin",
+            full_name="Admin",
+            hashed_password="test",
+            role=Role.INFO_MAINTAINER,
+            is_superuser=True,
+        )
+        self.worker = User(
+            username="worker",
+            full_name="Worker",
+            hashed_password="test",
+            role=Role.UNASSIGNED,
+        )
+        self.db.add_all([self.business_user, self.admin, self.worker])
+        self.db.commit()
+        self._assign(self.business_user, "supplymanagement", "supply.business_handler")
+        self.app = create_app()
+        self.app.dependency_overrides[get_db] = lambda: self.db
+        self.current_user = self.business_user
+        self.app.dependency_overrides[get_current_user] = lambda: self.current_user
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.app.dependency_overrides.clear()
+        self.db.close()
+        self.engine.dispose()
+
+    def _assign(self, user: User, organization_code: str, position_code: str) -> None:
+        self.db.add(UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(select(Position.id).where(Position.code == position_code)),
+            valid_from=date(2026, 1, 1),
+        ))
+        self.db.commit()
+
+    def test_business_user_can_read_directory(self):
+        response = self.client.get("/api/v1/organizations/tree")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("username", response.text)
+        self.assertNotIn("signature", response.text)
+
+    def test_business_user_cannot_read_permission_templates(self):
+        response = self.client.get("/api/v1/organizations/permissions")
+        self.assertEqual(response.status_code, 403)
+
+    def test_business_user_cannot_replace_assignments(self):
+        response = self.client.put(
+            f"/api/v1/organizations/users/{self.worker.id}/assignments",
+            json={"assignments": []},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_superuser_can_read_assignment_history(self):
+        self._assign(self.worker, "supplymanagement", "supply.business_handler")
+        self.current_user = self.admin
+
+        response = self.client.get(f"/api/v1/organizations/users/{self.worker.id}/assignments")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["organization"]["code"], "supplymanagement")
+        self.assertIn("source", response.json()[0])
+
+    def test_assignment_conflicts_return_safe_409_details(self):
+        self.current_user = self.admin
+
+        response = self.client.put(
+            f"/api/v1/organizations/users/{self.worker.id}/assignments",
+            json={
+                "assignments": [
+                    {
+                        "organization_code": "supplymanagement",
+                        "position_code": "supply.business_handler",
+                        "valid_from": "2026-01-01",
+                    },
+                    {
+                        "organization_code": "supplymanagement",
+                        "position_code": "supply.company_leader",
+                        "valid_from": "2026-01-01",
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "assignment_workflow_conflict")
