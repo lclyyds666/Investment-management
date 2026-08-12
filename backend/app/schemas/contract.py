@@ -75,6 +75,7 @@ class ContractOut(ContractBase):
     creator_name: str = ""  # 由端点补充（业务经办姓名）
     attachment_name: str = ""  # 合同附件原始文件名（空表示未上传）
     workflow_instance_id: Optional[int] = None
+    workflow_version: Optional[int] = None
     active_task: Optional[dict] = None
     can_act: bool = False
 

@@ -79,7 +79,7 @@
               <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
               <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
               <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
-              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
+              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">退回</el-button>
             </div>
           </template>
         </el-table-column>
@@ -188,10 +188,10 @@
       </template>
     </el-dialog>
 
-    <!-- 通过 / 驳回 -->
+    <!-- 通过 / 退回 -->
     <el-dialog
       v-model="actionVisible"
-      :title="action === 'approve' ? '审批通过 - 审批意见' : '驳回 - 请输入驳回原因'"
+      :title="action === 'approve' ? '审批通过 - 审批意见' : '退回 - 请输入退回原因'"
       width="480px"
     >
       <el-alert
@@ -202,7 +202,7 @@
         <el-form-item prop="comment">
           <el-input
             v-model="actionForm.comment" type="textarea" :rows="4"
-            :placeholder="action === 'approve' ? '请输入审批意见（可选）' : '请输入驳回原因（必填）'"
+            :placeholder="action === 'approve' ? '请输入审批意见（可选）' : '请输入退回原因（必填）'"
           />
         </el-form-item>
       </el-form>
@@ -211,7 +211,7 @@
         <el-button
           :type="action === 'approve' ? 'success' : 'danger'"
           :loading="actionSaving" @click="confirmAction"
-        >确认{{ action === 'approve' ? '通过' : '驳回' }}</el-button>
+        >确认{{ action === 'approve' ? '通过' : '退回' }}</el-button>
       </template>
     </el-dialog>
 
@@ -277,8 +277,9 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <div class="timeline-title">审批流转记录</div>
-        <el-timeline v-if="actions.length">
+        <div class="timeline-title">岗位责任轨道</div>
+        <WorkflowTimeline v-if="detail.workflow_version >= 2" :tasks="workflowTasks" />
+        <el-timeline v-else-if="actions.length">
           <el-timeline-item
             v-for="a in actions" :key="a.id"
             :type="a.action === 'approve' ? 'success' : 'danger'"
@@ -287,7 +288,7 @@
             <div class="tl-row">
               <b>{{ a.role_label }}</b> · {{ a.approver_name }}
               <el-tag size="small" :type="a.action === 'approve' ? 'success' : 'danger'" effect="plain">
-                {{ a.action === 'approve' ? '通过' : '驳回' }}
+                {{ a.action === 'approve' ? '通过' : '退回' }}
               </el-tag>
             </div>
             <div v-if="a.comment" class="tl-comment">{{ a.comment }}</div>
@@ -312,16 +313,18 @@ import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
-import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
+import { canUsePermission } from '@/utils/businessAuthorization'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFields.vue'
+import WorkflowTimeline from '@/components/workflow/WorkflowTimeline.vue'
 import {
   listForms, createForm, updateForm, deleteForm, submitForm,
   uploadFormAttachment, approveForm, rejectForm, listActions,
   proofreadForm, downloadFormPrint, getForm, fetchFormAttachmentBlob
 } from '@/api/approval'
 import { listCustomers } from '@/api/customer'
+import { getWorkflowTimeline } from '@/api/workflow'
 
 const portalStore = usePortalStore()
 const userStore = useUserStore()
@@ -333,11 +336,11 @@ const canSubmit = computed(() => canUsePermission(portalStore, 'supply.approval.
 const canExport = computed(() => canUsePermission(portalStore, 'supply.approval.export'))
 
 function canApprove(row) {
-  return canActOnWorkflow(portalStore, row, 'supply.approval.approve')
+  return Boolean(row.active_task && row.can_act)
 }
 
 function canReturn(row) {
-  return canActOnWorkflow(portalStore, row, 'supply.approval.return')
+  return Boolean(row.active_task && row.can_act)
 }
 
 const loading = ref(false)
@@ -536,7 +539,7 @@ async function confirmSubmit() {
   }
 }
 
-// 通过 / 驳回
+// 通过 / 退回
 const actionVisible = ref(false)
 const actionSaving = ref(false)
 const action = ref('approve')
@@ -545,7 +548,7 @@ const actionFormRef = ref()
 const actionForm = reactive({ comment: '' })
 const actionRules = computed(() => ({
   comment: action.value === 'reject'
-    ? [{ required: true, message: '请输入驳回原因', trigger: 'blur' }]
+    ? [{ required: true, message: '请输入退回原因', trigger: 'blur' }]
     : []
 }))
 function openAction(row, act) {
@@ -564,11 +567,23 @@ async function confirmAction() {
       ElMessage.success('已通过并附加电子签名')
     } else {
       await rejectForm(actionCurrent.value.id, actionForm.comment)
-      ElMessage.success('已驳回')
+      ElMessage.success('已退回')
     }
     badgeStore.refresh() // 审批完成后本人待办数减少，实时刷新角标
     actionVisible.value = false
-    load()
+    await load()
+  } catch (error) {
+    const detail = error.response?.data?.detail
+    if (error.response?.status === 409 && detail?.code === 'task_already_completed') {
+      actionVisible.value = false
+      await load()
+      if (detailVisible.value && detail.value?.id === actionCurrent.value?.id) {
+        await openDetail(actionCurrent.value)
+      }
+      ElMessage.warning(`该节点已由 ${detail.actor || '其他办理人'} 办理`)
+      return
+    }
+    throw error
   } finally {
     actionSaving.value = false
   }
@@ -606,14 +621,21 @@ async function onPrint(row) {
 const detailVisible = ref(false)
 const detail = ref(null)
 const actions = ref([])
+const workflowTasks = ref([])
 async function openDetail(row) {
   detail.value = row
   actions.value = []
+  workflowTasks.value = []
   detailVisible.value = true
   try {
-    const [d, acts] = await Promise.all([getForm(row.id), listActions(row.id)])
+    const d = await getForm(row.id)
+    const [acts, tasks] = await Promise.all([
+      d.workflow_version >= 2 ? Promise.resolve([]) : listActions(row.id),
+      d.workflow_version >= 2 ? getWorkflowTimeline(d.workflow_instance_id) : Promise.resolve([])
+    ])
     detail.value = d
     actions.value = acts
+    workflowTasks.value = tasks
   } catch { /* 忽略 */ }
 }
 

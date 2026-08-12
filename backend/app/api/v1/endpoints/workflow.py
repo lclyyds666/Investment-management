@@ -20,7 +20,7 @@ from app.models.organization import ExternalAssignment, Organization, Position, 
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask, WorkflowTaskAction
 from app.schemas.common import Response
-from app.schemas.workflow import WorkflowTimelineAction
+from app.schemas.workflow import WorkflowTimelineTask
 from app.services.assignment_permissions import PermissionContext, has_permission
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
@@ -118,6 +118,7 @@ def _load_instance(db: Session, instance_id: int) -> WorkflowInstance:
             joinedload(WorkflowInstance.tasks)
             .joinedload(WorkflowTask.actions),
             joinedload(WorkflowInstance.tasks).joinedload(WorkflowTask.node),
+            joinedload(WorkflowInstance.tasks).joinedload(WorkflowTask.designated_user),
         )
     )
     if instance is None:
@@ -170,7 +171,7 @@ def inbox(
 
 @router.get(
     "/instances/{instance_id}/timeline",
-    response_model=Response[list[WorkflowTimelineAction]],
+    response_model=Response[list[WorkflowTimelineTask]],
 )
 def timeline(
     instance_id: int,
@@ -190,33 +191,57 @@ def timeline(
         PermissionContext(company_code="supplymanagement"),
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
-    actions = sorted(
-        (action for task in instance.tasks for action in task.actions),
-        key=lambda item: (item.created_at, item.id),
-    )
+    tasks = sorted(instance.tasks, key=lambda item: (item.sequence, item.id))
+    position_names = dict(db.execute(
+        select(Position.code, Position.name).where(
+            Position.code.in_({task.required_position_code for task in tasks})
+        )
+    ).all())
     return Response.ok([
         {
-            "id": action.id,
-            "task_id": action.task_id,
-            "node_code": action.task.node.code,
-            "node_name": action.task.node.name,
-            "action": action.action,
-            "actor_id": action.actor_id,
-            "actor_name": action.actor_name,
-            "organization_code": action.organization_code,
-            "organization_name": action.organization_name,
-            "position_code": action.position_code,
-            "position_name": action.position_name,
-            "comment": action.comment,
-            "previous_assignee_id": action.previous_assignee_id,
-            "previous_assignee_name": action.previous_assignee_name,
-            "new_assignee_id": action.new_assignee_id,
-            "new_assignee_name": action.new_assignee_name,
-            "reason": action.reason,
-            "returned_to_sequence": action.returned_to_sequence,
-            "created_at": action.created_at,
+            "id": task.id,
+            "sequence": task.sequence,
+            "node_code": task.node.code,
+            "node_name": task.node.name,
+            "mode": task.assignee_mode,
+            "required_position_code": task.required_position_code,
+            "required_position_name": position_names.get(
+                task.required_position_code,
+                task.required_position_code,
+            ),
+            "designated_user": (
+                {"id": task.designated_user.id, "full_name": task.designated_user.full_name}
+                if task.designated_user is not None else None
+            ),
+            "status": task.status,
+            "activated_at": task.activated_at,
+            "completed_at": task.completed_at,
+            "actions": [
+                {
+                    "id": action.id,
+                    "task_id": action.task_id,
+                    "node_code": task.node.code,
+                    "node_name": task.node.name,
+                    "action": action.action,
+                    "actor_id": action.actor_id,
+                    "actor_name": action.actor_name,
+                    "organization_code": action.organization_code,
+                    "organization_name": action.organization_name,
+                    "position_code": action.position_code,
+                    "position_name": action.position_name,
+                    "comment": action.comment,
+                    "previous_assignee_id": action.previous_assignee_id,
+                    "previous_assignee_name": action.previous_assignee_name,
+                    "new_assignee_id": action.new_assignee_id,
+                    "new_assignee_name": action.new_assignee_name,
+                    "reason": action.reason,
+                    "returned_to_sequence": action.returned_to_sequence,
+                    "created_at": action.created_at,
+                }
+                for action in sorted(task.actions, key=lambda item: (item.created_at, item.id))
+            ],
         }
-        for action in actions
+        for task in tasks
     ])
 
 

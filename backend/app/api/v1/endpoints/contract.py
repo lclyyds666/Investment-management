@@ -96,6 +96,9 @@ def _to_out(
 ) -> ContractOut:
     out = ContractOut.model_validate(contract)
     out.creator_name = creator_name
+    if contract.workflow_instance_id is not None:
+        instance = db.get(WorkflowInstance, contract.workflow_instance_id)
+        out.workflow_version = instance.workflow_version.version if instance is not None else None
     task = _active_task_for_contract(db, contract)
     if task is not None:
         out.active_task = {

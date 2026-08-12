@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import WorkflowAction
+from app.core.enums import WorkflowAction, WorkflowAssigneeMode, WorkflowTaskStatus
 
 
 class WorkflowCandidate(BaseModel):
@@ -41,3 +41,23 @@ class WorkflowTimelineAction(BaseModel):
     reason: str
     returned_to_sequence: int | None
     created_at: datetime
+
+
+class WorkflowTimelineUser(BaseModel):
+    id: int
+    full_name: str
+
+
+class WorkflowTimelineTask(BaseModel):
+    id: int
+    sequence: int
+    node_code: str
+    node_name: str
+    mode: WorkflowAssigneeMode
+    required_position_code: str
+    required_position_name: str
+    designated_user: WorkflowTimelineUser | None
+    status: WorkflowTaskStatus
+    activated_at: datetime | None
+    completed_at: datetime | None
+    actions: list[WorkflowTimelineAction]

@@ -70,6 +70,7 @@ class ApprovalFormOut(ApprovalFormBase):
     creator_name: str = ""  # 由端点补充
     created_at: Optional[datetime] = None
     workflow_instance_id: Optional[int] = None
+    workflow_version: Optional[int] = None
     active_task: Optional[dict] = None
     can_act: bool = False
 

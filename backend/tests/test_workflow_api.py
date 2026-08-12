@@ -341,7 +341,14 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(rejected.status_code, 200)
         timeline = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
         self.assertEqual(timeline.status_code, 200)
-        action = next(item for item in timeline.json()["data"] if item["action"] == "return")
+        task_row = next(item for item in timeline.json()["data"] if item["id"] == task.id)
+        action = next(item for item in task_row["actions"] if item["action"] == "return")
+        self.assertEqual(task_row["sequence"], task.sequence)
+        self.assertEqual(task_row["node_name"], task.node.name)
+        self.assertEqual(task_row["mode"], task.assignee_mode.value)
+        self.assertEqual(task_row["required_position_code"], task.required_position_code)
+        self.assertEqual(task_row["designated_user"]["full_name"], self.leader.full_name)
+        self.assertEqual(task_row["status"], "returned")
         self.assertEqual(action["comment"], "补充材料")
         self.assertEqual(action["actor_name"], self.leader.full_name)
 
@@ -450,7 +457,10 @@ class WorkflowApiTest(unittest.TestCase):
         self.current_user = self.handler
         timeline = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
         reassign_snapshot = next(
-            item for item in timeline.json()["data"] if item["action"] == WorkflowAction.REASSIGN.value
+            action
+            for item in timeline.json()["data"]
+            for action in item["actions"]
+            if action["action"] == WorkflowAction.REASSIGN.value
         )
         self.assertIsNone(reassign_snapshot["previous_assignee_id"])
         self.assertIsNone(reassign_snapshot["new_assignee_id"])
@@ -673,7 +683,11 @@ class ContractWorkflowApiTest(unittest.TestCase):
         timeline = self.client.get(
             f"/api/v1/workflows/instances/{self.contract.workflow_instance_id}/timeline"
         ).json()["data"]
-        self.assertEqual(timeline[-1]["action"], "return")
+        self.assertTrue(any(
+            action["action"] == "return"
+            for task_row in timeline
+            for action in task_row["actions"]
+        ))
 
     def test_return_to_handler_resubmits_same_instance_without_designations(self):
         first = self.client.post(

@@ -110,6 +110,9 @@ def _to_out(
 ) -> ApprovalFormOut:
     out = ApprovalFormOut.model_validate(form)
     out.creator_name = creator_name
+    if form.workflow_instance_id is not None:
+        instance = db.get(WorkflowInstance, form.workflow_instance_id)
+        out.workflow_version = instance.workflow_version.version if instance is not None else None
     task = _active_task_for_form(db, form)
     if task is not None:
         out.active_task = {

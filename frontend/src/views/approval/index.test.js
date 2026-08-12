@@ -20,8 +20,9 @@ vi.mock('@/components/workflow/DesignatedApproverFields.vue', () => ({
 vi.mock('@/store/portal', () => ({ usePortalStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/store/user', () => ({ useUserStore: () => ({ userInfo: { id: 99 } }) }))
 vi.mock('@/store/approvalBadge', () => ({ useApprovalBadgeStore: () => badgeStore }))
-vi.mock('@/utils/businessAuthorization', () => ({ canUsePermission: () => true, canActOnWorkflow: () => false }))
-vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: { success: vi.fn(), warning: vi.fn(), error: vi.fn() }, ElMessageBox: { confirm: vi.fn() } }))
+vi.mock('@/utils/businessAuthorization', () => ({ canUsePermission: () => true }))
+const messages = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }))
+vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: messages, ElMessageBox: { confirm: vi.fn() } }))
 
 import ApprovalView from './index.vue'
 
@@ -97,5 +98,33 @@ describe('approval form designated submit', () => {
     expect(approvalApi.submitForm).toHaveBeenCalledTimes(1)
     resolveSubmit({})
     await Promise.all([first, second])
+  })
+})
+
+describe('approval active-task actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    approvalApi.listForms.mockResolvedValue([])
+  })
+
+  it('does not infer action visibility from role, step, or superuser state', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.vm.canApprove({ active_task: { id: 1 }, can_act: true, current_step: 99 })).toBe(true)
+    expect(wrapper.vm.canApprove({ active_task: { id: 2 }, can_act: false, current_step: 0 })).toBe(false)
+    expect(wrapper.vm.canApprove({ active_task: null, can_act: true })).toBe(false)
+  })
+
+  it('closes and refreshes after another actor completes the task', async () => {
+    approvalApi.rejectForm.mockRejectedValueOnce({ response: { status: 409, data: { detail: { code: 'task_already_completed', actor: '李复核' } } } })
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openAction({ id: 9, active_task: { id: 91 }, can_act: true }, 'reject')
+    wrapper.vm.actionForm.comment = '退回补充'
+    wrapper.vm.actionFormRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.confirmAction()
+    expect(wrapper.vm.actionVisible).toBe(false)
+    expect(approvalApi.listForms).toHaveBeenCalledTimes(2)
+    expect(messages.warning).toHaveBeenCalledWith('该节点已由 李复核 办理')
   })
 })

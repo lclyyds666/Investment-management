@@ -46,7 +46,7 @@
               <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
               <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
               <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
-              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
+              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">退回</el-button>
             </div>
           </template>
         </el-table-column>
@@ -210,10 +210,10 @@
       </el-table>
     </el-dialog>
 
-    <!-- 合同审批：通过 / 驳回（法律合同审批，供当前环节审批人操作） -->
+    <!-- 合同审批：通过 / 退回（仅当前 active_task 可办理人操作） -->
     <el-dialog
       v-model="actionVisible"
-      :title="action === 'approve' ? '审批通过 - 审批意见' : '驳回 - 请输入驳回原因'"
+      :title="action === 'approve' ? '审批通过 - 审批意见' : '退回 - 请输入退回原因'"
       width="480px"
     >
       <el-alert
@@ -227,7 +227,7 @@
           <el-input
             v-model="actionForm.comment"
             type="textarea" :rows="4"
-            :placeholder="action === 'approve' ? '请输入审批意见（可选）' : '请输入驳回原因（必填）'"
+            :placeholder="action === 'approve' ? '请输入审批意见（可选）' : '请输入退回原因（必填）'"
           />
         </el-form-item>
       </el-form>
@@ -237,7 +237,7 @@
           :type="action === 'approve' ? 'success' : 'danger'"
           :loading="actionSaving" @click="confirmAction"
         >
-          确认{{ action === 'approve' ? '通过' : '驳回' }}
+          确认{{ action === 'approve' ? '通过' : '退回' }}
         </el-button>
       </template>
     </el-dialog>
@@ -304,7 +304,7 @@
     </el-dialog>
 
     <!-- 合同详情（流转时间轴 + 打印审批单） -->
-    <ContractDetailDrawer v-model="detailVisible" :contract-id="detailId" />
+    <ContractDetailDrawer ref="detailDrawerRef" v-model="detailVisible" :contract-id="detailId" />
   </div>
 </template>
 
@@ -317,7 +317,7 @@ import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { STATUS_META } from '@/constants/business'
-import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
+import { canUsePermission } from '@/utils/businessAuthorization'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
 import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFields.vue'
@@ -343,11 +343,11 @@ const canViewKnowledge = computed(() => canUsePermission(portalStore, 'supply.co
 const canManageKnowledge = computed(() => canUsePermission(portalStore, 'supply.contract.update'))
 
 function canApprove(row) {
-  return canActOnWorkflow(portalStore, row, 'supply.contract.approve')
+  return Boolean(row.active_task && row.can_act)
 }
 
 function canReturn(row) {
-  return canActOnWorkflow(portalStore, row, 'supply.contract.return')
+  return Boolean(row.active_task && row.can_act)
 }
 
 const loading = ref(false)
@@ -539,7 +539,7 @@ async function confirmSubmit() {
   }
 }
 
-// 合同审批：通过 / 驳回
+// 合同审批：通过 / 退回
 const actionVisible = ref(false)
 const actionSaving = ref(false)
 const action = ref('approve')
@@ -548,7 +548,7 @@ const actionFormRef = ref()
 const actionForm = reactive({ comment: '' })
 const actionRules = computed(() => ({
   comment: action.value === 'reject'
-    ? [{ required: true, message: '请输入驳回原因', trigger: 'blur' }]
+    ? [{ required: true, message: '请输入退回原因', trigger: 'blur' }]
     : []
 }))
 function openAction(row, act) {
@@ -567,11 +567,21 @@ async function confirmAction() {
       ElMessage.success('已通过并附加电子签名')
     } else {
       await rejectContract(actionCurrent.value.id, actionForm.comment)
-      ElMessage.success('已驳回')
+      ElMessage.success('已退回')
     }
     badgeStore.refresh() // 审批完成后本人待办数减少，实时刷新角标
     actionVisible.value = false
-    load()
+    await load()
+  } catch (error) {
+    const detail = error.response?.data?.detail
+    if (error.response?.status === 409 && detail?.code === 'task_already_completed') {
+      actionVisible.value = false
+      await load()
+      if (detailVisible.value) await detailDrawerRef.value?.reload?.()
+      ElMessage.warning(`该节点已由 ${detail.actor || '其他办理人'} 办理`)
+      return
+    }
+    throw error
   } finally {
     actionSaving.value = false
   }
@@ -649,6 +659,7 @@ async function downloadContractAttachment(row) {
 // 详情抽屉
 const detailVisible = ref(false)
 const detailId = ref(null)
+const detailDrawerRef = ref()
 function openDetail(row) {
   detailId.value = row.id
   detailVisible.value = true

@@ -5,7 +5,7 @@ const contractApi = vi.hoisted(() => ({
   listContracts: vi.fn(), createContract: vi.fn(), updateContract: vi.fn(), deleteContract: vi.fn(), submitContract: vi.fn(),
   uploadContractAttachment: vi.fn(), approveContract: vi.fn(), rejectContract: vi.fn(), aiReviewContract: vi.fn(), fetchContractAttachmentBlob: vi.fn()
 }))
-const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])) }))
+const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowTimeline: vi.fn() }))
 const badgeStore = vi.hoisted(() => ({ refresh: vi.fn() }))
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/customer', () => ({ listCustomers: vi.fn(() => Promise.resolve([])) }))
@@ -21,8 +21,9 @@ vi.mock('@/components/workflow/DesignatedApproverFields.vue', () => ({
 vi.mock('@/store/portal', () => ({ usePortalStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/store/user', () => ({ useUserStore: () => ({ userInfo: { id: 99 } }) }))
 vi.mock('@/store/approvalBadge', () => ({ useApprovalBadgeStore: () => badgeStore }))
-vi.mock('@/utils/businessAuthorization', () => ({ canUsePermission: () => true, canActOnWorkflow: () => false }))
-vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: { success: vi.fn(), warning: vi.fn(), error: vi.fn() }, ElMessageBox: { confirm: vi.fn() } }))
+vi.mock('@/utils/businessAuthorization', () => ({ canUsePermission: () => true }))
+const messages = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }))
+vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: messages, ElMessageBox: { confirm: vi.fn() } }))
 
 import ContractView from './index.vue'
 
@@ -112,5 +113,33 @@ describe('contract designated submit', () => {
     expect(contractApi.submitContract).toHaveBeenCalledTimes(1)
     resolveSubmit({})
     await Promise.all([first, second])
+  })
+})
+
+describe('contract active-task actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    contractApi.listContracts.mockResolvedValue([])
+  })
+
+  it('shows actions only from active_task and can_act, including shared and designated tasks', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.vm.canApprove({ active_task: { mode: 'shared_position' }, can_act: true })).toBe(true)
+    expect(wrapper.vm.canApprove({ active_task: { mode: 'designated_user', designated_user: { full_name: '指定领导' } }, can_act: false })).toBe(false)
+    expect(wrapper.vm.canApprove({ active_task: { mode: 'designated_user', designated_user: { full_name: '指定领导' } }, can_act: true })).toBe(true)
+    expect(wrapper.vm.canApprove({ active_task: null, can_act: true })).toBe(false)
+  })
+
+  it('closes and refreshes after a completed-task conflict', async () => {
+    contractApi.approveContract.mockRejectedValueOnce({ response: { status: 409, data: { detail: { code: 'task_already_completed', actor: '王审批' } } } })
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openAction({ id: 7, active_task: { id: 71 }, can_act: true }, 'approve')
+    wrapper.vm.actionFormRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.confirmAction()
+    expect(wrapper.vm.actionVisible).toBe(false)
+    expect(contractApi.listContracts).toHaveBeenCalledTimes(2)
+    expect(messages.warning).toHaveBeenCalledWith('该节点已由 王审批 办理')
   })
 })

@@ -55,15 +55,9 @@
         <el-descriptions-item label="备注" :span="2">{{ contract.remark || '无' }}</el-descriptions-item>
       </el-descriptions>
 
-      <!-- 流转进度 -->
-      <h4 class="section-title"><el-icon><Guide /></el-icon> 审批流转进度（{{ APPROVAL_CHAIN.length }} 级）</h4>
-      <el-steps :active="stepsActive" align-center :process-status="processStatus" finish-status="success" class="chain-steps">
-        <el-step v-for="(r, i) in APPROVAL_CHAIN" :key="r" :title="roleLabel(r)" />
-      </el-steps>
-
-      <!-- 流转时间轴（审计日志 + 签章） -->
-      <h4 class="section-title"><el-icon><Clock /></el-icon> 合规审计日志</h4>
-      <el-timeline class="flow-timeline">
+      <h4 class="section-title"><el-icon><Guide /></el-icon> 岗位责任轨道</h4>
+      <WorkflowTimeline v-if="contract.workflow_version >= 2" :tasks="workflowTasks" />
+      <el-timeline v-else class="flow-timeline">
         <el-timeline-item
           v-for="a in approvals"
           :key="a.id"
@@ -75,7 +69,7 @@
             <div class="flow-node-main">
               <span class="flow-role">{{ a.role_label }}</span>
               <el-tag :type="a.action === 'reject' ? 'danger' : 'success'" size="small" effect="plain">
-                {{ a.action === 'reject' ? '驳回' : '通过' }}
+                {{ a.action === 'reject' ? '退回' : '通过' }}
               </el-tag>
               <span class="flow-approver">{{ a.approver_name }}</span>
             </div>
@@ -92,21 +86,25 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Printer, Clock, Guide, Document, View, Download } from '@element-plus/icons-vue'
+import { Printer, Guide, Document, View, Download } from '@element-plus/icons-vue'
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
-import { APPROVAL_CHAIN, STATUS_META, roleLabel } from '@/constants/business'
+import { getWorkflowTimeline } from '@/api/workflow'
+import { STATUS_META } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
+import WorkflowTimeline from '@/components/workflow/WorkflowTimeline.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   contractId: { type: [Number, String], default: null }
 })
 defineEmits(['update:modelValue'])
+defineExpose({ reload: load })
 
 const loading = ref(false)
 const contract = ref(null)
 const approvals = ref([])
+const workflowTasks = ref([])
 const docLoading = ref(false)
 
 const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) : ''))
@@ -131,15 +129,6 @@ async function previewAttachment() {
   }
 }
 
-const stepsActive = computed(() => {
-  const c = contract.value
-  if (!c) return 0
-  if (c.status === 'approved') return APPROVAL_CHAIN.length
-  if (c.status === 'draft') return 0
-  return c.current_step // pending / rejected 停留在当前环节
-})
-const processStatus = computed(() => (contract.value?.status === 'rejected' ? 'error' : 'process'))
-
 function fmt(t) {
   if (!t) return ''
   return String(t).replace('T', ' ').slice(0, 19)
@@ -153,12 +142,14 @@ async function load() {
   if (!props.contractId) return
   loading.value = true
   try {
-    const [c, aps] = await Promise.all([
-      getContract(props.contractId),
-      listApprovals(props.contractId)
+    const c = await getContract(props.contractId)
+    const [aps, tasks] = await Promise.all([
+      c.workflow_version >= 2 ? Promise.resolve([]) : listApprovals(props.contractId),
+      c.workflow_version >= 2 ? getWorkflowTimeline(c.workflow_instance_id) : Promise.resolve([])
     ])
     contract.value = c
     approvals.value = aps
+    workflowTasks.value = tasks
   } finally {
     loading.value = false
   }
@@ -211,10 +202,6 @@ watch(
   font-size: 15px;
   color: var(--el-text-color-primary);
   .el-icon { color: var(--el-color-primary); }
-}
-.chain-steps {
-  margin-bottom: 8px;
-  :deep(.el-step__title) { font-size: 12px; }
 }
 .flow-timeline {
   padding-left: 4px;
