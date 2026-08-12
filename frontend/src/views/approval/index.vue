@@ -165,6 +165,28 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="submitVisible"
+      :title="`提交${submitCurrent?.form_type_label || '审批单'}审批`"
+      width="680px"
+      top="6vh"
+      :close-on-click-modal="!submitSaving"
+      @closed="resetSubmitDialog"
+    >
+      <DesignatedApproverFields
+        v-if="submitCurrent"
+        ref="submitFieldsRef"
+        v-model="selectedApprovers"
+        :workflow-code="submitWorkflowCode"
+      />
+      <template #footer>
+        <el-button :disabled="submitSaving" @click="submitVisible = false">取消</el-button>
+        <el-button data-testid="confirm-submit" type="primary" :loading="submitSaving" @click="confirmSubmit">
+          确认提交
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 通过 / 驳回 -->
     <el-dialog
       v-model="actionVisible"
@@ -291,6 +313,7 @@ import { STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
 import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
+import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFields.vue'
 import {
   listForms, createForm, updateForm, deleteForm, submitForm,
   uploadFormAttachment, approveForm, rejectForm, listActions,
@@ -452,11 +475,55 @@ function onFileChange(file) {
   pickedFile.value = raw
 }
 
-async function onSubmit(row) {
-  await submitForm(row.id)
+const submitVisible = ref(false)
+const submitSaving = ref(false)
+const submitCurrent = ref(null)
+const submitFieldsRef = ref()
+const selectedApprovers = ref({})
+const submitWorkflowCode = computed(() => (
+  submitCurrent.value?.form_type === 'payment' ? 'supply.payment.v2' : 'supply.business.v2'
+))
+
+function isHandlerResubmit(row) {
+  return Boolean(row.workflow_instance_id && row.active_task?.node_code === 'handler')
+}
+
+function resetSubmitDialog() {
+  submitCurrent.value = null
+  selectedApprovers.value = {}
+}
+
+async function finishSubmit(row, payload) {
+  await submitForm(row.id, payload)
   ElMessage.success('已提交审批，进入审批流')
   load()
   badgeStore.refresh() // 提交后可能轮到下一环节角色，实时刷新角标
+}
+
+async function onSubmit(row) {
+  if (isHandlerResubmit(row)) {
+    await finishSubmit(row)
+    return
+  }
+  submitCurrent.value = row
+  selectedApprovers.value = {}
+  submitVisible.value = true
+}
+
+async function confirmSubmit() {
+  if (!await submitFieldsRef.value?.validate()) return
+  submitSaving.value = true
+  try {
+    await finishSubmit(submitCurrent.value, { designated_users: selectedApprovers.value })
+    submitVisible.value = false
+  } catch (error) {
+    if (error.response?.status === 422) {
+      await submitFieldsRef.value?.reloadCandidates({ preserve: true })
+      ElMessage.warning('审批人任职信息已变化，请核对更新后的候选人后重试')
+    }
+  } finally {
+    submitSaving.value = false
+  }
 }
 
 // 通过 / 驳回

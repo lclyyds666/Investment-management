@@ -26,8 +26,8 @@ export function deleteContract(id) {
 }
 
 /** 业务经办提交审批（自动完成第 0 级并附签名，流入审批中心） */
-export function submitContract(id) {
-  return request.post(`/contracts/${id}/submit`)
+export function submitContract(id, data) {
+  return request.post(`/contracts/${id}/submit`, data)
 }
 
 /** 当前环节角色：逐级通过（自动附加电子签章） */

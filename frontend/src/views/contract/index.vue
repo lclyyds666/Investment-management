@@ -156,6 +156,27 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="submitVisible"
+      title="提交合同审批"
+      width="680px"
+      top="6vh"
+      :close-on-click-modal="!submitSaving"
+      @closed="resetSubmitDialog"
+    >
+      <DesignatedApproverFields
+        ref="submitFieldsRef"
+        v-model="selectedApprovers"
+        workflow-code="supply.contract.v2"
+      />
+      <template #footer>
+        <el-button :disabled="submitSaving" @click="submitVisible = false">取消</el-button>
+        <el-button data-testid="confirm-submit" type="primary" :loading="submitSaving" @click="confirmSubmit">
+          确认提交
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 合同台账 -->
     <el-dialog v-model="ledgerVisible" title="合同台账" width="92%" top="5vh">
       <div class="ledger-toolbar">
@@ -296,6 +317,7 @@ import { STATUS_META } from '@/constants/business'
 import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
+import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFields.vue'
 import {
   listContracts, createContract, updateContract, deleteContract, submitContract,
   uploadContractAttachment, approveContract, rejectContract, aiReviewContract,
@@ -458,11 +480,52 @@ function onFileChange(file) {
   pickedFile.value = raw
 }
 
-async function onSubmit(row) {
-  await submitContract(row.id)
+const submitVisible = ref(false)
+const submitSaving = ref(false)
+const submitCurrent = ref(null)
+const submitFieldsRef = ref()
+const selectedApprovers = ref({})
+
+function isHandlerResubmit(row) {
+  return Boolean(row.workflow_instance_id && row.active_task?.node_code === 'handler')
+}
+
+function resetSubmitDialog() {
+  submitCurrent.value = null
+  selectedApprovers.value = {}
+}
+
+async function finishSubmit(row, payload) {
+  await submitContract(row.id, payload)
   ElMessage.success('已提交审批，合同进入审批流')
   load()
   badgeStore.refresh() // 提交后可能轮到下一环节角色，实时刷新角标
+}
+
+async function onSubmit(row) {
+  if (isHandlerResubmit(row)) {
+    await finishSubmit(row)
+    return
+  }
+  submitCurrent.value = row
+  selectedApprovers.value = {}
+  submitVisible.value = true
+}
+
+async function confirmSubmit() {
+  if (!await submitFieldsRef.value?.validate()) return
+  submitSaving.value = true
+  try {
+    await finishSubmit(submitCurrent.value, { designated_users: selectedApprovers.value })
+    submitVisible.value = false
+  } catch (error) {
+    if (error.response?.status === 422) {
+      await submitFieldsRef.value?.reloadCandidates({ preserve: true })
+      ElMessage.warning('审批人任职信息已变化，请核对更新后的候选人后重试')
+    }
+  } finally {
+    submitSaving.value = false
+  }
 }
 
 // 合同审批：通过 / 驳回

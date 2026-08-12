@@ -33,8 +33,8 @@ export function deleteForm(id) {
 }
 
 /** 业务经办提交审批（自动完成第 0 级并附签名） */
-export function submitForm(id) {
-  return request.post(`/approval-forms/${id}/submit`)
+export function submitForm(id, data) {
+  return request.post(`/approval-forms/${id}/submit`, data)
 }
 
 /** 当前环节角色：逐级通过（自动附加电子签章） */
