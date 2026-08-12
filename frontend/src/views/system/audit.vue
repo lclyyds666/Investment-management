@@ -1,5 +1,16 @@
 <template>
   <div class="audit-page">
+    <section class="reassignment-audits" data-testid="reassignment-audits">
+      <div class="reassignment-heading"><div><small>审批治理</small><h3>改派审计</h3></div><span>{{ reassignmentAudits.length }} 条记录</span></div>
+      <div v-if="reassignmentAudits.length" class="audit-track">
+        <article v-for="entry in reassignmentAudits" :key="entry.id" class="reassignment-entry">
+          <div class="audit-time">{{ fmtTime(entry.created_at) }}</div>
+          <div class="audit-change"><strong>{{ entry.old_assignee_name || '原办理人' }} <b>→</b> {{ entry.new_assignee_name }}</strong><span>{{ entry.required_position_name || entry.required_position_code }}</span></div>
+          <div class="audit-reason"><span>操作人 {{ entry.operator_name }}</span><p>{{ entry.reason }}</p></div>
+        </article>
+      </div>
+      <el-empty v-else :image-size="42" description="暂无改派审计" />
+    </section>
     <el-card shadow="never">
       <template #header>
         <div class="hdr">
@@ -109,12 +120,14 @@ import { Document, Search, Refresh, Download } from '@element-plus/icons-vue'
 import { listAuditLogs, getAuditMeta, fetchAuditExportBlob } from '@/api/audit'
 import { roleLabel } from '@/constants/business'
 import { downloadBlob } from '@/utils/file'
+import { listReassignmentAudits } from '@/api/workflow'
 
 const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const meta = reactive({ actions: [], modules: [] })
 const dateRange = ref([])
+const reassignmentAudits = ref([])
 
 const filters = reactive({
   keyword: '', module: '', action: '', status: '', method: '',
@@ -196,13 +209,27 @@ async function onExport() {
 }
 
 onMounted(async () => {
-  try { const m = await getAuditMeta(); meta.actions = m.actions || []; meta.modules = m.modules || [] } catch { /* 忽略 */ }
+  try { const [m, audits] = await Promise.all([getAuditMeta(), listReassignmentAudits()]); meta.actions = m.actions || []; meta.modules = m.modules || []; reassignmentAudits.value = audits || [] } catch { /* 忽略 */ }
   load()
 })
 </script>
 
 <style scoped lang="scss">
 .audit-page { padding: 4px; }
+.reassignment-audits { margin-bottom: 14px; padding: 16px; border: 1px solid var(--surface-border); border-top: 3px solid var(--brand-vermilion); background: var(--el-bg-color); }
+.reassignment-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reassignment-heading small { color: var(--brand-vermilion); font-weight: 700; }
+.reassignment-heading h3 { margin: 3px 0 0; }
+.reassignment-heading > span { color: var(--el-text-color-secondary); font-size: 12px; }
+.audit-track { margin-top: 13px; border-left: 1px solid var(--el-border-color); }
+.reassignment-entry { display: grid; grid-template-columns: 150px minmax(180px, .8fr) minmax(240px, 1.2fr); gap: 16px; position: relative; padding: 10px 12px 10px 18px; }
+.reassignment-entry::before { content: ''; position: absolute; left: -5px; top: 15px; width: 8px; height: 8px; border: 1px solid var(--brand-vermilion); border-radius: 50%; background: var(--el-bg-color); }
+.audit-time { color: var(--el-text-color-placeholder); font: 12px/1.5 'Consolas', monospace; }
+.audit-change strong, .audit-change span, .audit-reason span { display: block; }
+.audit-change strong { font-size: 13px; }
+.audit-change strong b { margin: 0 7px; color: var(--brand-vermilion); }
+.audit-change span, .audit-reason span { margin-top: 3px; color: var(--el-text-color-secondary); font-size: 12px; }
+.audit-reason p { margin: 3px 0 0; font-size: 13px; }
 .hdr {
   display: flex;
   align-items: baseline;
@@ -221,4 +248,5 @@ onMounted(async () => {
 .change-tags em { color: var(--el-text-color-placeholder); font-style: normal; }
 .mono { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
+@media (max-width: 760px) { .reassignment-entry { grid-template-columns: 1fr; gap: 5px; } }
 </style>

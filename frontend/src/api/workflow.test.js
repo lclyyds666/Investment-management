@@ -9,6 +9,8 @@ import {
   listMyWorkflowTasks,
   listWorkflowCandidates,
   reassignWorkflowTask,
+  listAwaitingReassignmentTasks,
+  listReassignmentAudits,
   rejectWorkflowTask
 } from './workflow'
 
@@ -22,8 +24,12 @@ describe('workflow api', () => {
     approveWorkflowTask(51, '同意')
     rejectWorkflowTask(52, '补充资料')
     reassignWorkflowTask(53, 12, '任职调整')
+    listAwaitingReassignmentTasks()
+    listReassignmentAudits()
 
     expect(request.get).toHaveBeenNthCalledWith(1, '/workflows/candidates', { params: { workflow_code: 'supply.contract.v2', node_code: 'company_leader' } })
+    expect(request.get).toHaveBeenCalledWith('/workflows/awaiting-reassignment')
+    expect(request.get).toHaveBeenCalledWith('/workflows/reassignment-audits')
     expect(request.get).toHaveBeenNthCalledWith(2, '/workflows/my-tasks', { params: { target_type: 'contract' } })
     expect(request.get).toHaveBeenNthCalledWith(3, '/workflows/instances/41/timeline')
     expect(request.post).toHaveBeenNthCalledWith(1, '/workflows/tasks/51/approve', { comment: '同意' })

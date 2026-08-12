@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `wf_task` (
   `sequence` INT NOT NULL,
   `status` VARCHAR(24) NOT NULL DEFAULT 'pending',
   `required_position_code` VARCHAR(96) NOT NULL,
+  `required_position_name` VARCHAR(128) NOT NULL DEFAULT '',
   `assignee_mode` VARCHAR(24) NOT NULL,
   `designated_user_id` INT NULL,
   `designated_assignment_id` INT NULL,
@@ -106,6 +107,18 @@ CREATE TABLE IF NOT EXISTS `wf_task` (
   CONSTRAINT `fk_workflow_task_designated_user` FOREIGN KEY (`designated_user_id`) REFERENCES `sys_user` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_workflow_task_designated_assignment` FOREIGN KEY (`designated_assignment_id`) REFERENCES `sys_user_assignment` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @ddl = IF(
+  EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'wf_task' AND column_name = 'required_position_name'),
+  'SELECT 1',
+  'ALTER TABLE `wf_task` ADD COLUMN `required_position_name` VARCHAR(128) NOT NULL DEFAULT '''' AFTER `required_position_code`'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE `wf_task` task
+JOIN `sys_position` position ON position.code = task.required_position_code
+SET task.required_position_name = position.name
+WHERE task.required_position_name = '';
 
 CREATE TABLE IF NOT EXISTS `wf_task_action` (
   `id` INT NOT NULL AUTO_INCREMENT,

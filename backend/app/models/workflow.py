@@ -175,6 +175,7 @@ class WorkflowTask(Base):
         nullable=False,
     )
     required_position_code: Mapped[str] = mapped_column(String(96), nullable=False)
+    required_position_name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     assignee_mode: Mapped[WorkflowAssigneeMode] = mapped_column(
         enum_column(WorkflowAssigneeMode, 24), nullable=False
     )

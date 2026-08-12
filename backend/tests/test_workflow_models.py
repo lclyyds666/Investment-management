@@ -77,6 +77,8 @@ class WorkflowModelContractTest(unittest.TestCase):
         self.assertTrue(columns.new_assignee_name.nullable)
         self.assertEqual(columns.previous_assignee_name.type.length, 128)
         self.assertEqual(columns.new_assignee_name.type.length, 128)
+        self.assertEqual(WorkflowTask.__table__.c.required_position_name.type.length, 128)
+        self.assertFalse(WorkflowTask.__table__.c.required_position_name.nullable)
 
     def test_business_models_keep_legacy_fields_and_add_links(self):
         self.assertTrue({"status", "current_step", "workflow_instance_id"}.issubset(Contract.__table__.columns.keys()))

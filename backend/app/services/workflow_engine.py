@@ -271,9 +271,18 @@ def eligible_designated_users(
             {"workflow_code": workflow_code, "node_code": node_code},
         )
 
+    return eligible_users_for_position(db, node.position_code, on_date, exclude_user_id)
+
+
+def eligible_users_for_position(
+    db: Session,
+    position_code: str,
+    on_date: date,
+    exclude_user_id: int | None = None,
+) -> list[WorkflowCandidate]:
     candidates: list[WorkflowCandidate] = []
     seen_users: set[int] = set()
-    for assignment in _active_assignments(db, {node.position_code}, on_date):
+    for assignment in _active_assignments(db, {position_code}, on_date):
         if (
             assignment.user_id == exclude_user_id
             or assignment.user_id in seen_users
@@ -685,6 +694,9 @@ def _start_workflow(
     db.flush()
 
     tasks: list[WorkflowTask] = []
+    position_names = dict(db.execute(select(Position.code, Position.name).where(
+        Position.code.in_({node.position_code for node in nodes})
+    )).all())
     for node in nodes:
         selected_assignment = selected_assignments.get(node.code)
         if node.auto_complete_on_submit:
@@ -699,6 +711,7 @@ def _start_workflow(
             sequence=node.sequence,
             status=task_status,
             required_position_code=node.position_code,
+            required_position_name=position_names.get(node.position_code, node.position_code),
             assignee_mode=node.assignee_mode,
             designated_user_id=(selected_assignment.user_id if selected_assignment else None),
             designated_assignment_id=(selected_assignment.id if selected_assignment else None),
@@ -911,6 +924,9 @@ def _materialize_legacy_workflow(
     )
     db.add(instance)
     db.flush()
+    position_names = dict(db.execute(select(Position.code, Position.name).where(
+        Position.code.in_({node.position_code for node in nodes})
+    )).all())
     for node in nodes:
         selected_assignment = selected_assignments.get(node.code)
         if node.sequence < current_sequence:
@@ -925,6 +941,7 @@ def _materialize_legacy_workflow(
             sequence=node.sequence,
             status=task_status,
             required_position_code=node.position_code,
+            required_position_name=position_names.get(node.position_code, node.position_code),
             assignee_mode=node.assignee_mode,
             designated_user_id=(selected_assignment.user_id if selected_assignment else None),
             designated_assignment_id=(selected_assignment.id if selected_assignment else None),

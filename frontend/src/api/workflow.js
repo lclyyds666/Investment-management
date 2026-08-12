@@ -1,9 +1,20 @@
 import request from './request'
 
 export function listWorkflowCandidates(workflowCode, nodeCode) {
+  if (typeof workflowCode === 'object') {
+    return request.get('/workflows/candidates', { params: { task_id: workflowCode.taskId } })
+  }
   return request.get('/workflows/candidates', {
     params: { workflow_code: workflowCode, node_code: nodeCode }
   })
+}
+
+export function listAwaitingReassignmentTasks() {
+  return request.get('/workflows/awaiting-reassignment')
+}
+
+export function listReassignmentAudits() {
+  return request.get('/workflows/reassignment-audits')
 }
 
 export function listMyWorkflowTasks(targetType) {

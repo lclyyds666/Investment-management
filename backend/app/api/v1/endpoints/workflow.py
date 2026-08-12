@@ -27,8 +27,10 @@ from app.services.workflow_engine import (
     WorkflowValidationError,
     complete_task,
     eligible_designated_users,
+    eligible_users_for_position,
     my_active_tasks,
     project_contract_action,
+    refresh_invalid_designated_tasks,
 )
 
 
@@ -128,15 +130,54 @@ def _load_instance(db: Session, instance_id: int) -> WorkflowInstance:
 
 @router.get("/candidates", response_model=Response[list[dict]])
 def candidates(
-    workflow_code: str = Query(..., min_length=1),
-    node_code: str = Query(..., min_length=1),
+    workflow_code: str | None = Query(None, min_length=1),
+    node_code: str | None = Query(None, min_length=1),
+    task_id: int | None = Query(None, ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if task_id is not None:
+        if not current_user.is_superuser:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        task = db.scalar(
+            select(WorkflowTask)
+            .where(WorkflowTask.id == task_id)
+            .options(
+                joinedload(WorkflowTask.instance).joinedload(WorkflowInstance.definition),
+                joinedload(WorkflowTask.node),
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow task not found")
+        result = eligible_users_for_position(
+            db,
+            task.required_position_code,
+            date.today(),
+            exclude_user_id=task.designated_user_id,
+        )
+    if task_id is not None:
+        participant_ids = set(db.scalars(
+            select(WorkflowTask.designated_user_id).where(
+                WorkflowTask.instance_id == task.instance_id,
+                WorkflowTask.id != task.id,
+                WorkflowTask.designated_user_id.is_not(None),
+            )
+        ).all())
+        participant_ids.update(db.scalars(
+            select(WorkflowTaskAction.actor_id)
+            .join(WorkflowTask, WorkflowTaskAction.task_id == WorkflowTask.id)
+            .where(WorkflowTask.instance_id == task.instance_id, WorkflowTask.id != task.id)
+        ).all())
+        participant_ids.add(task.instance.submitted_by)
+        return Response.ok([
+            item.model_dump() for item in result if item.user_id not in participant_ids
+        ])
+    if not workflow_code or not node_code:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="workflow_code and node_code or task_id are required")
     permission_code = SUBMIT_PERMISSION_BY_WORKFLOW.get(workflow_code)
     if permission_code is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow not found")
-    if not has_permission(
+    if task_id is None and not has_permission(
         db,
         current_user,
         permission_code,
@@ -154,6 +195,80 @@ def candidates(
     except WorkflowValidationError as error:
         raise _workflow_error(error) from error
     return Response.ok([item.model_dump() for item in result])
+
+
+def _invalidation_reason(task: WorkflowTask) -> str:
+    assignment = task.designated_assignment
+    if task.designated_user is None or not task.designated_user.is_active:
+        return "原办理人账号已停用"
+    if assignment is None:
+        return "原办理人的岗位任职已移除"
+    if assignment.status != AssignmentStatus.ACTIVE:
+        return "原办理人的岗位任职已停用"
+    if assignment.valid_until is not None and assignment.valid_until < date.today():
+        return "原办理人的岗位任职已过期"
+    return "原办理人的岗位任职已失效"
+
+
+@router.get("/awaiting-reassignment", response_model=Response[list[dict]])
+def awaiting_reassignment(
+    _: User = Depends(require_superuser),
+    db: Session = Depends(get_db),
+):
+    refresh_invalid_designated_tasks(db)
+    db.commit()
+    tasks = db.scalars(
+        select(WorkflowTask)
+        .where(WorkflowTask.status == WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+        .options(
+            joinedload(WorkflowTask.instance),
+            joinedload(WorkflowTask.node),
+            joinedload(WorkflowTask.designated_user),
+            joinedload(WorkflowTask.designated_assignment),
+        )
+        .order_by(WorkflowTask.activated_at, WorkflowTask.id)
+    ).all()
+    return Response.ok([{
+        "id": task.id,
+        "instance_id": task.instance_id,
+        "target_type": task.instance.target_type,
+        "target_id": task.instance.target_id,
+        "target_title": _target_title(db, task.instance.target_type, task.instance.target_id),
+        "node_code": task.node.code,
+        "node_name": task.node.name,
+        "previous_assignee": (
+            {"id": task.designated_user.id, "full_name": task.designated_user.full_name}
+            if task.designated_user is not None else None
+        ),
+        "invalidation_reason": _invalidation_reason(task),
+        "activated_at": task.activated_at,
+        "required_position_code": task.required_position_code,
+        "required_position_name": task.required_position_name or task.required_position_code,
+    } for task in tasks])
+
+
+@router.get("/reassignment-audits", response_model=Response[list[dict]])
+def reassignment_audits(
+    _: User = Depends(require_superuser),
+    db: Session = Depends(get_db),
+):
+    actions = db.scalars(
+        select(WorkflowTaskAction)
+        .where(WorkflowTaskAction.action == WorkflowAction.REASSIGN)
+        .options(joinedload(WorkflowTaskAction.task))
+        .order_by(WorkflowTaskAction.created_at.desc(), WorkflowTaskAction.id.desc())
+    ).all()
+    return Response.ok([{
+        "id": action.id,
+        "task_id": action.task_id,
+        "old_assignee_name": action.previous_assignee_name,
+        "new_assignee_name": action.new_assignee_name,
+        "required_position_code": action.task.required_position_code,
+        "required_position_name": action.task.required_position_name or action.task.required_position_code,
+        "operator_name": action.actor_name,
+        "reason": action.reason or action.comment,
+        "created_at": action.created_at,
+    } for action in actions])
 
 
 @router.get("/my-tasks", response_model=Response[list[dict]])
@@ -199,11 +314,6 @@ def timeline(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     tasks = sorted(instance.tasks, key=lambda item: (item.sequence, item.id))
-    position_names = dict(db.execute(
-        select(Position.code, Position.name).where(
-            Position.code.in_({task.required_position_code for task in tasks})
-        )
-    ).all())
     return Response.ok([
         {
             "id": task.id,
@@ -212,10 +322,7 @@ def timeline(
             "node_name": task.node.name,
             "mode": task.assignee_mode,
             "required_position_code": task.required_position_code,
-            "required_position_name": position_names.get(
-                task.required_position_code,
-                task.required_position_code,
-            ),
+            "required_position_name": task.required_position_name or task.required_position_code,
             "designated_user": (
                 {"id": task.designated_user.id, "full_name": task.designated_user.full_name}
                 if task.designated_user is not None else None
@@ -359,8 +466,10 @@ def reassign(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow task not found")
     if task.assignee_mode != WorkflowAssigneeMode.DESIGNATED_USER:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="only designated tasks can be reassigned")
-    if task.status not in {WorkflowTaskStatus.ACTIVE, WorkflowTaskStatus.AWAITING_REASSIGNMENT}:
+    if task.status != WorkflowTaskStatus.AWAITING_REASSIGNMENT:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="task cannot be reassigned in its current status")
+    if payload.user_id == task.designated_user_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="the invalid previous assignee cannot be selected again")
     assignment = _effective_exact_assignment(db, payload.user_id, task.required_position_code)
     if assignment is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="new assignee lacks an effective exact-position assignment")

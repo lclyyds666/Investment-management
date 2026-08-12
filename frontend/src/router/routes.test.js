@@ -88,6 +88,7 @@ describe('unified portal routes', () => {
     expect(router.resolve({ name: 'SystemUsers' }).meta.requiresSuperuser).toBe(true)
     expect(router.resolve({ name: 'SystemAudit' }).meta.requiresSuperuser).toBe(true)
     expect(router.resolve({ name: 'SystemAiConversations' }).meta.requiresSuperuser).toBe(true)
+    expect(router.resolve({ name: 'SystemAssignments' }).meta.requiresSuperuser).toBe(true)
   })
 
   it('mounts administration under the global system console', () => {

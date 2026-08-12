@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import openpyxl
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -27,7 +27,7 @@ from app.models.contract import Contract
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
-from app.models.workflow import WorkflowInstance, WorkflowTask, WorkflowTaskAction
+from app.models.workflow import WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowTaskAction
 from app.services.approval_print import build_approval_form_xlsx
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.workflow_engine import seed_workflow_definitions, start_workflow
@@ -155,6 +155,16 @@ class WorkflowApiTest(unittest.TestCase):
                 WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
             )
         )
+
+    def await_reassignment(self, task):
+        assignment = self.db.get(UserAssignment, task.designated_assignment_id)
+        assignment.valid_until = date.today() - timedelta(days=1)
+        self.db.commit()
+        self.current_user = self.admin
+        response = self.client.get("/api/v1/workflows/awaiting-reassignment")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.expire_all()
+        return self.db.get(WorkflowTask, task.id)
 
     def test_candidates_require_submit_permission_and_filter_ineffective_assignments(self):
         self.assign(self.handler, "supplymanagement", "supply.company_leader")
@@ -451,11 +461,19 @@ class WorkflowApiTest(unittest.TestCase):
             json={"user_id": self.other_leader.id, "reason": "   "},
         )
         self.assertEqual(blank.status_code, 422)
+        task = self.await_reassignment(task)
         wrong_position = self.client.post(
             f"/api/v1/workflows/tasks/{task.id}/reassign",
             json={"user_id": self.reviewer_a.id, "reason": "人员调整"},
         )
         self.assertEqual(wrong_position.status_code, 422)
+        self.assign(self.leader, "supplymanagement", "supply.company_leader")
+        self.db.commit()
+        previous_user = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/reassign",
+            json={"user_id": self.leader.id, "reason": "错误恢复原办理人"},
+        )
+        self.assertEqual(previous_user.status_code, 422)
 
         with patch.object(self.db, "commit", wraps=self.db.commit) as commit:
             response = self.client.post(
@@ -497,8 +515,96 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(reassign_snapshot["previous_assignee_name"], "Leader")
         self.assertEqual(reassign_snapshot["new_assignee_name"], "Other Leader")
 
+    def test_superuser_reassignment_queue_and_exact_task_candidates(self):
+        task = self.active_task()
+        old_assignment = self.db.get(UserAssignment, task.designated_assignment_id)
+        old_assignment.valid_until = date.today() - timedelta(days=1)
+        self.db.commit()
+
+        self.current_user = self.handler
+        denied_queue = self.client.get("/api/v1/workflows/awaiting-reassignment")
+        denied_candidates = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={"task_id": task.id},
+        )
+        self.assertEqual(denied_queue.status_code, 403)
+        self.assertEqual(denied_candidates.status_code, 403)
+
+        self.current_user = self.admin
+        queue = self.client.get("/api/v1/workflows/awaiting-reassignment")
+        candidates = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={"task_id": task.id},
+        )
+
+        self.assertEqual(queue.status_code, 200, queue.text)
+        self.db.expire_all()
+        self.assertEqual(self.db.get(WorkflowTask, task.id).status, WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+        observer = Session(self.engine)
+        try:
+            self.assertEqual(observer.get(WorkflowTask, task.id).status, WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+        finally:
+            observer.close()
+        self.assertEqual(queue.json()["data"], [{
+            "id": task.id,
+            "instance_id": self.instance.id,
+            "target_type": "contract",
+            "target_id": self.contract.id,
+            "target_title": "Workflow API Contract",
+            "node_code": "company_leader",
+            "node_name": "供管公司负责人",
+            "previous_assignee": {"id": self.leader.id, "full_name": "Leader"},
+            "invalidation_reason": "原办理人的岗位任职已过期",
+            "activated_at": queue.json()["data"][0]["activated_at"],
+            "required_position_code": "supply.company_leader",
+            "required_position_name": "供应链公司负责人",
+        }])
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(
+            {item["user_id"] for item in candidates.json()["data"]},
+            {self.other_leader.id},
+        )
+        self.db.execute(update(WorkflowNode).where(WorkflowNode.id == task.node_id).values(
+            position_code="supply.business_reviewer",
+        ))
+        self.db.commit()
+        locked_candidates = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={"task_id": task.id},
+        )
+        self.assertEqual(
+            {item["user_id"] for item in locked_candidates.json()["data"]},
+            {self.other_leader.id},
+        )
+
+    def test_superuser_reassignment_audit_is_structured(self):
+        task = self.active_task()
+        task = self.await_reassignment(task)
+        self.current_user = self.admin
+        response = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/reassign",
+            json={"user_id": self.other_leader.id, "reason": "原负责人岗位失效"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        audits = self.client.get("/api/v1/workflows/reassignment-audits")
+
+        self.assertEqual(audits.status_code, 200, audits.text)
+        self.assertEqual(audits.json()["data"][0]["old_assignee_name"], "Leader")
+        self.assertEqual(audits.json()["data"][0]["new_assignee_name"], "Other Leader")
+        self.assertEqual(audits.json()["data"][0]["required_position_name"], "供应链公司负责人")
+        self.assertEqual(audits.json()["data"][0]["operator_name"], self.admin.full_name)
+        self.assertEqual(audits.json()["data"][0]["reason"], "原负责人岗位失效")
+        self.assertTrue(audits.json()["data"][0]["created_at"])
+        position = self.db.scalar(select(Position).where(Position.code == "supply.company_leader"))
+        position.name = "已改名岗位"
+        self.db.commit()
+        renamed = self.client.get("/api/v1/workflows/reassignment-audits")
+        self.assertEqual(renamed.json()["data"][0]["required_position_name"], "供应链公司负责人")
+
     def test_reassignment_cas_conflict_rolls_back_task_and_action_atomically(self):
         task = self.active_task()
+        task = self.await_reassignment(task)
         original = {
             "designated_user_id": task.designated_user_id,
             "designated_assignment_id": task.designated_assignment_id,
@@ -537,6 +643,7 @@ class WorkflowApiTest(unittest.TestCase):
 
     def test_reassignment_rejects_duplicate_person_and_shared_task(self):
         task = self.active_task()
+        task = self.await_reassignment(task)
         self.current_user = self.admin
         duplicate = self.client.post(
             f"/api/v1/workflows/tasks/{task.id}/reassign",
@@ -802,8 +909,12 @@ class ContractWorkflowApiTest(unittest.TestCase):
         approvals_before = self.db.query(Approval).count()
         admin = self.add_user("contract-admin", "Contract Admin")
         admin.is_superuser = True
+        task = self.db.get(WorkflowTask, task_id)
+        self.db.get(UserAssignment, task.designated_assignment_id).valid_until = date.today() - timedelta(days=1)
         self.db.commit()
         self.current_user = admin
+        queue = self.client.get("/api/v1/workflows/awaiting-reassignment")
+        self.assertEqual(queue.status_code, 200, queue.text)
 
         response = self.client.post(
             f"/api/v1/workflows/tasks/{task_id}/reassign",
@@ -1161,7 +1272,11 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
 
         leader_task = self.active_task(self.business)
         before = self.db.query(ApprovalFormAction).count()
+        self.db.get(UserAssignment, leader_task.designated_assignment_id).valid_until = date.today() - timedelta(days=1)
+        self.db.commit()
         self.current_user = self.admin
+        queue = self.client.get("/api/v1/workflows/awaiting-reassignment")
+        self.assertEqual(queue.status_code, 200, queue.text)
         reassigned = self.client.post(
             f"/api/v1/workflows/tasks/{leader_task.id}/reassign",
             json={"user_id": self.other_leader.id, "reason": "负责人调整"},
