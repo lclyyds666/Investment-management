@@ -293,6 +293,34 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    def test_operation_post_requires_independent_create_permission(self):
+        self._add_current_user()
+        payload = {
+            "year": 2099,
+            "month": 1,
+            "business_line": "permission-boundary",
+            "revenue": "100",
+            "cost": "40",
+            "profit": "60",
+            "order_count": 1,
+        }
+
+        for permission_code in (
+            "supply.operation.export",
+            "supply.operation.view",
+        ):
+            with self.subTest(permission_code=permission_code):
+                self._set_permission(permission_code)
+                response = self.client.post("/api/v1/operation", json=payload)
+                self.assertEqual(response.status_code, 403, response.text)
+
+        self._assign_supply_role(self.current_user.id, Role.BUSINESS_HANDLER)
+        payload["business_line"] = "handler-create"
+
+        allowed = self.client.post("/api/v1/operation", json=payload)
+
+        self.assertNotEqual(allowed.status_code, 403, allowed.text)
+
     def test_assigned_only_legal_position_fails_closed_for_resource_guard(self):
         self.current_user = SimpleNamespace(id=8, is_superuser=False)
         self._assign_supply_role(8, Role.LEGAL_COUNSEL)

@@ -34,7 +34,7 @@ router = APIRouter()
 _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
 _dashboard_guard = require_permission("supply.dashboard.view", _supply_context)
 _operation_guard = require_permission("supply.operation.view", _supply_context)
-_operation_export_guard = require_permission("supply.operation.export", _supply_context)
+_operation_create_guard = require_permission("supply.operation.create", _supply_context)
 
 
 @router.get(
@@ -114,7 +114,7 @@ def list_operation(
     "",
     response_model=Response[OperationDataOut],
     summary="录入经营数据(公司负责人)",
-    dependencies=[Depends(_operation_export_guard)],
+    dependencies=[Depends(_operation_create_guard)],
 )
 def create_operation(
     payload: OperationDataCreate,

@@ -78,6 +78,7 @@ class AuthorizationCatalogTest(unittest.TestCase):
             "supply.portal.enter",
             "supply.dashboard.view",
             "supply.operation.view",
+            "supply.operation.create",
             "supply.scenic.update",
             "supply.scenic.review",
             "supply.finance.update",
@@ -141,6 +142,25 @@ class AuthorizationCatalogTest(unittest.TestCase):
                 ("supply.contract.view", "assigned", ""),
                 ("supply.contract.review", "assigned", ""),
             },
+        )
+
+    def test_operation_create_has_the_exact_company_grant_topology(self):
+        create_grants = [
+            item
+            for item in POSITION_GRANTS
+            if item["permission_code"] == "supply.operation.create"
+        ]
+
+        self.assertEqual(
+            create_grants,
+            [
+                {
+                    "position_code": "supply.business_handler",
+                    "permission_code": "supply.operation.create",
+                    "data_scope": "company",
+                    "scope_ref": "supplymanagement",
+                }
+            ],
         )
 
     def test_legacy_roles_map_to_confirmed_positions(self):

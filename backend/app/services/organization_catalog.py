@@ -41,7 +41,7 @@ POSITION_CATALOG = (
 
 
 PERMISSION_CODES = (
-    "supply.portal.enter", "supply.dashboard.view", "supply.operation.view", "supply.operation.export",
+    "supply.portal.enter", "supply.dashboard.view", "supply.operation.view", "supply.operation.create", "supply.operation.export",
     "supply.scenic.view", "supply.scenic.create", "supply.scenic.update", "supply.scenic.delete", "supply.scenic.review", "supply.scenic.export",
     "supply.finance.view", "supply.finance.update", "supply.finance.review", "supply.finance.export",
     "supply.contract.view", "supply.contract.create", "supply.contract.update", "supply.contract.delete", "supply.contract.submit", "supply.contract.review", "supply.contract.approve", "supply.contract.return", "supply.contract.export",
@@ -95,6 +95,7 @@ POSITION_GRANTS = (
         )
     ),
     *_supply_grants("supply.business_handler", SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | {
+        "supply.operation.create",
         "supply.scenic.create", "supply.scenic.update", "supply.scenic.delete",
         "supply.contract.create", "supply.contract.update", "supply.contract.delete", "supply.contract.submit",
         "supply.approval.create", "supply.approval.update", "supply.approval.delete", "supply.approval.submit",
