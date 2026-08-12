@@ -1,6 +1,4 @@
 """FastAPI 依赖：认证与基于角色的权限控制(RBAC)。"""
-from typing import Iterable
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -10,7 +8,9 @@ from app.core.enums import CompanyCode, ResourceCode, Role
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
-from app.services.permissions import get_company_role, has_resource
+from app.services.assignment_permissions import PermissionContext, has_permission, has_position
+from app.services.legacy_assignment_migration import LEGACY_TARGETS
+from app.services.permissions import has_resource
 
 # tokenUrl 用于 Swagger 的 Authorize 按钮
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login")
@@ -38,26 +38,40 @@ def get_current_user(
 
 
 def require_roles(*roles: Role):
-    """生成一个依赖：要求当前用户角色在允许列表内。
+    """Temporary adapter requiring one of the mapped active positions.
 
-    超级管理员(is_superuser)始终放行。用法::
+    用法::
 
         @router.get("/x", dependencies=[Depends(require_roles(Role.LEADER))])
     """
-    allowed: Iterable[Role] = roles
+    position_codes = tuple(
+        LEGACY_TARGETS[role].position_code
+        for role in roles
+        if role in LEGACY_TARGETS
+    )
 
     def checker(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> User:
-        if current_user.is_superuser:
-            return current_user
-        company_role = get_company_role(db, current_user, CompanyCode.SUPPLY_MANAGEMENT)
-        if company_role not in allowed:
+        if not any(has_position(db, current_user.id, code) for code in position_codes):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="权限不足，无法访问该资源",
             )
+        return current_user
+
+    return checker
+
+
+def require_permission(permission_code: str, context_factory=None):
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        context = context_factory() if context_factory else PermissionContext()
+        if not has_permission(db, current_user, permission_code, context):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return current_user
 
     return checker

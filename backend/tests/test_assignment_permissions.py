@@ -4,9 +4,16 @@ from datetime import date
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
-from app.core.enums import AssignmentStatus, Role
+from app.core.enums import AssignmentStatus, DataScope, Role
 from app.db.base import Base
-from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
+from app.models.organization import (
+    ExternalAssignment,
+    Organization,
+    Permission,
+    Position,
+    PositionPermission,
+    UserAssignment,
+)
 from app.models.portal import UserCompanyRole
 from app.models.user import User
 from app.services.legacy_assignment_migration import legacy_target, migrate_legacy_assignments
@@ -16,6 +23,13 @@ from app.services.organization_catalog import (
     POSITION_CATALOG,
     POSITION_GRANTS,
     seed_authorization_catalog,
+)
+from app.services.assignment_permissions import (
+    PermissionContext,
+    active_assignments,
+    has_permission,
+    has_position,
+    permission_grants,
 )
 
 
@@ -105,6 +119,172 @@ class AuthorizationCatalogTest(unittest.TestCase):
             "external.legal_counsel",
         )
         self.assertIsNone(legacy_target(Role.INFO_MAINTAINER))
+
+
+class AssignmentPermissionServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
+        self.multi_role_user = self.add_user("multi-role", Role.UNASSIGNED)
+        self.expired_user = self.add_user("expired", Role.UNASSIGNED)
+        self.legal_user = self.add_user("legal", Role.UNASSIGNED)
+        self.admin = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
+        self.add_assignment(self.multi_role_user, "supplymanagement", "supply.business_handler")
+        self.add_assignment(self.multi_role_user, "fundmanagement", "fund.chairman")
+        self.add_assignment(
+            self.expired_user,
+            "supplymanagement",
+            "supply.business_handler",
+            valid_until=date(2026, 8, 11),
+        )
+        self.add_assignment(self.legal_user, "external.legal", "external.legal_counsel")
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def add_user(self, username: str, role: Role, is_superuser: bool = False) -> User:
+        user = User(
+            username=username,
+            full_name=username,
+            hashed_password="test",
+            role=role,
+            is_superuser=is_superuser,
+        )
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    def add_assignment(
+        self,
+        user: User,
+        organization_code: str,
+        position_code: str,
+        valid_from: date = date(2026, 1, 1),
+        valid_until: date | None = None,
+    ) -> UserAssignment:
+        assignment = UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=valid_from,
+            valid_until=valid_until,
+            status=AssignmentStatus.ACTIVE,
+        )
+        self.db.add(assignment)
+        self.db.commit()
+        return assignment
+
+    def test_multiple_assignments_union_permissions(self):
+        grants = permission_grants(self.db, self.multi_role_user.id, on_date=date(2026, 8, 12))
+        codes = {grant.code for grant in grants}
+        self.assertIn("supply.contract.submit", codes)
+        self.assertIn("fund.portal.enter", codes)
+
+    def test_expired_assignment_does_not_grant_access(self):
+        self.assertFalse(
+            has_position(
+                self.db,
+                self.expired_user.id,
+                "supply.business_handler",
+                on_date=date(2026, 8, 12),
+            )
+        )
+
+    def test_assignment_end_date_is_inclusive(self):
+        self.assertTrue(
+            has_position(
+                self.db,
+                self.expired_user.id,
+                "supply.business_handler",
+                on_date=date(2026, 8, 11),
+            )
+        )
+
+    def test_assigned_scope_requires_matching_user(self):
+        permission = "supply.contract.review"
+        self.assertTrue(has_permission(
+            self.db,
+            self.legal_user,
+            permission,
+            PermissionContext(assigned_user_id=self.legal_user.id),
+        ))
+        self.assertFalse(has_permission(
+            self.db,
+            self.legal_user,
+            permission,
+            PermissionContext(assigned_user_id=999),
+        ))
+        self.assertFalse(has_permission(self.db, self.legal_user, permission))
+
+    def test_inactive_grant_members_do_not_authorize(self):
+        assignment = self.add_assignment(
+            self.expired_user,
+            "supplymanagement",
+            "supply.business_handler",
+            valid_from=date(2026, 8, 12),
+        )
+        organization = assignment.organization
+        position = assignment.position
+        permission = self.db.scalar(
+            select(Permission).where(Permission.code == "supply.contract.submit")
+        )
+
+        for subject in (organization, position, permission):
+            subject.is_active = False
+            self.db.commit()
+            self.assertFalse(has_permission(
+                self.db,
+                self.expired_user,
+                "supply.contract.submit",
+                PermissionContext(company_code="supplymanagement"),
+            ))
+            subject.is_active = True
+            self.db.commit()
+
+        assignment.status = AssignmentStatus.INACTIVE
+        self.db.commit()
+        self.assertEqual(active_assignments(self.db, self.expired_user.id, date(2026, 8, 12)), [])
+
+    def test_scoped_permissions_fail_closed_without_required_context(self):
+        grant = self.db.scalar(
+            select(PositionPermission).join(Permission).where(
+                PositionPermission.position_id == self.db.scalar(
+                    select(Position.id).where(Position.code == "supply.business_handler")
+                ),
+                Permission.code == "supply.contract.submit",
+            )
+        )
+        grant.data_scope = DataScope.OWN
+        self.db.commit()
+
+        self.assertFalse(has_permission(
+            self.db,
+            self.multi_role_user,
+            "supply.contract.submit",
+        ))
+        self.assertTrue(has_permission(
+            self.db,
+            self.multi_role_user,
+            "supply.contract.submit",
+            PermissionContext(owner_id=self.multi_role_user.id),
+        ))
+
+    def test_superuser_has_no_implicit_business_permission(self):
+        self.assertFalse(
+            has_permission(
+                self.db,
+                self.admin,
+                "supply.contract.approve",
+                PermissionContext(company_code="supplymanagement"),
+            )
+        )
 
 
 class LegacyAssignmentMigrationTest(unittest.TestCase):

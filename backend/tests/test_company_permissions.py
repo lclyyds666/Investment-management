@@ -1,10 +1,11 @@
 import unittest
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -13,13 +14,16 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.main import create_app
 from app.api.v1.endpoints.user import create_user, update_user
-from app.core.enums import CompanyCode, ResourceCode, Role
+from app.core.enums import AssignmentStatus, CompanyCode, ResourceCode, Role
+from app.db.base import Base
+from app.models.organization import Organization, Position, UserAssignment
 from app.models.portal import UserCompanyRole
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
 from app.models.operation import OperationData
 from app.models.user import User
 from app.schemas.user import CompanyRoleAssignment, UserCreate, UserOut, UserUpdate
+from app.services.organization_catalog import seed_authorization_catalog
 from app.services.permissions import allowed_resources, get_company_role, has_resource
 
 
@@ -40,39 +44,77 @@ class CompanyRoleModelTest(unittest.TestCase):
 
 
 class CompanyPermissionServiceTest(unittest.TestCase):
-    def test_supply_membership_overrides_stale_legacy_role(self):
-        user = SimpleNamespace(id=7, role=Role.LEGAL_COUNSEL, is_superuser=False)
-        db = Mock()
-        db.scalar.return_value = Role.BUSINESS_HANDLER
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def add_user(self, username: str, role: Role, is_superuser: bool = False) -> User:
+        user = User(
+            username=username,
+            full_name=username,
+            hashed_password="test",
+            role=role,
+            is_superuser=is_superuser,
+        )
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    def add_assignment(self, user: User, organization_code: str, position_code: str) -> None:
+        self.db.add(UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        self.db.commit()
+
+    def test_assignment_position_overrides_stale_legacy_role(self):
+        user = self.add_user("handler", Role.LEGAL_COUNSEL)
+        self.add_assignment(user, "supplymanagement", "supply.business_handler")
         self.assertEqual(
-            get_company_role(db, user, CompanyCode.SUPPLY_MANAGEMENT),
+            get_company_role(self.db, user, CompanyCode.SUPPLY_MANAGEMENT),
             Role.BUSINESS_HANDLER,
         )
 
-    def test_user_without_company_membership_has_no_supply_resource(self):
-        user = SimpleNamespace(id=8, role=Role.BUSINESS_HANDLER, is_superuser=False)
-        db = Mock()
-        db.scalar.return_value = None
+    def test_user_without_assignment_has_no_supply_resource(self):
+        user = self.add_user("unassigned", Role.BUSINESS_HANDLER)
         self.assertFalse(
             has_resource(
-                db,
+                self.db,
                 user,
                 CompanyCode.SUPPLY_MANAGEMENT,
                 ResourceCode.SCENIC_ANALYTICS,
             )
         )
 
-    def test_superuser_has_all_registered_resources(self):
-        user = SimpleNamespace(id=1, is_superuser=True)
-        resources = allowed_resources(Mock(), user, CompanyCode.SUPPLY_MANAGEMENT)
-        self.assertIn(ResourceCode.SUPPLY_ADMIN, resources)
-        self.assertIn(ResourceCode.SCENIC_ANALYTICS, resources)
+    def test_superuser_has_no_implicit_registered_resources(self):
+        user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
+        self.assertEqual(
+            allowed_resources(self.db, user, CompanyCode.SUPPLY_MANAGEMENT),
+            frozenset(),
+        )
 
     def test_superuser_cannot_access_supply_resource_under_another_company(self):
-        user = SimpleNamespace(id=1, is_superuser=True)
+        user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
         self.assertFalse(
             has_resource(
-                Mock(),
+                self.db,
                 user,
                 CompanyCode.INVESTMENT,
                 ResourceCode.SCENIC_ANALYTICS,
@@ -81,62 +123,103 @@ class CompanyPermissionServiceTest(unittest.TestCase):
 
 
 class CompanyPermissionDependencyTest(unittest.TestCase):
-    def test_require_roles_denies_missing_supply_membership(self):
-        user = SimpleNamespace(id=7, is_superuser=False)
-        db = Mock()
-        db.scalar.return_value = None
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
 
-        with self.assertRaises(HTTPException) as raised:
-            require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=db)
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
 
-        self.assertEqual(raised.exception.status_code, 403)
-
-    def test_require_roles_allows_superuser_without_lookup(self):
-        user = SimpleNamespace(id=1, is_superuser=True)
-        db = Mock()
-
-        self.assertIs(require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=db), user)
-        db.scalar.assert_not_called()
-
-    def test_require_company_resource_denies_missing_supply_membership(self):
-        user = SimpleNamespace(id=7, is_superuser=False)
-        db = Mock()
-        db.scalar.return_value = None
-
-        with self.assertRaises(HTTPException) as raised:
-            require_company_resource(
-                CompanyCode.SUPPLY_MANAGEMENT,
-                ResourceCode.SCENIC_ANALYTICS,
-            )(current_user=user, db=db)
-
-        self.assertEqual(raised.exception.status_code, 403)
-
-    def test_require_company_resource_allows_superuser_for_supply_resource(self):
-        user = SimpleNamespace(id=1, is_superuser=True)
-        db = Mock()
-
-        self.assertIs(
-            require_company_resource(
-                CompanyCode.SUPPLY_MANAGEMENT,
-                ResourceCode.SCENIC_ANALYTICS,
-            )(current_user=user, db=db),
-            user,
+    def add_user(self, username: str, role: Role, is_superuser: bool = False) -> User:
+        user = User(
+            username=username,
+            full_name=username,
+            hashed_password="test",
+            role=role,
+            is_superuser=is_superuser,
         )
-        db.scalar.assert_not_called()
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    def add_assignment(self, user: User, position_code: str) -> None:
+        self.db.add(UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == "supplymanagement")
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        self.db.commit()
+
+    def test_require_roles_denies_missing_assignment(self):
+        user = self.add_user("unassigned", Role.BUSINESS_HANDLER)
+
+        with self.assertRaises(HTTPException) as raised:
+            require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=self.db)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_require_roles_denies_superuser_without_assignment(self):
+        user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
+
+        with self.assertRaises(HTTPException) as raised:
+            require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=self.db)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_require_company_resource_denies_missing_assignment(self):
+        user = self.add_user("unassigned", Role.BUSINESS_HANDLER)
+
+        with self.assertRaises(HTTPException) as raised:
+            require_company_resource(
+                CompanyCode.SUPPLY_MANAGEMENT,
+                ResourceCode.SCENIC_ANALYTICS,
+            )(current_user=user, db=self.db)
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_require_company_resource_denies_superuser_without_assignment(self):
+        user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
+
+        with self.assertRaises(HTTPException) as raised:
+            require_company_resource(
+                CompanyCode.SUPPLY_MANAGEMENT,
+                ResourceCode.SCENIC_ANALYTICS,
+            )(current_user=user, db=self.db)
+
+        self.assertEqual(raised.exception.status_code, 403)
 
 
 class SupplyApiAuthorizationTest(unittest.TestCase):
     def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
         self.app = create_app()
         self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
             id=7, role=Role.BUSINESS_HANDLER, is_superuser=False, is_active=True
         )
-        self.app.dependency_overrides[get_db] = lambda: Mock()
+        self.app.dependency_overrides[get_db] = lambda: self.db
         self.client = TestClient(self.app)
 
     def tearDown(self):
         self.client.close()
         self.app.dependency_overrides.clear()
+        self.db.close()
+        self.engine.dispose()
 
     def test_supply_resource_endpoints_deny_stale_legacy_role_without_membership(self):
         for path in (
@@ -156,14 +239,9 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        for table in (
-            UserCompanyRole.__table__,
-            OperationData.__table__,
-            Contract.__table__,
-            ApprovalForm.__table__,
-        ):
-            table.create(self.engine)
+        Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
         self.current_user = SimpleNamespace(id=7, is_superuser=False)
         self.app = create_app()
         self.app.dependency_overrides[get_current_user] = lambda: self.current_user
@@ -177,10 +255,22 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         self.engine.dispose()
 
     def _assign_supply_role(self, user_id: int, role: Role):
-        self.db.add(UserCompanyRole(
+        targets = {
+            Role.RISK_AUDITOR: ("investment.legal_risk", "investment.duty.supply_risk_review"),
+            Role.BUSINESS_HANDLER: ("supplymanagement", "supply.business_handler"),
+            Role.LEGAL_COUNSEL: ("external.legal", "external.legal_counsel"),
+        }
+        organization_code, position_code = targets[role]
+        self.db.add(UserAssignment(
             user_id=user_id,
-            company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
-            role=role,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
         ))
         self.db.commit()
 
@@ -191,13 +281,13 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-    def test_contract_only_role_can_load_shared_pending_count(self):
+    def test_assigned_only_legal_position_fails_closed_for_resource_guard(self):
         self.current_user = SimpleNamespace(id=8, is_superuser=False)
         self._assign_supply_role(8, Role.LEGAL_COUNSEL)
 
         response = self.client.get("/api/v1/approval/pending-count")
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 403)
 
 
 class UserCompanyRoleSchemaTest(unittest.TestCase):

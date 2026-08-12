@@ -1,54 +1,29 @@
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import CompanyCode, ResourceCode, Role
-from app.models.portal import UserCompanyRole
 from app.models.user import User
+from app.services.assignment_permissions import PermissionContext, has_permission, has_position
+from app.services.legacy_assignment_migration import LEGACY_TARGETS
 
 
-SUPPLY_RESOURCE_ROLES: dict[ResourceCode, frozenset[Role]] = {
-    ResourceCode.SUPPLY_DASHBOARD: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR,
-        Role.FINANCE_HANDLER, Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR,
-        Role.INVEST_DIRECTOR,
-    }),
-    ResourceCode.SUPPLY_OPERATION: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
-        Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-    }),
-    ResourceCode.SCENIC_ANALYTICS: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
-        Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-    }),
-    ResourceCode.SUPPLY_FINANCE: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
-        Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-    }),
-    ResourceCode.SUPPLY_CONTRACT: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR,
-        Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR, Role.LEGAL_COUNSEL,
-    }),
-    ResourceCode.SUPPLY_APPROVAL: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR,
-        Role.FINANCE_HANDLER, Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR,
-        Role.INVEST_DIRECTOR,
-    }),
-    ResourceCode.SUPPLY_CUSTOMER: frozenset({
-        Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR,
-        Role.FINANCE_HANDLER, Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR,
-        Role.INVEST_DIRECTOR,
-    }),
-    ResourceCode.SUPPLY_ADMIN: frozenset({Role.INFO_MAINTAINER}),
+RESOURCE_VIEW_PERMISSIONS: dict[ResourceCode, str] = {
+    ResourceCode.SUPPLY_DASHBOARD: "supply.dashboard.view",
+    ResourceCode.SUPPLY_OPERATION: "supply.operation.view",
+    ResourceCode.SCENIC_ANALYTICS: "supply.scenic.view",
+    ResourceCode.SUPPLY_FINANCE: "supply.finance.view",
+    ResourceCode.SUPPLY_CONTRACT: "supply.contract.view",
+    ResourceCode.SUPPLY_APPROVAL: "supply.approval.view",
+    ResourceCode.SUPPLY_CUSTOMER: "supply.customer.view",
 }
 
 
 def get_company_role(db: Session, user: User, company: CompanyCode) -> Role | None:
-    return db.scalar(
-        select(UserCompanyRole.role).where(
-            UserCompanyRole.user_id == user.id,
-            UserCompanyRole.company_code == company.value,
-        )
-    )
+    if company != CompanyCode.SUPPLY_MANAGEMENT:
+        return None
+    for role, target in LEGACY_TARGETS.items():
+        if has_position(db, user.id, target.position_code):
+            return role
+    return None
 
 
 def allowed_resources(
@@ -56,17 +31,15 @@ def allowed_resources(
 ) -> frozenset[ResourceCode]:
     if company != CompanyCode.SUPPLY_MANAGEMENT:
         return frozenset()
-    if user.is_superuser:
-        return frozenset(SUPPLY_RESOURCE_ROLES)
-
-    company_role = get_company_role(db, user, company)
-    if company_role is None:
-        return frozenset()
-
     return frozenset(
         resource
-        for resource, allowed_roles in SUPPLY_RESOURCE_ROLES.items()
-        if company_role in allowed_roles
+        for resource, permission_code in RESOURCE_VIEW_PERMISSIONS.items()
+        if has_permission(
+            db,
+            user,
+            permission_code,
+            PermissionContext(company_code=company.value),
+        )
     )
 
 
