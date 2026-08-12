@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 from app.core.config import settings
 from app.core.enums import CompanyCode, Role, role_label
+from app.schemas.organization import AssignmentOut
 
 
 class CompanyRoleAssignment(BaseModel):
@@ -12,19 +13,6 @@ class CompanyRoleAssignment(BaseModel):
     role: Role
 
 
-def _validate_unique_companies(assignments: list[CompanyRoleAssignment] | None) -> None:
-    if assignments is None:
-        return
-    company_codes = [assignment.company_code for assignment in assignments]
-    if len(company_codes) != len(set(company_codes)):
-        raise ValueError("同一公司只能分配一个角色")
-
-
-def _validate_admin_identity(role: Role, is_superuser: bool) -> None:
-    if (role == Role.INFO_MAINTAINER) != is_superuser:
-        raise ValueError("信息维护与超级管理员必须是同一个角色和账号身份")
-
-
 class UserBase(BaseModel):
     username: str
     full_name: str = ""
@@ -32,34 +20,22 @@ class UserBase(BaseModel):
     department: str = ""
 
 
-class UserCreate(UserBase):
-    password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
-    is_superuser: bool = False
-    company_roles: list[CompanyRoleAssignment] = Field(default_factory=list)
+class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="after")
-    def validate_company_roles_and_identity(self):
-        _validate_unique_companies(self.company_roles)
-        _validate_admin_identity(self.role, self.is_superuser)
-        return self
+    username: str
+    full_name: str = ""
+    password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
 
 
 class UserUpdate(BaseModel):
     """超管编辑用户：不含用户名（登录账号不可改）与密码。"""
 
+    model_config = ConfigDict(extra="forbid")
+
     full_name: str | None = None
-    role: Role | None = None
     department: str | None = None
     is_active: bool | None = None
-    is_superuser: bool | None = None
-    company_roles: list[CompanyRoleAssignment] | None = None
-
-    @model_validator(mode="after")
-    def validate_company_roles_and_identity(self):
-        _validate_unique_companies(self.company_roles)
-        if self.role is not None and self.is_superuser is not None:
-            _validate_admin_identity(self.role, self.is_superuser)
-        return self
 
 
 class ActiveUpdate(BaseModel):
@@ -94,8 +70,30 @@ class UserOut(UserBase):
     id: int
     is_active: bool
     is_superuser: bool
-    company_roles: list[CompanyRoleAssignment] = Field(default_factory=list)
+    company_roles: list[CompanyRoleAssignment] = Field(
+        default_factory=list,
+        deprecated=True,
+    )
+    assignment_summaries: list[AssignmentOut] = Field(default_factory=list)
     signature: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_assignment_summaries(cls, value):
+        if isinstance(value, dict) or not hasattr(value, "assignments"):
+            return value
+        return {
+            "id": value.id,
+            "username": value.username,
+            "full_name": value.full_name,
+            "role": value.role,
+            "department": value.department,
+            "is_active": value.is_active,
+            "is_superuser": value.is_superuser,
+            "company_roles": value.company_roles,
+            "signature": value.signature,
+            "assignment_summaries": _assignment_summaries(value.assignments),
+        }
 
     @computed_field
     @property
@@ -120,9 +118,31 @@ class UserBrief(BaseModel):
     department: str = ""
     is_active: bool
     is_superuser: bool
-    company_roles: list[CompanyRoleAssignment] = Field(default_factory=list)
+    company_roles: list[CompanyRoleAssignment] = Field(
+        default_factory=list,
+        deprecated=True,
+    )
+    assignment_summaries: list[AssignmentOut] = Field(default_factory=list)
     # 参与 has_signature 计算，但不序列化到列表输出（避免返回大体积签名）
     signature: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_assignment_summaries(cls, value):
+        if isinstance(value, dict) or not hasattr(value, "assignments"):
+            return value
+        return {
+            "id": value.id,
+            "username": value.username,
+            "full_name": value.full_name,
+            "role": value.role,
+            "department": value.department,
+            "is_active": value.is_active,
+            "is_superuser": value.is_superuser,
+            "company_roles": value.company_roles,
+            "signature": value.signature,
+            "assignment_summaries": _assignment_summaries(value.assignments),
+        }
 
     @computed_field
     @property
@@ -139,3 +159,19 @@ class SignatureUpdate(BaseModel):
     """纸质签名上传（Mock）：传图片的 data-URI 或附件路径。"""
 
     signature: str
+
+
+def _assignment_summaries(assignments) -> list[dict]:
+    return [
+        {
+            "assignment_id": assignment.id,
+            "organization_code": assignment.organization.code,
+            "organization_name": assignment.organization.name,
+            "position_code": assignment.position.code,
+            "position_name": assignment.position.name,
+            "valid_from": assignment.valid_from,
+            "valid_until": assignment.valid_until,
+            "status": assignment.status,
+        }
+        for assignment in assignments
+    ]

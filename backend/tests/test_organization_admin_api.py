@@ -359,3 +359,39 @@ class OrganizationAdminApiTest(unittest.TestCase):
         persisted = self.db.get(Organization, organization.id)
         self.assertEqual(persisted.code, "supplymanagement")
         self.assertNotEqual(persisted.name, "Renamed Supply")
+
+    def test_user_update_rejects_company_roles_field(self):
+        self.current_user = self.admin
+
+        response = self.client.put(
+            f"/api/v1/users/{self.worker.id}",
+            json={
+                "company_roles": [
+                    {"company_code": "supplymanagement", "role": "business_handler"}
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_user_output_contains_multiple_assignment_summaries(self):
+        self._assign(
+            self.worker,
+            "investment",
+            "investment.executive.general_manager",
+        )
+        self._assign(
+            self.worker,
+            "supplymanagement",
+            "governance.supply_leader",
+        )
+        self.current_user = self.admin
+
+        response = self.client.get("/api/v1/users")
+
+        self.assertEqual(response.status_code, 200)
+        worker = next(item for item in response.json()["data"] if item["id"] == self.worker.id)
+        self.assertEqual(
+            {item["position_code"] for item in worker["assignment_summaries"]},
+            {"investment.executive.general_manager", "governance.supply_leader"},
+        )

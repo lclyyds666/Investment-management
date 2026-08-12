@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -33,7 +33,7 @@ from app.models.invoice import Invoice
 from app.models.operation import OperationData
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
-from app.schemas.user import CompanyRoleAssignment, UserCreate, UserOut, UserUpdate
+from app.schemas.user import UserCreate, UserOut, UserUpdate
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.permissions import allowed_resources, get_company_role, has_resource
 
@@ -479,24 +479,18 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
                 self.assertNotEqual(allowed.status_code, 403, allowed.text)
 
 
-class UserCompanyRoleSchemaTest(unittest.TestCase):
-    def test_duplicate_company_assignments_are_rejected(self):
-        with self.assertRaises(ValueError):
-            UserCreate(
-                username="worker", full_name="测试", password="123456",
-                company_roles=[
-                    CompanyRoleAssignment(company_code="supplymanagement", role="business_handler"),
-                    CompanyRoleAssignment(company_code="supplymanagement", role="finance_handler"),
-                ],
-            )
+class UserAccountSchemaTest(unittest.TestCase):
+    def test_account_requests_reject_authorization_inputs(self):
+        for payload in (
+            {"username": "worker", "password": "123456", "company_roles": []},
+            {"username": "worker", "password": "123456", "role": "business_handler"},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    UserCreate(**payload)
 
-    def test_info_maintainer_cannot_be_created_as_a_normal_user(self):
         with self.assertRaises(ValueError):
-            UserCreate(
-                username="admin2", full_name="第二管理员", password="123456",
-                role="info_maintainer", is_superuser=False,
-                company_roles=[],
-            )
+            UserUpdate(company_roles=[])
 
     def test_existing_admin_supply_membership_remains_serializable(self):
         output = UserOut.model_validate(
@@ -521,11 +515,10 @@ class UserCompanyRoleSchemaTest(unittest.TestCase):
         self.assertEqual(output.company_roles[0].role, Role.INFO_MAINTAINER)
 
 
-class UserCompanyRoleEndpointTest(unittest.TestCase):
+class UserAccountEndpointTest(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
-        User.__table__.create(self.engine)
-        UserCompanyRole.__table__.create(self.engine)
+        Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
         self.admin = User(
             username="admin",
@@ -539,19 +532,9 @@ class UserCompanyRoleEndpointTest(unittest.TestCase):
             username="worker",
             full_name="测试用户",
             hashed_password="hashed",
-            role=Role.BUSINESS_HANDLER,
+            role=Role.UNASSIGNED,
             is_superuser=False,
             is_active=True,
-            company_roles=[
-                UserCompanyRole(
-                    company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
-                    role=Role.BUSINESS_HANDLER,
-                ),
-                UserCompanyRole(
-                    company_code=CompanyCode.INVESTMENT.value,
-                    role=Role.RISK_AUDITOR,
-                ),
-            ],
         )
         self.db.add_all([self.admin, self.worker])
         self.db.commit()
@@ -560,136 +543,32 @@ class UserCompanyRoleEndpointTest(unittest.TestCase):
         self.db.close()
         self.engine.dispose()
 
-    def test_update_replaces_assignments_and_synchronizes_legacy_supply_role(self):
-        response = update_user(
-            self.worker.id,
-            UserUpdate(
-                company_roles=[
-                    CompanyRoleAssignment(
-                        company_code=CompanyCode.SUPPLY_MANAGEMENT,
-                        role=Role.FINANCE_HANDLER,
-                    ),
-                    CompanyRoleAssignment(
-                        company_code=CompanyCode.FUND_MANAGEMENT,
-                        role=Role.INVEST_DIRECTOR,
-                    ),
-                ]
-            ),
+    def test_create_account_is_unassigned_without_company_roles(self):
+        response = create_user(
+            UserCreate(username="new-worker", full_name="New", password="123456"),
             self.db,
             self.admin,
         )
 
-        self.assertEqual(response.data.role, Role.FINANCE_HANDLER)
-        self.assertEqual(
-            {(item.company_code, item.role) for item in response.data.company_roles},
-            {
-                (CompanyCode.SUPPLY_MANAGEMENT, Role.FINANCE_HANDLER),
-                (CompanyCode.FUND_MANAGEMENT, Role.INVEST_DIRECTOR),
-            },
+        self.assertEqual(response.data.role, Role.UNASSIGNED)
+        self.assertEqual(response.data.company_roles, [])
+        self.assertEqual(response.data.assignment_summaries, [])
+
+    def test_update_changes_account_fields_without_authorization_mutation(self):
+        response = update_user(
+            self.worker.id,
+            UserUpdate(full_name="Updated", department="Operations"),
+            self.db,
+            self.admin,
         )
+
+        self.assertEqual(response.data.full_name, "Updated")
         persisted = self.db.get(User, self.worker.id)
-        self.assertEqual(persisted.role, Role.FINANCE_HANDLER)
-        self.assertEqual(
-            {(item.company_code, item.role) for item in persisted.company_roles},
-            {
-                (CompanyCode.SUPPLY_MANAGEMENT.value, Role.FINANCE_HANDLER),
-                (CompanyCode.FUND_MANAGEMENT.value, Role.INVEST_DIRECTOR),
-            },
-        )
-
-    def test_non_superuser_update_requires_supply_assignment(self):
-        with self.assertRaises(HTTPException) as raised:
-            update_user(
-                self.worker.id,
-                UserUpdate(
-                    company_roles=[
-                        CompanyRoleAssignment(
-                            company_code=CompanyCode.INVESTMENT,
-                            role=Role.RISK_AUDITOR,
-                        )
-                    ]
-                ),
-                self.db,
-                self.admin,
-            )
-
-        self.assertEqual(raised.exception.status_code, 400)
-
-    def test_non_superuser_cannot_receive_info_maintainer_company_role(self):
-        payload = UserCreate(
-            username="worker2",
-            full_name="第二用户",
-            password="123456",
-            company_roles=[
-                CompanyRoleAssignment(
-                    company_code=CompanyCode.SUPPLY_MANAGEMENT,
-                    role=Role.BUSINESS_HANDLER,
-                ),
-                CompanyRoleAssignment(
-                    company_code=CompanyCode.INVESTMENT,
-                    role=Role.INFO_MAINTAINER,
-                ),
-            ],
-        )
-
-        with self.assertRaises(HTTPException) as raised:
-            create_user(payload, self.db, self.admin)
-
-        self.assertEqual(raised.exception.status_code, 400)
-
-    def test_failed_commit_rolls_back_assignments_and_legacy_role_together(self):
-        with patch.object(self.db, "commit", side_effect=RuntimeError("commit failed")):
-            with self.assertRaisesRegex(RuntimeError, "commit failed"):
-                update_user(
-                    self.worker.id,
-                    UserUpdate(
-                        company_roles=[
-                            CompanyRoleAssignment(
-                                company_code=CompanyCode.SUPPLY_MANAGEMENT,
-                                role=Role.FINANCE_REVIEWER,
-                            )
-                        ]
-                    ),
-                    self.db,
-                    self.admin,
-                )
-
-        self.db.expire_all()
-        persisted = self.db.get(User, self.worker.id)
-        self.assertEqual(persisted.role, Role.BUSINESS_HANDLER)
-        self.assertEqual(
-            {(item.company_code, item.role) for item in persisted.company_roles},
-            {
-                (CompanyCode.SUPPLY_MANAGEMENT.value, Role.BUSINESS_HANDLER),
-                (CompanyCode.INVESTMENT.value, Role.RISK_AUDITOR),
-            },
-        )
-
-    def test_existing_information_maintainer_identity_cannot_change(self):
-        with self.assertRaises(HTTPException) as raised:
-            update_user(
-                self.admin.id,
-                UserUpdate(role=Role.BUSINESS_HANDLER),
-                self.db,
-                self.admin,
-            )
-
-        self.assertEqual(raised.exception.status_code, 400)
-
-    def test_second_information_maintainer_is_rejected(self):
-        payload = UserCreate(
-            username="admin2",
-            full_name="第二管理员",
-            password="123456",
-            role=Role.INFO_MAINTAINER,
-            is_superuser=True,
-            company_roles=[],
-        )
-
-        with self.assertRaises(HTTPException) as raised:
-            create_user(payload, self.db, self.admin)
-
-        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(persisted.full_name, "Updated")
+        self.assertEqual(persisted.department, "Operations")
+        self.assertEqual(persisted.role, Role.UNASSIGNED)
+        self.assertFalse(persisted.is_superuser)
+        self.assertEqual(persisted.company_roles, [])
 
 
 if __name__ == "__main__":
