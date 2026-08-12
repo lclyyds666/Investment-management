@@ -221,6 +221,23 @@ describe('approval active-task actions', () => {
     expect(wrapper.vm.timelineLoading).toBe(false)
   })
 
+  it('loads a numeric detail timeline for a string row id', async () => {
+    const loadedDetail = deferred()
+    approvalApi.getForm.mockReturnValue(loadedDetail.promise)
+    workflowApi.getWorkflowTimeline.mockResolvedValue([{ id: 'timeline-42' }])
+    const wrapper = mountView()
+    await flushPromises()
+
+    const opening = wrapper.vm.openDetail({ id: '42' })
+    loadedDetail.resolve({ id: 42, workflow_instance_id: 420, workflow_version: 2 })
+    await opening
+
+    expect(workflowApi.getWorkflowTimeline).toHaveBeenCalledWith(420)
+    expect(wrapper.vm.workflowTasks).toEqual([{ id: 'timeline-42' }])
+    expect(wrapper.vm.timelineError).toBe(false)
+    expect(wrapper.vm.timelineLoading).toBe(false)
+  })
+
   it('invalidates pending detail work before unmount', async () => {
     const pendingDetail = deferred()
     approvalApi.getForm.mockReturnValue(pendingDetail.promise)

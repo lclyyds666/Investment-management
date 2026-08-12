@@ -641,6 +641,9 @@ const detailLoading = ref(false)
 const timelineLoading = ref(false)
 const timelineError = ref(false)
 let detailGeneration = 0
+function isSameTarget(left, right) {
+  return left != null && right != null && String(left) === String(right)
+}
 async function openDetail(row) {
   const targetId = row.id
   const generation = ++detailGeneration
@@ -668,7 +671,7 @@ async function openDetail(row) {
 async function loadDetailTimeline(generation = detailGeneration, targetId = detail.value?.id) {
   if (!detail.value) return
   const timelineDetail = detail.value
-  if (generation !== detailGeneration || timelineDetail.id !== targetId) return
+  if (generation !== detailGeneration || !isSameTarget(timelineDetail.id, targetId)) return
   actions.value = []
   workflowTasks.value = []
   timelineLoading.value = true
@@ -676,19 +679,19 @@ async function loadDetailTimeline(generation = detailGeneration, targetId = deta
   try {
     if (timelineDetail.workflow_version >= 2) {
       const tasks = await getWorkflowTimeline(timelineDetail.workflow_instance_id)
-      if (generation !== detailGeneration || detail.value?.id !== targetId) return
+      if (generation !== detailGeneration || !isSameTarget(detail.value?.id, targetId)) return
       workflowTasks.value = tasks
     } else {
       const loadedActions = await listActions(timelineDetail.id)
-      if (generation !== detailGeneration || detail.value?.id !== targetId) return
+      if (generation !== detailGeneration || !isSameTarget(detail.value?.id, targetId)) return
       actions.value = loadedActions
     }
   } catch {
-    if (generation === detailGeneration && detail.value?.id === targetId) {
+    if (generation === detailGeneration && isSameTarget(detail.value?.id, targetId)) {
       timelineError.value = true
     }
   } finally {
-    if (generation === detailGeneration && detail.value?.id === targetId) {
+    if (generation === detailGeneration && isSameTarget(detail.value?.id, targetId)) {
       timelineLoading.value = false
     }
   }
