@@ -804,6 +804,17 @@ def _materialize_legacy_workflow(
             "Only pending legacy targets without a workflow instance can be migrated.",
             {"target_type": target_type.value, "target_id": target_id},
         )
+    if target.current_step != current_sequence:
+        raise WorkflowValidationError(
+            "legacy_workflow_stale_current_step",
+            "The legacy target current step changed after migration classification.",
+            {
+                "target_type": target_type.value,
+                "target_id": target_id,
+                "scanned_current_step": current_sequence,
+                "locked_current_step": target.current_step,
+            },
+        )
     if db.scalar(select(WorkflowInstance.id).where(
         WorkflowInstance.target_type == target_type,
         WorkflowInstance.target_id == target_id,

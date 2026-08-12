@@ -46,6 +46,24 @@ POSITION_BY_LEGACY_ROLE = {
     "invest_director": "governance.supply_leader",
 }
 
+DESIGNATION_VALIDATION_CODES = {
+    "legacy_workflow_designations_incomplete",
+    "legacy_workflow_designation_invalid",
+    "missing_designated_user",
+    "ineligible_designated_user",
+    "duplicate_workflow_actor",
+}
+INVALID_STATE_VALIDATION_CODES = {
+    "workflow_target_not_found",
+    "workflow_not_published",
+    "workflow_catalog_drift",
+    "legacy_workflow_not_migratable",
+    "legacy_workflow_current_step_not_shared",
+    "legacy_workflow_stale_current_step",
+    "workflow_submitter_not_owner",
+    "unknown_designated_node",
+}
+
 
 def _target_type(form_type: ContractType) -> WorkflowTargetType:
     if form_type == ContractType.PAYMENT:
@@ -222,12 +240,19 @@ def _apply_failure_outcome(
             if item["outcome"] == "already_migrated"
             else "repair concurrent or unlinked workflow instance state"
         )
-    elif error.code == "workflow_catalog_drift":
-        item["outcome"] = "invalid_state"
-        item["admin_action"] = "repair published workflow catalog drift before apply"
-    else:
+    elif error.code in DESIGNATION_VALIDATION_CODES:
         item["outcome"] = "needs_designation"
         item["admin_action"] = f"rerun dry-run after migration validation: {error.code}"
+    elif error.code in INVALID_STATE_VALIDATION_CODES:
+        item["outcome"] = "invalid_state"
+        item["admin_action"] = (
+            "repair published workflow catalog drift before apply"
+            if error.code == "workflow_catalog_drift"
+            else f"repair migration state before apply: {error.code}"
+        )
+    else:
+        item["outcome"] = "invalid_state"
+        item["admin_action"] = f"review unknown migration validation: {error.code}"
 
 
 def migrate_active_workflows(
@@ -244,6 +269,7 @@ def migrate_active_workflows(
     with db.no_autoflush:
         rows = _legacy_rows(db)
         for target_type, target, legacy_chain in rows:
+            scanned_current_step = target.current_step
             if target.status in (ContractStatus.APPROVED, ContractStatus.REJECTED):
                 item, assignments = _historical_item(
                     target_type, target, legacy_chain
@@ -258,7 +284,7 @@ def migrate_active_workflows(
                         db,
                         target_type,
                         target.id,
-                        target.current_step,
+                        scanned_current_step,
                         assignments,
                         migrated_at,
                         as_of,

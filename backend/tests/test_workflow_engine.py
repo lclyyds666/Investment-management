@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -57,6 +57,7 @@ from app.services.workflow_engine import (
 )
 from scripts.migrate_active_workflows import (
     ReportFinalizeError,
+    _apply_failure_outcome,
     migrate_active_workflows,
     save_active_workflow_migration_report,
 )
@@ -1078,6 +1079,82 @@ class ActiveWorkflowMigrationTest(unittest.TestCase):
             self.assertEqual(saved["outcome_counts"], {"migrated": 1})
         self.db.rollback()
         self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+    def test_apply_rejects_stale_scanned_step_and_continues_batch(self):
+        second = Contract(
+            contract_no="TASK9-STALE-SECOND",
+            title="Stale scan second target",
+            created_by=self.handler.id,
+            status=ContractStatus.PENDING,
+            current_step=3,
+        )
+        self.db.add(second)
+        self.db.commit()
+        real_materialize = materialize_legacy_workflow
+        changed = False
+
+        def change_step_after_scan(db, target_type, target_id, *args, **kwargs):
+            nonlocal changed
+            if not changed:
+                changed = True
+                db.execute(
+                    update(Contract)
+                    .where(Contract.id == target_id)
+                    .values(current_step=4)
+                    .execution_options(synchronize_session=False)
+                )
+                db.commit()
+            return real_materialize(db, target_type, target_id, *args, **kwargs)
+
+        with patch(
+            "scripts.migrate_active_workflows.materialize_legacy_workflow",
+            side_effect=change_step_after_scan,
+        ):
+            report = migrate_active_workflows(
+                self.db, apply=True, as_of=date(2026, 8, 13)
+            )
+
+        stale = self.report_item(report, "contract", self.contract.id)
+        continued = self.report_item(report, "contract", second.id)
+        self.assertEqual(stale["classification"], "mappable_shared")
+        self.assertEqual(stale["outcome"], "invalid_state")
+        self.assertIn("legacy_workflow_stale_current_step", stale["admin_action"])
+        self.assertEqual(continued["outcome"], "migrated")
+        self.assertIsNone(self.db.get(Contract, self.contract.id).workflow_instance_id)
+        self.assertIsNotNone(self.db.get(Contract, second.id).workflow_instance_id)
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+    def test_validation_code_mapping_limits_needs_designation(self):
+        designation_codes = {
+            "legacy_workflow_designations_incomplete",
+            "legacy_workflow_designation_invalid",
+            "missing_designated_user",
+            "ineligible_designated_user",
+            "duplicate_workflow_actor",
+        }
+        invalid_codes = {
+            "workflow_target_not_found",
+            "workflow_not_published",
+            "workflow_catalog_drift",
+            "legacy_workflow_current_step_not_shared",
+            "legacy_workflow_stale_current_step",
+            "workflow_submitter_not_owner",
+            "unknown_designated_node",
+        }
+        for code in designation_codes | invalid_codes:
+            with self.subTest(code=code):
+                item = {"outcome": "not_applied", "admin_action": ""}
+                _apply_failure_outcome(
+                    self.db,
+                    item,
+                    WorkflowTargetType.CONTRACT,
+                    self.contract.id,
+                    WorkflowValidationError(code, code),
+                )
+                self.assertEqual(
+                    item["outcome"],
+                    "needs_designation" if code in designation_codes else "invalid_state",
+                )
 
 
 class WorkflowAuthorizationTest(unittest.TestCase):
