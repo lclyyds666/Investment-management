@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.core.enums import CompanyCode, WorkflowTargetType
+from app.core.enums import CompanyCode, DataScope, WorkflowTargetType
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import Response
@@ -17,15 +17,29 @@ router = APIRouter()
 
 _VIEW_PERMISSIONS = {"supply.contract.view", "supply.approval.view"}
 
+
+def _pending_view_grant_codes(db: Session, user_id: int) -> set[str]:
+    return {
+        grant.code
+        for grant in permission_grants(db, user_id)
+        if grant.code in _VIEW_PERMISSIONS
+        and (
+            grant.data_scope == DataScope.ASSIGNED
+            or (
+                grant.data_scope == DataScope.COMPANY
+                and grant.scope_ref == CompanyCode.SUPPLY_MANAGEMENT.value
+            )
+        )
+    }
+
+
 def _require_pending_view(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
     if current_user.is_superuser:
         return current_user
-    if not _VIEW_PERMISSIONS.intersection(
-        grant.code for grant in permission_grants(db, current_user.id)
-    ):
+    if not _pending_view_grant_codes(db, current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     return current_user
 
@@ -42,7 +56,7 @@ def pending_count(
     grant_codes = (
         set()
         if current_user.is_superuser
-        else {grant.code for grant in permission_grants(db, current_user.id)}
+        else _pending_view_grant_codes(db, current_user.id)
     )
     counts = (
         {}

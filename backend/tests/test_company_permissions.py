@@ -330,14 +330,20 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["total"], 0)
 
-    def _set_permission(self, permission_code: str):
+    def _set_permission(
+        self,
+        permission_code: str,
+        data_scope: DataScope = DataScope.COMPANY,
+        scope_ref: str = CompanyCode.SUPPLY_MANAGEMENT.value,
+    ):
         self.db.query(UserAssignment).filter(UserAssignment.user_id == self.current_user.id).delete()
+        position_code = f"test.{permission_code}.{data_scope.value}.{scope_ref or 'blank'}"
         position = self.db.scalar(
-            select(Position).where(Position.code == f"test.{permission_code}")
+            select(Position).where(Position.code == position_code)
         )
         if position is None:
             position = Position(
-                code=f"test.{permission_code}",
+                code=position_code,
                 name=permission_code,
                 category=PositionCategory.BUSINESS,
             )
@@ -348,8 +354,8 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
                 permission_id=self.db.scalar(
                     select(Permission.id).where(Permission.code == permission_code)
                 ),
-                data_scope=DataScope.COMPANY,
-                scope_ref=CompanyCode.SUPPLY_MANAGEMENT.value,
+                data_scope=data_scope,
+                scope_ref=scope_ref,
             ))
         self.db.add(UserAssignment(
             user_id=self.current_user.id,
@@ -495,6 +501,37 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
                 self._set_permission(permission_code)
                 allowed = self.client.request(method, path)
                 self.assertNotEqual(allowed.status_code, 403, allowed.text)
+
+    def test_pending_count_enforces_view_permission_scopes(self):
+        self._add_current_user()
+
+        for permission_code in (
+            "supply.contract.view",
+            "supply.approval.view",
+        ):
+            with self.subTest(permission_code=permission_code, data_scope="supply_company"):
+                self._set_permission(permission_code)
+
+                response = self.client.get("/api/v1/approval/pending-count")
+
+                self.assertEqual(response.status_code, 200, response.text)
+
+            for data_scope, scope_ref in (
+                (DataScope.COMPANY, CompanyCode.INVESTMENT.value),
+                (DataScope.OWN, ""),
+                (DataScope.PARTICIPATED, ""),
+                (DataScope.DEPARTMENT, "supply.test.department"),
+            ):
+                with self.subTest(
+                    permission_code=permission_code,
+                    data_scope=data_scope,
+                    scope_ref=scope_ref,
+                ):
+                    self._set_permission(permission_code, data_scope, scope_ref)
+
+                    response = self.client.get("/api/v1/approval/pending-count")
+
+                    self.assertEqual(response.status_code, 403, response.text)
 
 
 class UserAccountSchemaTest(unittest.TestCase):
