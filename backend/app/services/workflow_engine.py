@@ -264,11 +264,35 @@ def _seed_workflow_definitions(db: Session, publisher_id: int) -> None:
 
 
 def seed_workflow_definitions(db: Session, publisher_id: int) -> None:
+    connection = db.connection()
+    if connection.dialect.name == "sqlite" and not connection.in_nested_transaction():
+        connection.exec_driver_sql("BEGIN")
+    catalog_session = Session(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
     try:
-        with db.begin_nested():
-            _seed_workflow_definitions(db, publisher_id)
+        _seed_workflow_definitions(catalog_session, publisher_id)
+        catalog_session.commit()
     except IntegrityError as error:
+        catalog_session.rollback()
         if not _is_catalog_unique_race(error):
             raise
-        db.expire_all()
+        _expire_parent_catalog_state(db)
         _verify_published_catalog(db)
+    except Exception:
+        catalog_session.rollback()
+        raise
+    finally:
+        catalog_session.close()
+    _expire_parent_catalog_state(db)
+
+
+def _expire_parent_catalog_state(db: Session) -> None:
+    catalog_types = (WorkflowDefinition, WorkflowVersion, WorkflowNode)
+    with db.no_autoflush:
+        for instance in list(db.identity_map.values()):
+            if isinstance(instance, catalog_types):
+                db.expire(instance)

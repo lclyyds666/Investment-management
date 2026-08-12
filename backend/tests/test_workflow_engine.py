@@ -159,6 +159,14 @@ class WorkflowPublicationTest(unittest.TestCase):
             .where(WorkflowDefinition.code == code)
         )
 
+    def assert_parent_pending_unflushed(self, pending):
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+        with self.db.no_autoflush:
+            self.assertIsNone(
+                self.db.scalar(select(User).where(User.username == pending.username))
+            )
+
     def test_seed_publishes_exact_three_versions_and_is_idempotent(self):
         seed_workflow_definitions(self.db, self.publisher.id)
         self.db.commit()
@@ -252,6 +260,7 @@ class WorkflowPublicationTest(unittest.TestCase):
         self.assertEqual(self.db.query(WorkflowNode).count(), 0)
 
     def test_success_preserves_pending_caller_object_and_leaves_commit_to_caller(self):
+        publisher_id = self.publisher.id
         pending = User(
             username="pending-success",
             full_name="Pending Success",
@@ -259,10 +268,12 @@ class WorkflowPublicationTest(unittest.TestCase):
         )
         self.db.add(pending)
 
-        seed_workflow_definitions(self.db, self.publisher.id)
+        seed_workflow_definitions(self.db, publisher_id)
 
         self.assertTrue(self.db.in_transaction())
-        self.assertIn(pending, self.db)
+        self.assert_parent_pending_unflushed(pending)
+        with self.db.no_autoflush:
+            self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
         self.db.commit()
         self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-success")))
         self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
@@ -273,6 +284,7 @@ class WorkflowPublicationTest(unittest.TestCase):
         node = self.version().nodes[1]
         node.name = "drifted"
         self.db.commit()
+        publisher_id = self.publisher.id
         pending = User(
             username="pending-drift",
             full_name="Pending Drift",
@@ -281,16 +293,17 @@ class WorkflowPublicationTest(unittest.TestCase):
         self.db.add(pending)
 
         with self.assertRaises(WorkflowValidationError):
-            seed_workflow_definitions(self.db, self.publisher.id)
+            seed_workflow_definitions(self.db, publisher_id)
 
         self.assertTrue(self.db.in_transaction())
-        self.assertIn(pending, self.db)
+        self.assert_parent_pending_unflushed(pending)
         self.db.commit()
         self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-drift")))
 
     def test_validation_error_preserves_pending_caller_object(self):
         self.add_assignment("conflicted", "supply.business_handler")
         self.add_assignment("conflicted", "supply.company_leader")
+        publisher_id = self.publisher.id
         pending = User(
             username="pending-validation",
             full_name="Pending Validation",
@@ -299,9 +312,9 @@ class WorkflowPublicationTest(unittest.TestCase):
         self.db.add(pending)
 
         with self.assertRaises(WorkflowValidationError):
-            seed_workflow_definitions(self.db, self.publisher.id)
+            seed_workflow_definitions(self.db, publisher_id)
 
-        self.assertIn(pending, self.db)
+        self.assert_parent_pending_unflushed(pending)
         self.db.commit()
         self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-validation")))
         self.assertEqual(self.db.query(WorkflowDefinition).count(), 0)
@@ -310,29 +323,28 @@ class WorkflowPublicationTest(unittest.TestCase):
         seed_workflow_definitions(self.db, self.publisher.id)
         self.db.commit()
         publisher_id = self.publisher.id
-        original_flush = self.db.flush
-        raised = False
-
-        def race_once(*args, **kwargs):
-            nonlocal raised
-            if not raised:
-                raised = True
-                raise IntegrityError(
-                    "INSERT INTO wf_definition",
-                    {},
-                    Exception("UNIQUE constraint failed: wf_definition.code"),
-                )
-            return original_flush(*args, **kwargs)
-
-        with patch.object(self.db, "flush", side_effect=race_once):
+        pending = User(
+            username="pending-race",
+            full_name="Pending Race",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+        with patch(
+            "app.services.workflow_engine._seed_workflow_definitions",
+            side_effect=IntegrityError(
+                "INSERT INTO wf_definition",
+                {},
+                Exception("UNIQUE constraint failed: wf_definition.code"),
+            ),
+        ):
             seed_workflow_definitions(self.db, publisher_id)
 
+        self.assert_parent_pending_unflushed(pending)
         self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
 
     def test_unrelated_integrity_error_is_not_swallowed(self):
-        with patch.object(
-            self.db,
-            "flush",
+        with patch(
+            "app.services.workflow_engine._seed_workflow_definitions",
             side_effect=IntegrityError(
                 "INSERT INTO sys_user",
                 {},
@@ -349,10 +361,15 @@ class WorkflowPublicationTest(unittest.TestCase):
         node = self.version().nodes[1]
         node.name = "concurrent drift"
         self.db.commit()
+        pending = User(
+            username="pending-race-drift",
+            full_name="Pending Race Drift",
+            hashed_password="test",
+        )
+        self.db.add(pending)
 
-        with patch.object(
-            self.db,
-            "flush",
+        with patch(
+            "app.services.workflow_engine._seed_workflow_definitions",
             side_effect=IntegrityError(
                 "INSERT INTO wf_definition",
                 {},
@@ -363,6 +380,16 @@ class WorkflowPublicationTest(unittest.TestCase):
                 seed_workflow_definitions(self.db, publisher_id)
 
         self.assertEqual(raised.exception.code, "workflow_catalog_drift")
+        self.assert_parent_pending_unflushed(pending)
+
+    def test_catalog_changes_roll_back_with_caller_transaction(self):
+        seed_workflow_definitions(self.db, self.publisher.id)
+        with self.db.no_autoflush:
+            self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+
+        self.db.rollback()
+
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 0)
 
 
 if __name__ == "__main__":
