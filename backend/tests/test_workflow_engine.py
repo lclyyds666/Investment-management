@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
@@ -15,6 +15,7 @@ from app.core.enums import (
     PositionCategory,
     WorkflowAction,
     WorkflowAssigneeMode,
+    WorkflowInstanceStatus,
     WorkflowTargetType,
     WorkflowTaskStatus,
     WorkflowVersionStatus,
@@ -554,6 +555,80 @@ class WorkflowStartTest(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "workflow_already_started")
         self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+    def test_concurrent_unique_conflict_preserves_parent_transaction_and_pending_objects(self):
+        target_id = self.contract.id
+        handler_id = self.handler.id
+        designated_users = self.designated_users()
+        definition = self.db.scalar(
+            select(WorkflowDefinition).where(
+                WorkflowDefinition.code == "supply.contract.v2"
+            )
+        )
+        definition_id = definition.id
+        version_id = definition.active_version_id
+        existing = WorkflowInstance(
+            definition_id=definition_id,
+            version_id=version_id,
+            target_type=WorkflowTargetType.CONTRACT,
+            target_id=target_id,
+            status=WorkflowInstanceStatus.ACTIVE,
+            current_sequence=1,
+            submitted_by=handler_id,
+            submitted_at=datetime(2026, 8, 12, 9, 0),
+        )
+        self.db.add(existing)
+        self.db.commit()
+        pending = User(
+            username="pending-concurrent-start",
+            full_name="Pending Concurrent Start",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+
+        def insert_concurrent_duplicate(workflow_db, *_args):
+            workflow_db.add(WorkflowInstance(
+                definition_id=definition_id,
+                version_id=version_id,
+                target_type=WorkflowTargetType.CONTRACT,
+                target_id=target_id,
+                status=WorkflowInstanceStatus.ACTIVE,
+                current_sequence=1,
+                submitted_by=handler_id,
+                submitted_at=datetime(2026, 8, 12, 9, 1),
+            ))
+            workflow_db.flush()
+
+        with patch(
+            "app.services.workflow_engine._start_workflow",
+            side_effect=insert_concurrent_duplicate,
+        ):
+            with self.assertRaises(WorkflowValidationError) as raised:
+                start_workflow(
+                    self.db,
+                    WorkflowTargetType.CONTRACT,
+                    target_id,
+                    self.handler,
+                    designated_users,
+                )
+
+        self.assertEqual(raised.exception.code, "workflow_already_started")
+        self.assertEqual(
+            raised.exception.details,
+            {"target_type": "contract", "target_id": target_id},
+        )
+        self.assertTrue(self.db.in_transaction())
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+        with self.db.no_autoflush:
+            self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+        self.db.commit()
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+        self.assertIsNotNone(
+            self.db.scalar(
+                select(User).where(User.username == "pending-concurrent-start")
+            )
+        )
 
     def test_failed_start_preserves_parent_pending_and_success_rolls_back_with_caller(self):
         valid_designated_users = self.designated_users()
