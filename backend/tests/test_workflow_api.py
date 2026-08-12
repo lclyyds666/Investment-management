@@ -157,6 +157,7 @@ class WorkflowApiTest(unittest.TestCase):
         )
 
     def test_candidates_require_submit_permission_and_filter_ineffective_assignments(self):
+        self.assign(self.handler, "supplymanagement", "supply.company_leader")
         expired = self.add_user("expired-leader", "Expired Leader")
         self.assign(expired, "supplymanagement", "supply.company_leader", valid_until=date.today() - timedelta(days=1))
         inactive = self.add_user("inactive-leader", "Inactive Leader")
@@ -174,6 +175,10 @@ class WorkflowApiTest(unittest.TestCase):
             {item["user_id"] for item in response.json()["data"]},
             {self.leader.id, self.other_leader.id},
         )
+        leader = next(item for item in response.json()["data"] if item["user_id"] == self.leader.id)
+        self.assertEqual(leader["valid_from"], "2026-01-01")
+        self.assertIsNone(leader["valid_until"])
+        self.assertNotIn(self.handler.id, {item["user_id"] for item in response.json()["data"]})
         self.current_user = self.reviewer_a
         denied = self.client.get(
             "/api/v1/workflows/candidates",

@@ -143,7 +143,13 @@ def candidates(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     try:
-        result = eligible_designated_users(db, workflow_code, node_code, date.today())
+        result = eligible_designated_users(
+            db,
+            workflow_code,
+            node_code,
+            date.today(),
+            exclude_user_id=current_user.id,
+        )
     except WorkflowValidationError as error:
         raise _workflow_error(error) from error
     return Response.ok([item.model_dump() for item in result])

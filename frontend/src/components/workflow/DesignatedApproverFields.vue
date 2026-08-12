@@ -85,7 +85,8 @@ import { listWorkflowCandidates } from '@/api/workflow'
 
 const props = defineProps({
   workflowCode: { type: String, required: true },
-  modelValue: { type: Object, default: () => ({}) }
+  modelValue: { type: Object, default: () => ({}) },
+  excludeUserId: { type: Number, default: null }
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -131,9 +132,13 @@ function selectedCandidate(nodeCode) {
   return (candidatesByNode.value[nodeCode] || []).find((candidate) => candidate.user_id === selected.value[nodeCode])
 }
 
+function eligibleCandidates(candidates) {
+  return (candidates || []).filter((candidate) => Number(candidate.user_id) !== props.excludeUserId)
+}
+
 function effectivePeriod(candidate) {
-  if (!candidate.valid_from && !candidate.valid_until) return '当前有效'
-  const start = candidate.valid_from ? `${candidate.valid_from} 起` : '已生效'
+  if (!candidate.valid_from && !candidate.valid_until) return '未提供任职有效期'
+  const start = candidate.valid_from ? `${candidate.valid_from} 起` : '未提供起始日期'
   const end = candidate.valid_until ? `${candidate.valid_until} 止` : '长期有效'
   return `${start} · ${end}`
 }
@@ -172,7 +177,7 @@ function retainEligibleSelections(previous) {
 async function reloadNode(nodeCode) {
   errorsByNode.value = { ...errorsByNode.value, [nodeCode]: undefined }
   try {
-    const candidates = await listWorkflowCandidates(props.workflowCode, nodeCode)
+    const candidates = eligibleCandidates(await listWorkflowCandidates(props.workflowCode, nodeCode))
     candidatesByNode.value = { ...candidatesByNode.value, [nodeCode]: candidates }
     const nextErrors = { ...errorsByNode.value }
     delete nextErrors[nodeCode]
@@ -189,7 +194,7 @@ async function reloadCandidates({ preserve = true } = {}) {
   errorsByNode.value = {}
   const results = await Promise.allSettled(nodes.value.map(async (node) => ({
     nodeCode: node.code,
-    candidates: await listWorkflowCandidates(props.workflowCode, node.code)
+    candidates: eligibleCandidates(await listWorkflowCandidates(props.workflowCode, node.code))
   })))
   const nextCandidates = preserve ? { ...candidatesByNode.value } : {}
   const nextErrors = {}

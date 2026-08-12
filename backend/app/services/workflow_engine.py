@@ -254,6 +254,7 @@ def eligible_designated_users(
     workflow_code: str,
     node_code: str,
     on_date: date,
+    exclude_user_id: int | None = None,
 ) -> list[WorkflowCandidate]:
     _, version = _published_workflow(db, workflow_code)
     node = next((item for item in version.nodes if item.code == node_code), None)
@@ -273,7 +274,11 @@ def eligible_designated_users(
     candidates: list[WorkflowCandidate] = []
     seen_users: set[int] = set()
     for assignment in _active_assignments(db, {node.position_code}, on_date):
-        if assignment.user_id in seen_users or not _assignment_has_required_scope(assignment):
+        if (
+            assignment.user_id == exclude_user_id
+            or assignment.user_id in seen_users
+            or not _assignment_has_required_scope(assignment)
+        ):
             continue
         seen_users.add(assignment.user_id)
         candidates.append(WorkflowCandidate(
@@ -284,6 +289,8 @@ def eligible_designated_users(
             organization_name=assignment.organization.name,
             position_code=assignment.position.code,
             position_name=assignment.position.name,
+            valid_from=assignment.valid_from,
+            valid_until=assignment.valid_until,
         ))
     return candidates
 

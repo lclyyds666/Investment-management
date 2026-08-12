@@ -415,7 +415,13 @@ class WorkflowStartTest(unittest.TestCase):
 
     def test_candidate_list_filters_scope_dates_and_active_entities_then_sorts_and_dedupes(self):
         self.add_assignment("leader", "Amy Leader", "supply.company_leader")
-        self.add_assignment("later", "Zed Later", "supply.company_leader")
+        self.add_assignment(
+            "later",
+            "Zed Later",
+            "supply.company_leader",
+            valid_from=date(2026, 2, 1),
+            valid_until=date(2026, 12, 31),
+        )
         self.add_assignment(
             "expired", "Expired", "supply.company_leader", valid_until=date(2026, 8, 11)
         )
@@ -436,6 +442,18 @@ class WorkflowStartTest(unittest.TestCase):
 
         self.assertEqual([item.user_id for item in candidates], [self.leader.id, self.users["later"].id])
         self.assertEqual(candidates[0].assignment_id, min(item.id for item in self.leader.assignments))
+        self.assertEqual(candidates[0].valid_from, date(2026, 1, 1))
+        self.assertIsNone(candidates[0].valid_until)
+        self.assertEqual(candidates[1].valid_from, date(2026, 2, 1))
+        self.assertEqual(candidates[1].valid_until, date(2026, 12, 31))
+        without_leader = eligible_designated_users(
+            self.db,
+            "supply.contract.v2",
+            "company_leader",
+            date(2026, 8, 12),
+            exclude_user_id=self.leader.id,
+        )
+        self.assertEqual([item.user_id for item in without_leader], [self.users["later"].id])
         self.assertEqual([item.user_id for item in legal_candidates], [self.legal.id])
         self.assertNotEqual(wrong_scope.user_id, self.legal.id)
 

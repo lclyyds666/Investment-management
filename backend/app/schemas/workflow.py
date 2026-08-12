@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,8 @@ class WorkflowCandidate(BaseModel):
     organization_name: str
     position_code: str
     position_name: str
+    valid_from: date
+    valid_until: date | None
 
 
 class WorkflowStartRequest(BaseModel):

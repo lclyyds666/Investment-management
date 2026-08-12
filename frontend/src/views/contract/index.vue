@@ -165,9 +165,11 @@
       @closed="resetSubmitDialog"
     >
       <DesignatedApproverFields
+        v-if="submitVisible"
         ref="submitFieldsRef"
         v-model="selectedApprovers"
         workflow-code="supply.contract.v2"
+        :exclude-user-id="userStore.userInfo?.id"
       />
       <template #footer>
         <el-button :disabled="submitSaving" @click="submitVisible = false">取消</el-button>
@@ -312,6 +314,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download, MagicStick, Collection, CopyDocument } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { usePortalStore } from '@/store/portal'
+import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { STATUS_META } from '@/constants/business'
 import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
@@ -329,6 +332,7 @@ import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 
 const portalStore = usePortalStore()
+const userStore = useUserStore()
 const badgeStore = useApprovalBadgeStore()
 const canCreate = computed(() => canUsePermission(portalStore, 'supply.contract.create'))
 const canUpdate = computed(() => canUsePermission(portalStore, 'supply.contract.update'))
@@ -504,7 +508,13 @@ async function finishSubmit(row, payload) {
 
 async function onSubmit(row) {
   if (isHandlerResubmit(row)) {
-    await finishSubmit(row)
+    if (submitSaving.value) return
+    submitSaving.value = true
+    try {
+      await finishSubmit(row)
+    } finally {
+      submitSaving.value = false
+    }
     return
   }
   submitCurrent.value = row
@@ -513,14 +523,15 @@ async function onSubmit(row) {
 }
 
 async function confirmSubmit() {
-  if (!await submitFieldsRef.value?.validate()) return
+  if (submitSaving.value) return
   submitSaving.value = true
   try {
+    if (!await submitFieldsRef.value?.validate()) return
     await finishSubmit(submitCurrent.value, { designated_users: selectedApprovers.value })
     submitVisible.value = false
   } catch (error) {
     if (error.response?.status === 422) {
-      await submitFieldsRef.value?.reloadCandidates({ preserve: true })
+      await submitFieldsRef.value?.reloadCandidates?.({ preserve: true })
       ElMessage.warning('审批人任职信息已变化，请核对更新后的候选人后重试')
     }
   } finally {

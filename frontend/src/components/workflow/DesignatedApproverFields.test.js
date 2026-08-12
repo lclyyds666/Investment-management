@@ -9,7 +9,7 @@ import DesignatedApproverFields from './DesignatedApproverFields.vue'
 const candidateFixture = {
   company_leader: [
     { user_id: 11, full_name: '张明', organization_name: '山东出版供应链管理有限公司', position_name: '公司负责人', valid_from: '2026-01-01', valid_until: null },
-    { user_id: 12, full_name: '李宁', organization_name: '山东出版供应链管理有限公司', position_name: '公司负责人' }
+    { user_id: 12, full_name: '李宁', organization_name: '山东出版供应链管理有限公司', position_name: '公司负责人', valid_from: '2026-02-01', valid_until: '2026-12-31' }
   ],
   legal_counsel: [
     { user_id: 21, full_name: '王律师', organization_name: '齐鲁律师事务所', position_name: '外聘法律顾问', valid_from: '2026-05-01', valid_until: '2027-04-30' }
@@ -116,5 +116,14 @@ describe('DesignatedApproverFields', () => {
       await flushPromises()
       wrapper.unmount()
     }
+  })
+
+  it('defensively excludes the submitting user even if the API returns them', async () => {
+    candidates.company_leader.push({ user_id: 99, full_name: '提交人', organization_name: '供应链公司', position_name: '公司负责人', valid_from: '2026-01-01', valid_until: null })
+    const wrapper = mountFields({ excludeUserId: 99 })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('提交人')
+    expect(wrapper.vm.isCandidateDisabled('company_leader', 99)).toBe(false)
   })
 })
