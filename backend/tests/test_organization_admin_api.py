@@ -334,3 +334,28 @@ class OrganizationAdminApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "assignment_workflow_conflict")
+
+    def test_duplicate_organization_code_update_returns_409_without_mutation(self):
+        self.current_user = self.admin
+        organization = self.db.scalar(
+            select(Organization).where(Organization.code == "supplymanagement")
+        )
+
+        response = self.client.put(
+            f"/api/v1/organizations/{organization.id}",
+            json={
+                "code": "fundmanagement",
+                "name": "Renamed Supply",
+                "organization_type": "company",
+                "company_code": "supplymanagement",
+                "sort_order": 20,
+                "is_active": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "organization_code_exists")
+        self.db.expire_all()
+        persisted = self.db.get(Organization, organization.id)
+        self.assertEqual(persisted.code, "supplymanagement")
+        self.assertNotEqual(persisted.name, "Renamed Supply")

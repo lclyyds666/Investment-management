@@ -88,6 +88,11 @@ def update_organization(db: Session, organization_id: int, payload: Organization
     organization = db.get(Organization, organization_id)
     if organization is None:
         raise AuthorizationConflictError("organization_not_found", "Organization does not exist.")
+    if db.scalar(select(Organization.id).where(
+        Organization.code == payload.code,
+        Organization.id != organization.id,
+    )) is not None:
+        raise AuthorizationConflictError("organization_code_exists", "Organization code already exists.")
     parent = _resolve_parent(db, payload.parent_code)
     cursor = parent
     while cursor is not None:
