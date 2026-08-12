@@ -409,6 +409,11 @@ class OrganizationAdminApiTest(unittest.TestCase):
         response = self.client.get("/api/v1/organizations/permissions")
         self.assertEqual(response.status_code, 403)
 
+    def test_business_user_cannot_read_system_audit_apis(self):
+        for path in ("/api/v1/audit/meta", "/api/v1/audit/logs", "/api/v1/ai-assistant/admin/conversations"):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 403)
+
     def test_business_user_cannot_read_position_templates(self):
         response = self.client.get("/api/v1/organizations/positions")
         self.assertEqual(response.status_code, 403)

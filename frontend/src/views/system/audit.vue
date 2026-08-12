@@ -64,14 +64,14 @@
           </template>
         </el-table-column>
         <el-table-column label="目标" min-width="130" show-overflow-tooltip>
-          <template #default="{ row }"><span v-if="isAuthorizationAudit(row)">目标用户：{{ row.target_desc || '—' }}</span><span v-else>{{ row.target_desc }}</span></template>
+          <template #default="{ row }"><span v-if="isAuthorizationAudit(row)">{{ targetLabel(row) }}：{{ row.target_desc || '—' }}</span><span v-else>{{ row.target_desc }}</span></template>
         </el-table-column>
         <el-table-column label="授权变更" min-width="300">
           <template #default="{ row }">
             <div v-if="isAuthorizationAudit(row)" class="authorization-change" data-testid="authorization-audit-detail">
               <div>原因：{{ row.reason || '—' }}</div>
-              <div class="change-tags"><span>变更前</span><el-tag v-for="item in assignmentTags(row.before_json)" :key="`before-${item}`" size="small" effect="plain">{{ item }}</el-tag><em v-if="!assignmentTags(row.before_json).length">无</em></div>
-              <div class="change-tags"><span>变更后</span><el-tag v-for="item in assignmentTags(row.after_json)" :key="`after-${item}`" size="small" type="success" effect="plain">{{ item }}</el-tag><em v-if="!assignmentTags(row.after_json).length">无</em></div>
+              <div class="change-tags"><span>变更前</span><el-tag v-for="item in snapshotTags(row, row.before_json, false)" :key="`before-${item}`" size="small" effect="plain">{{ item }}</el-tag><em v-if="!snapshotTags(row, row.before_json, false).length">无</em></div>
+              <div class="change-tags"><span>变更后</span><el-tag v-for="item in snapshotTags(row, row.after_json, true)" :key="`after-${item}`" size="small" type="success" effect="plain">{{ item }}</el-tag><em v-if="!snapshotTags(row, row.after_json, true).length">{{ row.action === 'assignment_terminate' ? '已移除' : '无' }}</em></div>
             </div>
             <span v-else>—</span>
           </template>
@@ -133,7 +133,24 @@ function actionType(a) {
   return 'info'
 }
 function isAuthorizationAudit(row) { return row?.module === 'organization_authorization' || ['assignment_replace', 'assignment_terminate', 'position_permissions_replace', 'position_update', 'organization_create', 'organization_update'].includes(row?.action) }
-function assignmentTags(snapshot) { const rows = Array.isArray(snapshot) ? snapshot : (snapshot ? [snapshot] : []); return rows.map(item => { const organization = item.organization_name || item.organization_code || item.organization?.name || item.organization?.code || ''; const position = item.position_name || item.position_code || item.position?.name || item.position?.code || ''; return [organization, position].filter(Boolean).join(' / ') || '授权配置' }) }
+function targetLabel(row) { const target = String(row?.target_desc || ''); if (target.startsWith('user#')) return '目标用户'; if (target.startsWith('organization#')) return '目标组织'; if (target.startsWith('position#')) return '目标岗位'; return '目标对象' }
+function snapshotTags(row, snapshot, isAfter) {
+  if (!snapshot || (Array.isArray(snapshot) && !snapshot.length)) return []
+  const items = Array.isArray(snapshot) ? snapshot : [snapshot]
+  if (row.action.startsWith('assignment_')) return items.map(item => {
+    const organization = item.organization_name || item.organization_code || item.organization?.name || item.organization?.code || ''
+    const position = item.position_name || item.position_code || item.position?.name || item.position?.code || ''
+    const term = item.valid_from ? `${item.valid_from}${item.valid_until ? ` 至 ${item.valid_until}` : ' 起'}` : ''
+    const status = item.status ? ` / ${item.status}` : ''
+    const governance = item.governance_scopes?.length ? ` / 治理 ${item.governance_scopes.map(scope => `${scope.scope_type}:${scope.scope_ref}`).join(',')}` : ''
+    const external = item.external ? ` / 外聘 ${item.external.provider_name}${item.external.service_scopes?.length ? `(${item.external.service_scopes.join(',')})` : ''}` : ''
+    return `${[organization, position].filter(Boolean).join(' / ')}${status}${term ? ` / ${term}` : ''}${governance}${external}`.trim()
+  })
+  if (row.action.startsWith('organization_')) return items.map(item => `组织：${item.code || '—'}${item.name ? ` / ${item.name}` : ''}${item.organization_type ? ` / ${item.organization_type}` : ''}${item.parent_code ? ` / 上级 ${item.parent_code}` : ''}${item.company_code ? ` / 公司 ${item.company_code}` : ''}${item.is_active === false ? ' / 停用' : ''}${Number.isInteger(item.sort_order) ? ` / 排序 ${item.sort_order}` : ''}`)
+  if (row.action === 'position_update') return items.map(item => `岗位：${item.code || '—'}${item.name ? ` / ${item.name}` : ''}${item.category ? ` / ${item.category}` : ''}${item.is_active === false ? ' / 停用' : ''}`)
+  if (row.action === 'position_permissions_replace') return items.map(item => `权限：${item.permission_code || '—'}${item.data_scope ? ` / ${item.data_scope}` : ''}${item.scope_ref ? ` / ${item.scope_ref}` : ''}`)
+  return isAfter ? ['已更新'] : ['原配置']
+}
 
 function buildParams() {
   return {
