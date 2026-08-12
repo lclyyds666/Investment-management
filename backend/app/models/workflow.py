@@ -215,9 +215,11 @@ class WorkflowTaskAction(Base):
     previous_assignee_id: Mapped[int | None] = mapped_column(
         ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True
     )
+    previous_assignee_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     new_assignee_id: Mapped[int | None] = mapped_column(
         ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True
     )
+    new_assignee_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
     returned_to_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

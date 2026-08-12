@@ -1,5 +1,7 @@
 import unittest
 from datetime import date, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -8,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.db.init_db  # noqa: F401
 from app.api.deps import get_current_user
-from app.core.enums import AssignmentStatus, ContractStatus, Role, WorkflowAction, WorkflowTaskStatus
+from app.core.enums import AssignmentStatus, ContractStatus, WorkflowAction, WorkflowTaskStatus
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
@@ -93,7 +95,6 @@ class WorkflowApiTest(unittest.TestCase):
             username=username,
             full_name=full_name,
             hashed_password="test",
-            role=Role.INFO_MAINTAINER if is_superuser else Role.UNASSIGNED,
             is_superuser=is_superuser,
             is_active=True,
         )
@@ -210,6 +211,18 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(conflict.json()["detail"]["actor"], self.leader.full_name)
         self.assertEqual(conflict.json()["detail"]["action"], WorkflowAction.APPROVE.value)
         self.assertIsNotNone(conflict.json()["detail"]["completed_at"])
+        self.assertEqual(
+            self.db.scalar(select(WorkflowTaskAction.actor_name).where(WorkflowTaskAction.task_id == task.id)),
+            self.leader.full_name,
+        )
+        self.current_user = self.handler
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/workflows/candidates",
+                params={"workflow_code": "supply.contract.v2", "node_code": "company_leader"},
+            ).status_code,
+            200,
+        )
 
     def test_reject_requires_nonblank_reason_and_timeline_preserves_snapshot(self):
         task = self.active_task()
@@ -225,6 +238,9 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(action["actor_name"], self.leader.full_name)
 
     def test_timeline_requires_target_view_permission_but_allows_information_maintainer(self):
+        self.current_user = self.handler
+        business_reader = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
+        self.assertEqual(business_reader.status_code, 200)
         self.current_user = self.publisher
         denied = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
         self.assertEqual(denied.status_code, 403)
@@ -252,12 +268,14 @@ class WorkflowApiTest(unittest.TestCase):
         )
         self.assertEqual(wrong_position.status_code, 422)
 
-        response = self.client.post(
-            f"/api/v1/workflows/tasks/{task.id}/reassign",
-            json={"user_id": self.other_leader.id, "reason": "人员调整"},
-        )
+        with patch.object(self.db, "commit", wraps=self.db.commit) as commit:
+            response = self.client.post(
+                f"/api/v1/workflows/tasks/{task.id}/reassign",
+                json={"user_id": self.other_leader.id, "reason": "人员调整"},
+            )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(commit.call_count, 1)
         self.db.expire_all()
         persisted = self.db.get(WorkflowTask, task.id)
         self.assertEqual(persisted.designated_user_id, self.other_leader.id)
@@ -268,8 +286,62 @@ class WorkflowApiTest(unittest.TestCase):
         )
         self.assertEqual(snapshot.previous_assignee_id, self.leader.id)
         self.assertEqual(snapshot.new_assignee_id, self.other_leader.id)
+        self.assertEqual(snapshot.previous_assignee_name, "Leader")
+        self.assertEqual(snapshot.new_assignee_name, "Other Leader")
         self.assertEqual(snapshot.reason, "人员调整")
         self.assertEqual(snapshot.actor_name, self.admin.full_name)
+        self.leader.full_name = "Renamed Former Leader"
+        self.other_leader.full_name = "Renamed New Leader"
+        snapshot.previous_assignee_id = None
+        snapshot.new_assignee_id = None
+        self.db.commit()
+        self.current_user = self.handler
+        timeline = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
+        reassign_snapshot = next(
+            item for item in timeline.json()["data"] if item["action"] == WorkflowAction.REASSIGN.value
+        )
+        self.assertIsNone(reassign_snapshot["previous_assignee_id"])
+        self.assertIsNone(reassign_snapshot["new_assignee_id"])
+        self.assertEqual(reassign_snapshot["previous_assignee_name"], "Leader")
+        self.assertEqual(reassign_snapshot["new_assignee_name"], "Other Leader")
+
+    def test_reassignment_cas_conflict_rolls_back_task_and_action_atomically(self):
+        task = self.active_task()
+        original = {
+            "designated_user_id": task.designated_user_id,
+            "designated_assignment_id": task.designated_assignment_id,
+            "status": task.status,
+            "version": task.version,
+        }
+        self.current_user = self.admin
+        real_execute = self.db.execute
+
+        def stale_task_update(statement, *args, **kwargs):
+            result = real_execute(statement, *args, **kwargs)
+            if getattr(statement, "is_update", False) and statement.table.name == "wf_task":
+                return SimpleNamespace(rowcount=0)
+            return result
+
+        with patch.object(self.db, "execute", side_effect=stale_task_update):
+            response = self.client.post(
+                f"/api/v1/workflows/tasks/{task.id}/reassign",
+                json={"user_id": self.other_leader.id, "reason": "并发改派"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "workflow_task_reassignment_conflict")
+        self.db.expire_all()
+        persisted = self.db.get(WorkflowTask, task.id)
+        self.assertEqual(persisted.designated_user_id, original["designated_user_id"])
+        self.assertEqual(persisted.designated_assignment_id, original["designated_assignment_id"])
+        self.assertEqual(persisted.status, original["status"])
+        self.assertEqual(persisted.version, original["version"])
+        self.assertIsNone(self.db.scalar(
+            select(WorkflowTaskAction).where(
+                WorkflowTaskAction.task_id == task.id,
+                WorkflowTaskAction.action == WorkflowAction.REASSIGN,
+            )
+        ))
 
     def test_reassignment_rejects_duplicate_person_and_shared_task(self):
         task = self.active_task()

@@ -69,6 +69,15 @@ class WorkflowModelContractTest(unittest.TestCase):
         self.assertIn("sys_user.id", targets)
         self.assertIn("sys_user_assignment.id", targets)
 
+    def test_reassignment_names_are_nullable_immutable_snapshots(self):
+        columns = WorkflowTaskAction.__table__.columns
+        self.assertIn("previous_assignee_name", columns)
+        self.assertIn("new_assignee_name", columns)
+        self.assertTrue(columns.previous_assignee_name.nullable)
+        self.assertTrue(columns.new_assignee_name.nullable)
+        self.assertEqual(columns.previous_assignee_name.type.length, 128)
+        self.assertEqual(columns.new_assignee_name.type.length, 128)
+
     def test_business_models_keep_legacy_fields_and_add_links(self):
         self.assertTrue({"status", "current_step", "workflow_instance_id"}.issubset(Contract.__table__.columns.keys()))
         self.assertTrue({"status", "current_step", "workflow_instance_id"}.issubset(ApprovalForm.__table__.columns.keys()))
@@ -110,6 +119,11 @@ class WorkflowModelContractTest(unittest.TestCase):
             self.assertIn(f"table_name = '{table_name}' AND column_name = '{column_name}'", source)
         self.assertIn("information_schema.statistics", source)
         self.assertIn("information_schema.table_constraints", source)
+        for column_name in ("previous_assignee_name", "new_assignee_name"):
+            self.assertIn(
+                f"table_name = 'wf_task_action' AND column_name = '{column_name}'",
+                source,
+            )
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from app.models.organization import ExternalAssignment, Organization, Position, 
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask, WorkflowTaskAction
 from app.schemas.common import Response
+from app.schemas.workflow import WorkflowTimelineAction
 from app.services.assignment_permissions import PermissionContext, has_permission
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
@@ -160,7 +161,10 @@ def inbox(
     return Response.ok([_task_card(db, task) for task in tasks])
 
 
-@router.get("/instances/{instance_id}/timeline", response_model=Response[list[dict]])
+@router.get(
+    "/instances/{instance_id}/timeline",
+    response_model=Response[list[WorkflowTimelineAction]],
+)
 def timeline(
     instance_id: int,
     current_user: User = Depends(get_current_user),
@@ -198,7 +202,9 @@ def timeline(
             "position_name": action.position_name,
             "comment": action.comment,
             "previous_assignee_id": action.previous_assignee_id,
+            "previous_assignee_name": action.previous_assignee_name,
             "new_assignee_id": action.new_assignee_id,
+            "new_assignee_name": action.new_assignee_name,
             "reason": action.reason,
             "returned_to_sequence": action.returned_to_sequence,
             "created_at": action.created_at,
@@ -218,6 +224,7 @@ def _complete(
         instance = complete_task(db, task_id, current_user, action, comment)
         db.commit()
     except WorkflowTaskConflict as error:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -366,7 +373,9 @@ def reassign(
         comment=reason,
         signature_snapshot=current_user.signature,
         previous_assignee_id=previous_assignee.id if previous_assignee is not None else None,
+        previous_assignee_name=(previous_assignee.full_name if previous_assignee is not None else None),
         new_assignee_id=assignment.user_id,
+        new_assignee_name=assignment.user.full_name,
         reason=reason,
     ))
     db.commit()

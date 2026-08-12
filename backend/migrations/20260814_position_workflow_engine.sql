@@ -120,7 +120,9 @@ CREATE TABLE IF NOT EXISTS `wf_task_action` (
   `comment` TEXT NOT NULL,
   `signature_snapshot` MEDIUMTEXT NULL,
   `previous_assignee_id` INT NULL,
+  `previous_assignee_name` VARCHAR(128) NULL,
   `new_assignee_id` INT NULL,
+  `new_assignee_name` VARCHAR(128) NULL,
   `reason` TEXT NOT NULL,
   `returned_to_sequence` INT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -132,6 +134,20 @@ CREATE TABLE IF NOT EXISTS `wf_task_action` (
   CONSTRAINT `fk_workflow_task_action_previous_assignee` FOREIGN KEY (`previous_assignee_id`) REFERENCES `sys_user` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_workflow_task_action_new_assignee` FOREIGN KEY (`new_assignee_id`) REFERENCES `sys_user` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET @statement = IF(
+  EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'wf_task_action' AND column_name = 'previous_assignee_name'),
+  'SELECT 1',
+  'ALTER TABLE `wf_task_action` ADD COLUMN `previous_assignee_name` VARCHAR(128) NULL AFTER `previous_assignee_id`'
+);
+PREPARE stmt FROM @statement; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @statement = IF(
+  EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'wf_task_action' AND column_name = 'new_assignee_name'),
+  'SELECT 1',
+  'ALTER TABLE `wf_task_action` ADD COLUMN `new_assignee_name` VARCHAR(128) NULL AFTER `new_assignee_id`'
+);
+PREPARE stmt FROM @statement; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @statement = IF(
   EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'biz_contract' AND column_name = 'workflow_instance_id'),
