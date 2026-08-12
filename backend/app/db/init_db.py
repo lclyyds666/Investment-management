@@ -41,6 +41,7 @@ from app.models.scenic import ScenicLedger  # noqa: F401
 from app.models.scenic_config import ScenicConfig
 from app.models.ticket_ledger import TicketLedger  # noqa: F401 确保 create_all 建表
 from app.models.user import User
+from app.services.organization_catalog import seed_authorization_catalog
 
 
 def mock_signature(name: str) -> str:
@@ -233,6 +234,7 @@ def init() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        seed_authorization_catalog(db)
         seed_users(db)
         seed_operation(db)
         seed_customers(db)
