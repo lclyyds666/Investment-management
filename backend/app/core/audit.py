@@ -155,6 +155,42 @@ def write_log(
             db.close()
 
 
+def record_authorization_audit(
+    db,
+    actor,
+    action: str,
+    target: dict,
+    before: dict | list | None,
+    after: dict | list | None,
+    reason: str | None = None,
+) -> None:
+    """Add one authorization audit row to the caller's transaction."""
+    from app.models.audit import AuditLog
+
+    actor_position_code = (
+        "system.information_maintainer"
+        if actor.is_superuser or actor.role.value == "info_maintainer"
+        else None
+    )
+    db.add(AuditLog(
+        user_id=actor.id,
+        username=actor.username,
+        full_name=actor.full_name,
+        role=actor.role.value,
+        action=action,
+        module="organization_authorization",
+        target_desc=target.get("target_desc", ""),
+        status="success",
+        organization_code=target.get("organization_code"),
+        organization_name=target.get("organization_name"),
+        position_code=actor_position_code or target.get("position_code"),
+        position_name=("信息维护" if actor_position_code else target.get("position_name")),
+        before_json=before,
+        after_json=after,
+        reason=reason,
+    ))
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
     """自动采集所有写操作 + 白名单导出类 GET。"""
 
@@ -181,6 +217,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
             last = path.rstrip("/").rsplit("/", 1)[-1]
             if last not in _GET_LOG_SUFFIX:
                 return
+        elif path.startswith(f"{_API_PREFIX}/organizations"):
+            return
 
         # 解析操作者（从 Authorization Bearer 解 token → 查用户快照）
         user_id = username = full_name = role = None

@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
@@ -12,6 +12,7 @@ from app.main import create_app
 from app.core.enums import DataScope, PositionCategory, Role
 from app.db.base import Base
 from app.models.organization import Organization, Position, UserAssignment
+from app.models.audit import AuditLog
 from app.models.user import User
 from app.schemas.organization_admin import (
     AssignmentWrite,
@@ -227,6 +228,63 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
 
         self.assertEqual(assignments[0].external_detail.provider_name, "Counsel Firm")
         self.assertEqual(assignments[0].external_detail.service_scopes, ["contract_review"])
+
+    def test_assignment_replace_records_structured_before_after(self):
+        admin = User(
+            username="audit-admin",
+            full_name="Audit Admin",
+            hashed_password="test",
+            role=Role.INFO_MAINTAINER,
+            is_superuser=True,
+        )
+        self.db.add(admin)
+        self.db.commit()
+        self.db.add(UserAssignment(
+            user_id=self.user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == "supplymanagement")
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == "supply.business_handler")
+            ),
+            valid_from=date(2026, 1, 1),
+        ))
+        self.db.commit()
+        payload = UserAssignmentsReplace(assignments=[
+            AssignmentWrite(
+                organization_code="supplymanagement",
+                position_code="supply.business_reviewer",
+                valid_from=date(2026, 1, 1),
+            )
+        ])
+
+        replace_user_assignments(
+            self.db,
+            actor=admin,
+            target_user=self.user,
+            payload=payload,
+            reason="岗位调整",
+        )
+
+        row = self.db.scalar(select(AuditLog).where(AuditLog.action == "assignment_replace"))
+        self.assertEqual(
+            self.db.scalar(
+                select(func.count()).select_from(AuditLog).where(
+                    AuditLog.action == "assignment_replace"
+                )
+            ),
+            1,
+        )
+        self.assertEqual(row.reason, "岗位调整")
+        self.assertIn(
+            "supply.business_handler",
+            {item["position_code"] for item in row.before_json},
+        )
+        self.assertIn(
+            "supply.business_reviewer",
+            {item["position_code"] for item in row.after_json},
+        )
+        self.assertEqual(row.position_code, "system.information_maintainer")
 
 
 class OrganizationAdminApiTest(unittest.TestCase):

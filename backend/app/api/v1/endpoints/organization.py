@@ -206,48 +206,48 @@ def list_user_assignments(
 @router.post("")
 def create_organization_endpoint(
     payload: OrganizationWrite,
-    _: User = Depends(require_superuser),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _organization_summary(_conflict_boundary(lambda: create_organization(db, payload)))
+    return _organization_summary(_conflict_boundary(lambda: create_organization(db, payload, actor=current_user)))
 
 
 @router.put("/{organization_id}")
 def update_organization_endpoint(
     organization_id: int,
     payload: OrganizationWrite,
-    _: User = Depends(require_superuser),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
     return _organization_summary(
-        _conflict_boundary(lambda: update_organization(db, organization_id, payload))
+        _conflict_boundary(lambda: update_organization(db, organization_id, payload, actor=current_user))
     )
 
 
 @router.post("/positions")
 def create_position_endpoint(
     payload: PositionWrite,
-    _: User = Depends(require_superuser),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _position_summary(_conflict_boundary(lambda: create_position(db, payload)))
+    return _position_summary(_conflict_boundary(lambda: create_position(db, payload, actor=current_user)))
 
 
 @router.put("/positions/{position_id}")
 def update_position_endpoint(
     position_id: int,
     payload: PositionWrite,
-    _: User = Depends(require_superuser),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _position_summary(_conflict_boundary(lambda: update_position(db, position_id, payload)))
+    return _position_summary(_conflict_boundary(lambda: update_position(db, position_id, payload, actor=current_user)))
 
 
 @router.put("/positions/{position_id}/permissions")
 def update_position_permissions_endpoint(
     position_id: int,
     payload: list[PositionPermissionWrite],
-    _: User = Depends(require_superuser),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     return [
@@ -258,7 +258,7 @@ def update_position_permissions_endpoint(
             "scope_ref": link.scope_ref,
         }
         for link in _conflict_boundary(
-            lambda: replace_position_permissions(db, position_id, payload)
+            lambda: replace_position_permissions(db, position_id, payload, actor=current_user)
         )
     ]
 
@@ -267,12 +267,12 @@ def update_position_permissions_endpoint(
 def update_user_assignments_endpoint(
     user_id: int,
     payload: UserAssignmentsReplace,
-    _: User = Depends(require_superuser),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     return [
         _assignment_summary(assignment)
         for assignment in _conflict_boundary(
-            lambda: replace_user_assignments(db, user_id, payload)
+            lambda: replace_user_assignments(db, user_id, payload, actor=current_user)
         )
     ]
