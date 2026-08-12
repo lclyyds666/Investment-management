@@ -795,6 +795,7 @@ def _materialize_legacy_workflow(
     current_sequence: int,
     designated_assignment_ids: dict[str, int],
     materialized_at: datetime,
+    on_date: date,
 ) -> int:
     target = _workflow_target(db, target_type, target_id)
     if target.status != ContractStatus.PENDING or target.workflow_instance_id is not None:
@@ -813,7 +814,18 @@ def _materialize_legacy_workflow(
             {"target_type": target_type.value, "target_id": target_id},
         )
 
-    definition, version = _published_workflow(db, WORKFLOW_CODE_BY_TARGET[target_type])
+    workflow_code = WORKFLOW_CODE_BY_TARGET[target_type]
+    definition, version = _published_workflow(db, workflow_code)
+    catalog_definition = next(
+        item for item in WORKFLOW_DEFINITIONS if item.code == workflow_code
+    )
+    if (
+        definition.name != catalog_definition.name
+        or definition.target_type != catalog_definition.target_type
+        or version.version != catalog_definition.version
+        or _persisted_nodes(version) != _catalog_nodes(catalog_definition)
+    ):
+        _raise_catalog_drift(workflow_code, catalog_definition.version)
     nodes = sorted(version.nodes, key=lambda item: item.sequence)
     current_node = next(
         (item for item in nodes if item.sequence == current_sequence), None
@@ -846,7 +858,7 @@ def _materialize_legacy_workflow(
         node = future_designated_nodes[node_code]
         eligible_assignments = [
             item for item in _active_assignments(
-                db, {node.position_code}, materialized_at.date()
+                db, {node.position_code}, on_date
             )
             if _assignment_has_required_scope(item)
         ]
@@ -912,6 +924,7 @@ def materialize_legacy_workflow(
     current_sequence: int,
     designated_assignment_ids: dict[str, int],
     materialized_at: datetime,
+    on_date: date,
 ) -> WorkflowInstance:
     target_type = WorkflowTargetType(target_type)
     with db.no_autoflush:
@@ -931,8 +944,18 @@ def materialize_legacy_workflow(
             current_sequence,
             dict(designated_assignment_ids),
             materialized_at,
+            on_date,
         )
         workflow_session.commit()
+    except IntegrityError as error:
+        workflow_session.rollback()
+        if not _is_duplicate_workflow_target(error):
+            raise
+        raise WorkflowValidationError(
+            "workflow_already_started",
+            "The target already has a workflow instance.",
+            {"target_type": target_type.value, "target_id": target_id},
+        ) from error
     except Exception:
         workflow_session.rollback()
         raise

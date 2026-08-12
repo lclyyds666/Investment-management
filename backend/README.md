@@ -118,12 +118,12 @@ investigated or reversed operationally.
 Do not enable version 2 submissions until this sequence finishes successfully:
 
 1. Pause all new contract and approval-form submissions.
-2. Run `python scripts/migrate_active_workflows.py --report active-workflow-preview.json`.
+2. Run `python -m scripts.migrate_active_workflows --report active-workflow-preview.json`.
 3. Resolve every `needs_designation` and `invalid_state` row in the report. A
    designated position must have exactly one eligible person; the migration never
    chooses between zero or multiple candidates.
 4. Rerun the dry-run until it contains no unresolved pending row, then run
-   `python scripts/migrate_active_workflows.py --apply --report active-workflow-applied.json`.
+   `python -m scripts.migrate_active_workflows --apply --report active-workflow-applied.json`.
 5. Verify the database contains no `pending` contract or approval form whose
    `workflow_instance_id` is null, and compare the applied report to the preview.
 6. Enable version 2 submissions.
@@ -134,3 +134,7 @@ have exactly one eligible person. Existing approved/rejected rows remain version
 history and receive no workflow instance or runtime task. Migration also creates no
 synthetic `SUBMIT`, workflow action, `Approval`, or `ApprovalFormAction` audit row;
 the existing version 1 history remains authoritative for actions before cutover.
+The report is written and flushed to a same-directory temporary file before the
+database commit, then atomically renamed after commit. If that final rename fails,
+the command exits nonzero and prints the retained temporary path for recovery; do
+not rerun apply until that report has been preserved and the database verified.

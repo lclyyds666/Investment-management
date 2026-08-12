@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 import threading
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,10 +51,15 @@ from app.services.workflow_engine import (
     refresh_invalid_designated_tasks,
     seed_workflow_definitions,
     start_workflow,
+    materialize_legacy_workflow,
     task_is_actionable_by,
     validate_workflow_version,
 )
-from scripts.migrate_active_workflows import migrate_active_workflows
+from scripts.migrate_active_workflows import (
+    ReportFinalizeError,
+    migrate_active_workflows,
+    save_active_workflow_migration_report,
+)
 
 
 class WorkflowCatalogTest(unittest.TestCase):
@@ -923,6 +929,154 @@ class ActiveWorkflowMigrationTest(unittest.TestCase):
         item = self.report_item(report, "contract", self.contract.id)
         self.assertEqual(item["classification"], "invalid_state")
         self.assertIn("workflow instance", item["admin_action"])
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+    def test_apply_rejects_persisted_catalog_drift_without_materializing(self):
+        node = self.db.scalar(select(WorkflowNode).where(
+            WorkflowNode.version_id == self.db.scalar(
+                select(WorkflowDefinition.active_version_id).where(
+                    WorkflowDefinition.code == "supply.contract.v2"
+                )
+            ),
+            WorkflowNode.sequence == 3,
+        ))
+        node.position_code = "wrong.risk.position"
+        self.db.commit()
+
+        report = migrate_active_workflows(
+            self.db, apply=True, as_of=date(2026, 8, 13)
+        )
+
+        item = self.report_item(report, "contract", self.contract.id)
+        self.assertEqual(item["classification"], "mappable_shared")
+        self.assertEqual(item["outcome"], "invalid_state")
+        self.assertIn("catalog drift", item["admin_action"])
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+
+    def test_apply_revalidates_designations_on_explicit_as_of_date(self):
+        governance_assignment = next(
+            item for item in self.governance.assignments
+            if item.position.code == "governance.supply_leader"
+        )
+        governance_assignment.valid_until = date(2026, 8, 13)
+        self.db.commit()
+
+        report = migrate_active_workflows(
+            self.db,
+            apply=True,
+            as_of=date(2026, 8, 13),
+            migrated_at=datetime(2026, 8, 14, 0, 1),
+        )
+
+        item = self.report_item(report, "contract", self.contract.id)
+        self.assertEqual(item["outcome"], "migrated")
+        self.assertIsNotNone(self.db.get(Contract, self.contract.id).workflow_instance_id)
+
+    def test_unique_race_becomes_stable_invalid_outcome_and_batch_continues(self):
+        second = Contract(
+            contract_no="TASK9-RACE-SECOND",
+            title="Race second target",
+            created_by=self.handler.id,
+            status=ContractStatus.PENDING,
+            current_step=3,
+        )
+        self.db.add(second)
+        self.db.commit()
+        real_materialize = materialize_legacy_workflow
+        raced = False
+
+        def race_once(db, target_type, target_id, *args, **kwargs):
+            nonlocal raced
+            if not raced:
+                raced = True
+                definition = db.scalar(select(WorkflowDefinition).where(
+                    WorkflowDefinition.code == "supply.contract.v2"
+                ))
+                db.add(WorkflowInstance(
+                    definition_id=definition.id,
+                    version_id=definition.active_version_id,
+                    target_type=target_type,
+                    target_id=target_id,
+                    status=WorkflowInstanceStatus.ACTIVE,
+                    current_sequence=3,
+                    submitted_by=self.handler.id,
+                    submitted_at=datetime(2026, 8, 13, 9, 0),
+                ))
+                db.flush()
+                raise WorkflowValidationError(
+                    "workflow_already_started",
+                    "Concurrent workflow materialization won the race.",
+                )
+            return real_materialize(db, target_type, target_id, *args, **kwargs)
+
+        with patch(
+            "scripts.migrate_active_workflows.materialize_legacy_workflow",
+            side_effect=race_once,
+        ):
+            report = migrate_active_workflows(
+                self.db, apply=True, as_of=date(2026, 8, 13)
+            )
+
+        first_item = self.report_item(report, "contract", self.contract.id)
+        second_item = self.report_item(report, "contract", second.id)
+        self.assertEqual(first_item["outcome"], "invalid_state")
+        self.assertEqual(second_item["outcome"], "migrated")
+        self.assertEqual(report["outcome_counts"], {"invalid_state": 1, "migrated": 1})
+        self.assertTrue(self.db.in_transaction())
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 2)
+
+    def test_report_path_failure_prevents_database_migration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "missing" / "report.json"
+            with self.assertRaises(OSError):
+                save_active_workflow_migration_report(
+                    self.db,
+                    report_path,
+                    apply=True,
+                    as_of=date(2026, 8, 13),
+                )
+
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+        self.assertIsNone(self.db.get(Contract, self.contract.id).workflow_instance_id)
+
+    def test_successful_cutover_commits_database_and_atomically_saves_report(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "report.json"
+            report = save_active_workflow_migration_report(
+                self.db,
+                report_path,
+                apply=True,
+                as_of=date(2026, 8, 13),
+            )
+
+            saved = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved, report)
+            self.assertEqual(saved["outcome_counts"], {"migrated": 1})
+            self.assertEqual(list(Path(temp_dir).glob("*.tmp")), [])
+        self.db.rollback()
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+    def test_post_commit_rename_failure_preserves_recoverable_temp_report(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "report.json"
+            with patch(
+                "scripts.migrate_active_workflows.os.replace",
+                side_effect=OSError("rename failed"),
+            ):
+                with self.assertRaises(ReportFinalizeError) as raised:
+                    save_active_workflow_migration_report(
+                        self.db,
+                        report_path,
+                        apply=True,
+                        as_of=date(2026, 8, 13),
+                    )
+
+            temp_reports = list(Path(temp_dir).glob("*.tmp"))
+            self.assertEqual(len(temp_reports), 1)
+            self.assertIn(str(temp_reports[0]), str(raised.exception))
+            saved = json.loads(temp_reports[0].read_text(encoding="utf-8"))
+            self.assertEqual(saved["outcome_counts"], {"migrated": 1})
+        self.db.rollback()
         self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
 
 

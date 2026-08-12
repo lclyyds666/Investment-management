@@ -1,7 +1,12 @@
 import argparse
 import json
+import os
+import sys
+import tempfile
 from collections import Counter
 from datetime import date, datetime
+from pathlib import Path
+from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,6 +25,7 @@ from app.models.contract import Contract
 from app.models.workflow import WorkflowInstance
 from app.services.workflow_catalog import WORKFLOW_DEFINITIONS
 from app.services.workflow_engine import (
+    WorkflowValidationError,
     eligible_designated_users,
     materialize_legacy_workflow,
 )
@@ -94,7 +100,7 @@ def _historical_item(target_type, target, legacy_chain):
         "expected_role": expected_role,
         "classification": "historical_only",
         "admin_action": "retain version 1 history; do not materialize",
-        "migrated": False,
+        "outcome": "historical_only",
     }, {}
 
 
@@ -110,7 +116,7 @@ def _pending_item(db, target_type, target, legacy_chain, as_of):
             "expected_role": None,
             "classification": "invalid_state",
             "admin_action": "repair the missing target workflow instance link",
-            "migrated": False,
+            "outcome": "invalid_state",
         }, {}
     if not 0 <= target.current_step < len(legacy_chain):
         return {
@@ -120,7 +126,7 @@ def _pending_item(db, target_type, target, legacy_chain, as_of):
             "expected_role": None,
             "classification": "invalid_state",
             "admin_action": "repair current_step against the version 1 chain",
-            "migrated": False,
+            "outcome": "invalid_state",
         }, {}
 
     expected_role = legacy_chain[target.current_step].value
@@ -135,7 +141,7 @@ def _pending_item(db, target_type, target, legacy_chain, as_of):
             "expected_role": expected_role,
             "classification": "invalid_state",
             "admin_action": "repair the version 1 step to version 2 position mapping",
-            "migrated": False,
+            "outcome": "invalid_state",
         }, {}
     if current_node.mode != WorkflowAssigneeMode.SHARED_POSITION.value:
         return {
@@ -145,7 +151,7 @@ def _pending_item(db, target_type, target, legacy_chain, as_of):
             "expected_role": expected_role,
             "classification": "needs_designation",
             "admin_action": f"designate the current node {current_node.code} manually",
-            "migrated": False,
+            "outcome": "needs_designation",
         }, {}
 
     designated_assignment_ids = {}
@@ -175,7 +181,7 @@ def _pending_item(db, target_type, target, legacy_chain, as_of):
             "expected_role": expected_role,
             "classification": "needs_designation",
             "admin_action": "resolve designation: " + ", ".join(unresolved_nodes),
-            "migrated": False,
+            "outcome": "needs_designation",
         }, {}
     return {
         "target_type": target_type.value,
@@ -184,8 +190,44 @@ def _pending_item(db, target_type, target, legacy_chain, as_of):
         "expected_role": expected_role,
         "classification": "mappable_shared",
         "admin_action": "run apply migration",
-        "migrated": False,
+        "outcome": "not_applied",
     }, designated_assignment_ids
+
+
+def _race_outcome(db: Session, target_type: WorkflowTargetType, target_id: int) -> str:
+    instance_id = db.scalar(select(WorkflowInstance.id).where(
+        WorkflowInstance.target_type == target_type,
+        WorkflowInstance.target_id == target_id,
+    ))
+    target_model = Contract if target_type == WorkflowTargetType.CONTRACT else ApprovalForm
+    linked_instance_id = db.scalar(select(target_model.workflow_instance_id).where(
+        target_model.id == target_id
+    ))
+    if instance_id is not None and linked_instance_id == instance_id:
+        return "already_migrated"
+    return "invalid_state"
+
+
+def _apply_failure_outcome(
+    db: Session,
+    item: dict,
+    target_type: WorkflowTargetType,
+    target_id: int,
+    error: WorkflowValidationError,
+) -> None:
+    if error.code in {"workflow_already_started", "legacy_workflow_not_migratable"}:
+        item["outcome"] = _race_outcome(db, target_type, target_id)
+        item["admin_action"] = (
+            "verify concurrently migrated workflow instance"
+            if item["outcome"] == "already_migrated"
+            else "repair concurrent or unlinked workflow instance state"
+        )
+    elif error.code == "workflow_catalog_drift":
+        item["outcome"] = "invalid_state"
+        item["admin_action"] = "repair published workflow catalog drift before apply"
+    else:
+        item["outcome"] = "needs_designation"
+        item["admin_action"] = f"rerun dry-run after migration validation: {error.code}"
 
 
 def migrate_active_workflows(
@@ -211,52 +253,126 @@ def migrate_active_workflows(
                     db, target_type, target, legacy_chain, as_of
                 )
             if apply and item["classification"] == "mappable_shared":
-                materialize_legacy_workflow(
-                    db,
-                    target_type,
-                    target.id,
-                    target.current_step,
-                    assignments,
-                    migrated_at,
-                )
-                item["migrated"] = True
-                item["admin_action"] = "verify migrated workflow instance"
-                migrated += 1
+                try:
+                    materialize_legacy_workflow(
+                        db,
+                        target_type,
+                        target.id,
+                        target.current_step,
+                        assignments,
+                        migrated_at,
+                        as_of,
+                    )
+                except WorkflowValidationError as error:
+                    _apply_failure_outcome(
+                        db, item, target_type, target.id, error
+                    )
+                else:
+                    item["outcome"] = "migrated"
+                    item["admin_action"] = "verify migrated workflow instance"
+                    migrated += 1
             items.append(item)
-    counts = Counter(item["classification"] for item in items)
+    classification_counts = Counter(item["classification"] for item in items)
+    outcome_counts = Counter(item["outcome"] for item in items)
     unresolved = sum(
-        counts[classification]
-        for classification in ("needs_designation", "invalid_state")
+        outcome_counts[outcome]
+        for outcome in ("needs_designation", "invalid_state")
     )
     return {
         "mode": "apply" if apply else "dry-run",
         "as_of": as_of.isoformat(),
         "items": items,
-        "counts": dict(sorted(counts.items())),
+        "classification_counts": dict(sorted(classification_counts.items())),
+        "outcome_counts": dict(sorted(outcome_counts.items())),
         "migrated": migrated,
         "unresolved": unresolved,
     }
 
 
-def main() -> int:
+class ReportFinalizeError(OSError):
+    pass
+
+
+def _write_report_temp(report_path: Path, report: dict, temp_path: Path | None = None) -> Path:
+    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    if temp_path is None:
+        descriptor, name = tempfile.mkstemp(
+            prefix=f"{report_path.name}.", suffix=".tmp", dir=report_path.parent
+        )
+        temp_path = Path(name)
+    else:
+        descriptor = os.open(temp_path, os.O_WRONLY | os.O_TRUNC)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return temp_path
+
+
+def save_active_workflow_migration_report(
+    db: Session,
+    report_path: str | Path,
+    *,
+    apply: bool = False,
+    as_of: date | None = None,
+    migrated_at: datetime | None = None,
+) -> dict:
+    report_path = Path(report_path)
+    preview = migrate_active_workflows(db, apply=False, as_of=as_of)
+    json.dumps(preview, ensure_ascii=False, indent=2)
+    temp_path = _write_report_temp(report_path, preview)
+    committed = False
+    try:
+        report = migrate_active_workflows(
+            db,
+            apply=apply,
+            as_of=as_of,
+            migrated_at=migrated_at,
+        )
+        _write_report_temp(report_path, report, temp_path)
+        if apply:
+            db.commit()
+            committed = True
+        else:
+            db.rollback()
+        try:
+            os.replace(temp_path, report_path)
+        except OSError as error:
+            if committed:
+                raise ReportFinalizeError(
+                    f"database committed; recover report from temporary file: {temp_path}"
+                ) from error
+            raise
+        return report
+    except Exception:
+        if not committed:
+            db.rollback()
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Classify or safely materialize active legacy workflows."
     )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--report", default="active-workflow-migration.json")
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
     with SessionLocal() as db:
         try:
-            report = migrate_active_workflows(db, apply=args.apply)
-            if args.apply:
-                db.commit()
-            else:
-                db.rollback()
-        except Exception:
-            db.rollback()
-            raise
-    with open(args.report, "w", encoding="utf-8") as stream:
-        json.dump(report, stream, ensure_ascii=False, indent=2)
+            report = save_active_workflow_migration_report(
+                db, args.report, apply=args.apply
+            )
+        except Exception as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if not report["unresolved"] else 2
 
