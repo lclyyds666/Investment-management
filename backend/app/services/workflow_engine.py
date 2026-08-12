@@ -752,6 +752,59 @@ def _task_assignment_is_effective(
     )
 
 
+def _designated_task_assignment_is_effective(
+    task: WorkflowTask,
+    assignment: UserAssignment | None,
+    on_date: date,
+) -> bool:
+    return (
+        assignment is not None
+        and assignment.user_id == task.designated_user_id
+        and assignment.is_effective_on(on_date)
+        and assignment.user.is_active
+        and assignment.position.code == task.required_position_code
+        and assignment.organization.is_active
+        and assignment.position.is_active
+        and _assignment_has_required_scope(assignment)
+    )
+
+
+def _designated_task_assignment(
+    db: Session,
+    task: WorkflowTask,
+) -> UserAssignment | None:
+    return db.scalar(
+        select(UserAssignment)
+        .where(UserAssignment.id == task.designated_assignment_id)
+        .options(
+            joinedload(UserAssignment.user),
+            joinedload(UserAssignment.organization),
+            joinedload(UserAssignment.position),
+            joinedload(UserAssignment.external_detail),
+        )
+    )
+
+
+def _mark_invalid_designated_task(
+    db: Session,
+    task: WorkflowTask,
+    on_date: date,
+) -> UserAssignment | None:
+    assignment = _designated_task_assignment(db, task)
+    if _designated_task_assignment_is_effective(task, assignment, on_date):
+        return assignment
+    db.execute(
+        update(WorkflowTask)
+        .where(
+            WorkflowTask.id == task.id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        )
+        .values(status=WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+    )
+    db.expire(task)
+    return None
+
+
 def _actor_has_other_workflow_role(
     db: Session,
     task: WorkflowTask,
@@ -785,27 +838,10 @@ def _effective_task_assignment(
     if _actor_has_other_workflow_role(db, task, user.id):
         return None
     if task.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER:
-        assignment = db.scalar(
-            select(UserAssignment)
-            .where(UserAssignment.id == task.designated_assignment_id)
-            .options(
-                joinedload(UserAssignment.organization),
-                joinedload(UserAssignment.position),
-                joinedload(UserAssignment.external_detail),
-            )
-        )
-        if not _task_assignment_is_effective(task, assignment, user, on_date):
-            db.execute(
-                update(WorkflowTask)
-                .where(
-                    WorkflowTask.id == task.id,
-                    WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
-                )
-                .values(status=WorkflowTaskStatus.AWAITING_REASSIGNMENT)
-            )
-            db.expire(task)
+        assignment = _mark_invalid_designated_task(db, task, on_date)
+        if assignment is None or user.id != task.designated_user_id:
             return None
-        return assignment
+        return assignment if _task_assignment_is_effective(task, assignment, user, on_date) else None
 
     if task.instance.submitted_by == user.id:
         return None
@@ -849,8 +885,8 @@ def refresh_invalid_designated_tasks(
         )
     ))
     for task in tasks:
-        if task.designated_user is None or not _task_assignment_is_effective(
-            task, task.designated_assignment, task.designated_user, effective_date
+        if not _designated_task_assignment_is_effective(
+            task, task.designated_assignment, effective_date
         ):
             db.execute(
                 update(WorkflowTask)
@@ -959,7 +995,17 @@ def _complete_task(
         )
         if previous_task is None:
             raise WorkflowValidationError("workflow_return_not_allowed", "The first workflow node cannot be returned.")
-        previous_task.status = WorkflowTaskStatus.ACTIVE
+        if previous_task.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER:
+            previous_assignment = _designated_task_assignment(db, previous_task)
+            previous_task.status = (
+                WorkflowTaskStatus.ACTIVE
+                if _designated_task_assignment_is_effective(
+                    previous_task, previous_assignment, completed_at.date()
+                )
+                else WorkflowTaskStatus.AWAITING_REASSIGNMENT
+            )
+        else:
+            previous_task.status = WorkflowTaskStatus.ACTIVE
         previous_task.activated_at = completed_at
         previous_task.completed_at = None
         instance.current_sequence = previous_task.sequence

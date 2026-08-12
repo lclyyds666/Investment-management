@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
@@ -715,6 +715,7 @@ class WorkflowAuthorizationTest(unittest.TestCase):
     def test_designated_task_only_allows_selected_user(self):
         self.assertTrue(task_is_actionable_by(self.db, self.designated_task, self.leader))
         self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.leader_b))
+        self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
 
     def test_superuser_cannot_act_without_business_assignment(self):
         self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.admin))
@@ -770,6 +771,26 @@ class WorkflowAuthorizationTest(unittest.TestCase):
         ))
         self.assertEqual(action.returned_to_sequence, legal_task.sequence)
         self.assertEqual(action.position_code, "investment.duty.supply_risk_review")
+
+    def test_return_to_expired_designated_assignment_awaits_reassignment(self):
+        complete_task(self.db, self.designated_task.id, self.leader, WorkflowAction.APPROVE, "approved")
+        legal_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 2,
+        ))
+        complete_task(self.db, legal_task.id, self.legal, WorkflowAction.APPROVE, "approved")
+        expired_assignment = self.legal.assignments[0]
+        expired_assignment.valid_until = date.today() - timedelta(days=1)
+        self.db.commit()
+        risk_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 3,
+        ))
+        complete_task(self.db, risk_task.id, self.reviewer_a, WorkflowAction.RETURN, "needs reassignment")
+        self.db.refresh(legal_task)
+        self.db.refresh(self.instance)
+        self.assertEqual(legal_task.status, WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+        self.assertEqual(self.instance.current_sequence, legal_task.sequence)
 
 
 class WorkflowPublicationContinuationTest(unittest.TestCase):
