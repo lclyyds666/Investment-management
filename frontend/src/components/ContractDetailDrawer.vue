@@ -99,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Printer, Guide, Document, View, Download } from '@element-plus/icons-vue'
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
@@ -123,8 +123,13 @@ const workflowTasks = ref([])
 const timelineLoading = ref(false)
 const timelineError = ref(false)
 const docLoading = ref(false)
+let loadGeneration = 0
 
 const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) : ''))
+
+function isSameTarget(left, right) {
+  return String(left) === String(right)
+}
 
 async function downloadAttachment() {
   if (!contract.value?.attachment_name) return
@@ -156,7 +161,9 @@ function fmtDate(t) {
 }
 
 async function load() {
-  if (!props.contractId) return
+  const targetId = props.contractId
+  if (!targetId) return
+  const generation = ++loadGeneration
   detailLoading.value = true
   contract.value = null
   approvals.value = []
@@ -164,29 +171,45 @@ async function load() {
   timelineLoading.value = false
   timelineError.value = false
   try {
-    contract.value = await getContract(props.contractId)
+    const loadedContract = await getContract(targetId)
+    if (generation !== loadGeneration || !isSameTarget(props.contractId, targetId)) return
+    contract.value = loadedContract
   } finally {
-    detailLoading.value = false
+    if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) {
+      detailLoading.value = false
+    }
   }
-  await loadTimeline()
+  if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) {
+    await loadTimeline(generation, targetId)
+  }
 }
 
-async function loadTimeline() {
+async function loadTimeline(generation = loadGeneration, targetId = props.contractId) {
   if (!contract.value) return
+  const timelineContract = contract.value
+  if (generation !== loadGeneration || !isSameTarget(targetId, props.contractId) || !isSameTarget(timelineContract.id, targetId)) return
   approvals.value = []
   workflowTasks.value = []
   timelineLoading.value = true
   timelineError.value = false
   try {
-    if (contract.value.workflow_version >= 2) {
-      workflowTasks.value = await getWorkflowTimeline(contract.value.workflow_instance_id)
+    if (timelineContract.workflow_version >= 2) {
+      const tasks = await getWorkflowTimeline(timelineContract.workflow_instance_id)
+      if (generation !== loadGeneration || !isSameTarget(targetId, props.contractId)) return
+      workflowTasks.value = tasks
     } else {
-      approvals.value = await listApprovals(contract.value.id)
+      const loadedApprovals = await listApprovals(timelineContract.id)
+      if (generation !== loadGeneration || !isSameTarget(targetId, props.contractId)) return
+      approvals.value = loadedApprovals
     }
   } catch {
-    timelineError.value = true
+    if (generation === loadGeneration && isSameTarget(targetId, props.contractId)) {
+      timelineError.value = true
+    }
   } finally {
-    timelineLoading.value = false
+    if (generation === loadGeneration && isSameTarget(targetId, props.contractId)) {
+      timelineLoading.value = false
+    }
   }
 }
 
@@ -216,6 +239,10 @@ watch(
   },
   { immediate: true }
 )
+
+onBeforeUnmount(() => {
+  loadGeneration += 1
+})
 </script>
 
 <style scoped lang="scss">

@@ -26,6 +26,16 @@ vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), 
 
 import ApprovalView from './index.vue'
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function mountView() {
   return shallowMount(ApprovalView, {
     global: {
@@ -164,5 +174,64 @@ describe('approval active-task actions', () => {
     await retry
     expect(wrapper.vm.timelineLoading).toBe(false)
     expect(wrapper.vm.timelineError).toBe(true)
+  })
+
+  it('ignores a late basic response after switching approval details', async () => {
+    const detailA = deferred()
+    const detailB = deferred()
+    approvalApi.getForm.mockImplementation((id) => (id === 21 ? detailA.promise : detailB.promise))
+    workflowApi.getWorkflowTimeline.mockResolvedValue([{ id: 'timeline-b' }])
+    const wrapper = mountView()
+    await flushPromises()
+
+    const openA = wrapper.vm.openDetail({ id: 21 })
+    const openB = wrapper.vm.openDetail({ id: 22 })
+    detailB.resolve({ id: 22, workflow_instance_id: 220, workflow_version: 2 })
+    await openB
+    detailA.resolve({ id: 21, workflow_instance_id: 210, workflow_version: 2 })
+    await openA
+
+    expect(wrapper.vm.detail.id).toBe(22)
+    expect(wrapper.vm.workflowTasks).toEqual([{ id: 'timeline-b' }])
+    expect(wrapper.vm.timelineError).toBe(false)
+    expect(workflowApi.getWorkflowTimeline).toHaveBeenCalledTimes(1)
+    expect(workflowApi.getWorkflowTimeline).toHaveBeenCalledWith(220)
+  })
+
+  it('ignores a stale timeline retry after switching approval details', async () => {
+    const staleRetry = deferred()
+    approvalApi.getForm.mockImplementation((id) => Promise.resolve({ id, workflow_instance_id: id * 10, workflow_version: 2 }))
+    workflowApi.getWorkflowTimeline
+      .mockResolvedValueOnce([{ id: 'timeline-a' }])
+      .mockImplementationOnce(() => staleRetry.promise)
+      .mockResolvedValueOnce([{ id: 'timeline-b' }])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.vm.openDetail({ id: 31 })
+
+    const retryA = wrapper.vm.loadDetailTimeline()
+    await wrapper.vm.openDetail({ id: 32 })
+    staleRetry.reject(new Error('stale denied'))
+    await retryA
+
+    expect(wrapper.vm.detail.id).toBe(32)
+    expect(wrapper.vm.workflowTasks).toEqual([{ id: 'timeline-b' }])
+    expect(wrapper.vm.timelineError).toBe(false)
+    expect(wrapper.vm.detailLoading).toBe(false)
+    expect(wrapper.vm.timelineLoading).toBe(false)
+  })
+
+  it('invalidates pending detail work before unmount', async () => {
+    const pendingDetail = deferred()
+    approvalApi.getForm.mockReturnValue(pendingDetail.promise)
+    const wrapper = mountView()
+    await flushPromises()
+
+    const opening = wrapper.vm.openDetail({ id: 41 })
+    wrapper.unmount()
+    pendingDetail.resolve({ id: 41, workflow_instance_id: 410, workflow_version: 2 })
+    await opening
+
+    expect(workflowApi.getWorkflowTimeline).not.toHaveBeenCalled()
   })
 })

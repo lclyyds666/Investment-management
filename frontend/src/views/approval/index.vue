@@ -317,7 +317,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Plus, ArrowDown, Edit, Delete, Refresh, View, Download, UploadFilled,
@@ -640,7 +640,10 @@ const workflowTasks = ref([])
 const detailLoading = ref(false)
 const timelineLoading = ref(false)
 const timelineError = ref(false)
+let detailGeneration = 0
 async function openDetail(row) {
+  const targetId = row.id
+  const generation = ++detailGeneration
   detail.value = null
   actions.value = []
   workflowTasks.value = []
@@ -649,31 +652,51 @@ async function openDetail(row) {
   timelineError.value = false
   detailVisible.value = true
   try {
-    detail.value = await getForm(row.id)
+    const loadedDetail = await getForm(targetId)
+    if (generation !== detailGeneration) return
+    detail.value = loadedDetail
   } finally {
-    detailLoading.value = false
+    if (generation === detailGeneration) {
+      detailLoading.value = false
+    }
   }
-  await loadDetailTimeline()
+  if (generation === detailGeneration) {
+    await loadDetailTimeline(generation, targetId)
+  }
 }
 
-async function loadDetailTimeline() {
+async function loadDetailTimeline(generation = detailGeneration, targetId = detail.value?.id) {
   if (!detail.value) return
+  const timelineDetail = detail.value
+  if (generation !== detailGeneration || timelineDetail.id !== targetId) return
   actions.value = []
   workflowTasks.value = []
   timelineLoading.value = true
   timelineError.value = false
   try {
-    if (detail.value.workflow_version >= 2) {
-      workflowTasks.value = await getWorkflowTimeline(detail.value.workflow_instance_id)
+    if (timelineDetail.workflow_version >= 2) {
+      const tasks = await getWorkflowTimeline(timelineDetail.workflow_instance_id)
+      if (generation !== detailGeneration || detail.value?.id !== targetId) return
+      workflowTasks.value = tasks
     } else {
-      actions.value = await listActions(detail.value.id)
+      const loadedActions = await listActions(timelineDetail.id)
+      if (generation !== detailGeneration || detail.value?.id !== targetId) return
+      actions.value = loadedActions
     }
   } catch {
-    timelineError.value = true
+    if (generation === detailGeneration && detail.value?.id === targetId) {
+      timelineError.value = true
+    }
   } finally {
-    timelineLoading.value = false
+    if (generation === detailGeneration && detail.value?.id === targetId) {
+      timelineLoading.value = false
+    }
   }
 }
+
+onBeforeUnmount(() => {
+  detailGeneration += 1
+})
 
 // 合同附件：预览 / 下载（任意登录用户可用）
 async function previewFormAttachment(row) {
