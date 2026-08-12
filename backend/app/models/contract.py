@@ -54,6 +54,12 @@ class Contract(Base):
         Integer, default=0, nullable=False,
         comment="当前待审批步序（APPROVAL_CHAIN 下标），pending 时有效",
     )
+    workflow_instance_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wf_instance.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="新版岗位工作流实例",
+    )
 
     created_by: Mapped[int] = mapped_column(
         ForeignKey("sys_user.id"), nullable=False, comment="创建人(业务经办)"
@@ -62,6 +68,8 @@ class Contract(Base):
     approvals: Mapped[list["Approval"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )
+    workflow_instance = relationship("WorkflowInstance", foreign_keys=[workflow_instance_id])
 
 
 from app.models.approval import Approval  # noqa: E402  解决前向引用
+from app.models.workflow import WorkflowInstance  # noqa: E402,F401

@@ -225,6 +225,45 @@ class DataScope(str, Enum):
     ASSIGNED = "assigned"
 
 
+class WorkflowTargetType(str, Enum):
+    CONTRACT = "contract"
+    PAYMENT_APPROVAL = "payment_approval"
+    BUSINESS_APPROVAL = "business_approval"
+
+
+class WorkflowVersionStatus(str, Enum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    RETIRED = "retired"
+
+
+class WorkflowInstanceStatus(str, Enum):
+    ACTIVE = "active"
+    APPROVED = "approved"
+    CANCELLED = "cancelled"
+
+
+class WorkflowTaskStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    APPROVED = "approved"
+    RETURNED = "returned"
+    SKIPPED = "skipped"
+    AWAITING_REASSIGNMENT = "awaiting_reassignment"
+
+
+class WorkflowAssigneeMode(str, Enum):
+    SHARED_POSITION = "shared_position"
+    DESIGNATED_USER = "designated_user"
+
+
+class WorkflowAction(str, Enum):
+    SUBMIT = "submit"
+    APPROVE = "approve"
+    RETURN = "return"
+    REASSIGN = "reassign"
+
+
 class InvoiceStatus(str, Enum):
     """发票开票状态。"""
 
