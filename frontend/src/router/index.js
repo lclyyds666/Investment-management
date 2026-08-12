@@ -53,6 +53,67 @@ const routes = [
     ]
   },
   {
+    path: '/system',
+    component: () => import('@/layout/SystemLayout.vue'),
+    redirect: '/system/users',
+    children: [
+      {
+        path: 'users',
+        name: 'SystemUsers',
+        component: () => import('@/views/system/users.vue'),
+        meta: { requiresSuperuser: true, title: '人员账号', icon: 'UserFilled' }
+      },
+      {
+        path: 'directory',
+        name: 'SystemDirectory',
+        component: () => import('@/views/portal/ConstructionView.vue'),
+        meta: { permission: 'organization.directory.view', title: '组织通讯录', icon: 'OfficeBuilding' }
+      },
+      {
+        path: 'organization',
+        name: 'SystemOrganization',
+        component: () => import('@/views/portal/ConstructionView.vue'),
+        meta: { requiresSuperuser: true, title: '组织管理', icon: 'OfficeBuilding' }
+      },
+      {
+        path: 'positions',
+        name: 'SystemPositions',
+        component: () => import('@/views/portal/ConstructionView.vue'),
+        meta: { requiresSuperuser: true, title: '岗位与权限', icon: 'Key' }
+      },
+      {
+        path: 'assignments',
+        name: 'SystemAssignments',
+        component: () => import('@/views/portal/ConstructionView.vue'),
+        meta: { requiresSuperuser: true, title: '人员任职', icon: 'Connection' }
+      },
+      {
+        path: 'audit',
+        name: 'SystemAudit',
+        component: () => import('@/views/system/audit.vue'),
+        meta: { requiresSuperuser: true, title: '操作日志', icon: 'List' }
+      },
+      {
+        path: 'ai-conversations',
+        name: 'SystemAiConversations',
+        component: () => import('@/views/system/ai-conversations.vue'),
+        meta: { requiresSuperuser: true, title: 'AI 会话审计', icon: 'ChatLineSquare' }
+      }
+    ]
+  },
+  {
+    path: '/supplymanagement/org',
+    redirect: '/system/users'
+  },
+  {
+    path: '/supplymanagement/audit',
+    redirect: '/system/audit'
+  },
+  {
+    path: '/supplymanagement/ai-conversations',
+    redirect: '/system/ai-conversations'
+  },
+  {
     path: '/supplymanagement/screen',
     name: 'Screen',
     component: () => import('@/views/screen/index.vue'),
@@ -180,48 +241,6 @@ const routes = [
           icon: 'Postcard',
           company: supplyCompany,
           resource: RESOURCE_CODES.SUPPLY_CUSTOMER
-        }
-      },
-      {
-        path: 'org',
-        name: 'Org',
-        component: () => import('@/views/system/users.vue'),
-        meta: {
-          title: '用户管理',
-          icon: 'OfficeBuilding',
-          group: '系统管理',
-          groupIcon: 'Setting',
-          company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_ADMIN,
-          requiresSuperuser: true
-        }
-      },
-      {
-        path: 'audit',
-        name: 'Audit',
-        component: () => import('@/views/system/audit.vue'),
-        meta: {
-          title: '操作日志',
-          icon: 'List',
-          group: '系统管理',
-          groupIcon: 'Setting',
-          company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_ADMIN,
-          requiresSuperuser: true
-        }
-      },
-      {
-        path: 'ai-conversations',
-        name: 'AiConversations',
-        component: () => import('@/views/system/ai-conversations.vue'),
-        meta: {
-          title: 'AI 会话审计',
-          icon: 'ChatLineSquare',
-          group: '系统管理',
-          groupIcon: 'Setting',
-          company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_ADMIN,
-          requiresSuperuser: true
         }
       },
       {

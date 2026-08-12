@@ -116,8 +116,6 @@ const menus = computed(() => {
     .filter((c) => c.meta?.title)
     // 按 meta.roles 控制各角色可见菜单（无 roles = 全部可见；hasRole 对超管恒 true）
     .filter((c) => userStore.hasRole(c.meta.roles))
-    // 系统管理（用户管理/操作日志）仅超管可见
-    .filter((c) => !c.meta.requiresSuperuser || userStore.isSuperuser)
     .map((c) => ({ ...c, resolvedPath: router.resolve({ name: c.name }).path }))
     // 法律顾问仅保留其允许入口（合同管理 / 客户档案库 / 个人设置）
     .filter((c) => !isLegalCounsel || LEGAL_COUNSEL_PATHS.includes(c.resolvedPath))

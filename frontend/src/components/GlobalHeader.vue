@@ -10,6 +10,22 @@
 
     <div class="global-header__actions">
       <ThemeToggle />
+      <el-button
+        v-if="canViewDirectory"
+        class="global-header__nav-action"
+        aria-label="组织通讯录"
+        @click="router.push({ name: 'SystemDirectory' })"
+      >
+        <span>组织通讯录</span>
+      </el-button>
+      <el-button
+        v-if="portalStore.isSuperuser"
+        class="global-header__nav-action"
+        aria-label="系统管理"
+        @click="router.push({ name: 'SystemUsers' })"
+      >
+        <span>系统管理</span>
+      </el-button>
       <UserDropdown />
       <el-button
         v-if="showAssistantAction"
@@ -26,7 +42,9 @@
 
 <script setup>
 import { ChatDotRound } from '@element-plus/icons-vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { usePortalStore } from '@/store/portal'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserDropdown from '@/components/UserDropdown.vue'
 
@@ -36,6 +54,10 @@ defineProps({
 })
 
 const router = useRouter()
+const portalStore = usePortalStore()
+const canViewDirectory = computed(() => portalStore.isSuperuser || (
+  portalStore.permissions.permissions || []
+).some(({ code }) => code === 'organization.directory.view'))
 const openAssistant = () => router.push({ name: 'PortalHome' })
 </script>
 
@@ -116,6 +138,10 @@ const openAssistant = () => router.push({ name: 'PortalHome' })
   min-width: 92px;
 }
 
+.global-header__nav-action {
+  flex: 0 0 auto;
+}
+
 .assistant-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring) !important;
@@ -142,6 +168,8 @@ const openAssistant = () => router.push({ name: 'PortalHome' })
     gap: 6px;
     margin-left: 8px;
   }
+
+  .global-header__nav-action { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
