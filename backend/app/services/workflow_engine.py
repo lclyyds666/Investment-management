@@ -5,10 +5,30 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.enums import AssignmentStatus, WorkflowAssigneeMode, WorkflowVersionStatus
-from app.models.organization import Organization, Position, UserAssignment
+from app.core.enums import (
+    AssignmentStatus,
+    ContractStatus,
+    ContractType,
+    WorkflowAction,
+    WorkflowAssigneeMode,
+    WorkflowInstanceStatus,
+    WorkflowTargetType,
+    WorkflowTaskStatus,
+    WorkflowVersionStatus,
+)
+from app.models.approval_form import ApprovalForm
+from app.models.contract import Contract
+from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
-from app.models.workflow import WorkflowDefinition, WorkflowNode, WorkflowVersion
+from app.models.workflow import (
+    WorkflowDefinition,
+    WorkflowInstance,
+    WorkflowNode,
+    WorkflowTask,
+    WorkflowTaskAction,
+    WorkflowVersion,
+)
+from app.schemas.workflow import WorkflowCandidate
 from app.services.workflow_catalog import WORKFLOW_DEFINITIONS, WorkflowCatalogDefinition
 
 
@@ -26,6 +46,13 @@ class WorkflowValidationError(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
+
+
+WORKFLOW_CODE_BY_TARGET = {
+    WorkflowTargetType.CONTRACT: "supply.contract.v2",
+    WorkflowTargetType.PAYMENT_APPROVAL: "supply.payment.v2",
+    WorkflowTargetType.BUSINESS_APPROVAL: "supply.business.v2",
+}
 
 
 def ensure_workflow_version_mutable(version: WorkflowVersion) -> None:
@@ -98,6 +125,101 @@ def validate_workflow_version(
                 node_codes=node_codes,
             ))
     return issues
+
+
+def _active_assignments(
+    db: Session,
+    position_codes: set[str],
+    on_date: date,
+    user_ids: set[int] | None = None,
+) -> list[UserAssignment]:
+    statement = (
+        select(UserAssignment)
+        .join(UserAssignment.user)
+        .join(UserAssignment.organization)
+        .join(UserAssignment.position)
+        .where(
+            UserAssignment.status == AssignmentStatus.ACTIVE,
+            UserAssignment.valid_from <= on_date,
+            (UserAssignment.valid_until.is_(None) | (UserAssignment.valid_until >= on_date)),
+            User.is_active.is_(True),
+            Organization.is_active.is_(True),
+            Position.is_active.is_(True),
+            Position.code.in_(position_codes),
+        )
+        .options(
+            joinedload(UserAssignment.user),
+            joinedload(UserAssignment.organization),
+            joinedload(UserAssignment.position),
+            joinedload(UserAssignment.external_detail),
+        )
+        .order_by(User.full_name, User.id, UserAssignment.id)
+    )
+    if user_ids is not None:
+        statement = statement.where(UserAssignment.user_id.in_(user_ids))
+    return list(db.scalars(statement))
+
+
+def _assignment_has_required_scope(assignment: UserAssignment) -> bool:
+    if assignment.position.code != "external.legal_counsel":
+        return True
+    detail: ExternalAssignment | None = assignment.external_detail
+    return detail is not None and "contract_legal_review" in detail.service_scopes
+
+
+def _published_workflow(db: Session, workflow_code: str) -> tuple[WorkflowDefinition, WorkflowVersion]:
+    definition = db.scalar(
+        select(WorkflowDefinition)
+        .where(WorkflowDefinition.code == workflow_code)
+        .options(joinedload(WorkflowDefinition.active_version).joinedload(WorkflowVersion.nodes))
+    )
+    version = definition.active_version if definition is not None else None
+    if version is None or version.status != WorkflowVersionStatus.PUBLISHED:
+        raise WorkflowValidationError(
+            "workflow_not_published",
+            "The requested workflow has no active published version.",
+            {"workflow_code": workflow_code},
+        )
+    return definition, version
+
+
+def eligible_designated_users(
+    db: Session,
+    workflow_code: str,
+    node_code: str,
+    on_date: date,
+) -> list[WorkflowCandidate]:
+    _, version = _published_workflow(db, workflow_code)
+    node = next((item for item in version.nodes if item.code == node_code), None)
+    if node is None:
+        raise WorkflowValidationError(
+            "unknown_workflow_node",
+            "The requested node is not part of the active workflow.",
+            {"workflow_code": workflow_code, "node_code": node_code},
+        )
+    if node.assignee_mode != WorkflowAssigneeMode.DESIGNATED_USER:
+        raise WorkflowValidationError(
+            "workflow_node_not_designated",
+            "Candidates can only be requested for designated-user nodes.",
+            {"workflow_code": workflow_code, "node_code": node_code},
+        )
+
+    candidates: list[WorkflowCandidate] = []
+    seen_users: set[int] = set()
+    for assignment in _active_assignments(db, {node.position_code}, on_date):
+        if assignment.user_id in seen_users or not _assignment_has_required_scope(assignment):
+            continue
+        seen_users.add(assignment.user_id)
+        candidates.append(WorkflowCandidate(
+            user_id=assignment.user_id,
+            full_name=assignment.user.full_name,
+            assignment_id=assignment.id,
+            organization_code=assignment.organization.code,
+            organization_name=assignment.organization.name,
+            position_code=assignment.position.code,
+            position_name=assignment.position.name,
+        ))
+    return candidates
 
 
 def _catalog_nodes(definition: WorkflowCatalogDefinition) -> tuple[tuple, ...]:
@@ -265,8 +387,7 @@ def _seed_workflow_definitions(db: Session, publisher_id: int) -> None:
 
 def seed_workflow_definitions(db: Session, publisher_id: int) -> None:
     connection = db.connection()
-    if connection.dialect.name == "sqlite" and not connection.in_nested_transaction():
-        connection.exec_driver_sql("BEGIN")
+    _ensure_sqlite_outer_transaction(connection)
     catalog_session = Session(
         bind=connection,
         autoflush=False,
@@ -290,9 +411,324 @@ def seed_workflow_definitions(db: Session, publisher_id: int) -> None:
     _expire_parent_catalog_state(db)
 
 
+def _ensure_sqlite_outer_transaction(connection) -> None:
+    if connection.dialect.name != "sqlite":
+        return
+    if not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN")
+
+
 def _expire_parent_catalog_state(db: Session) -> None:
     catalog_types = (WorkflowDefinition, WorkflowVersion, WorkflowNode)
     with db.no_autoflush:
         for instance in list(db.identity_map.values()):
             if isinstance(instance, catalog_types):
+                db.expire(instance)
+
+
+def _workflow_target(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+):
+    if target_type == WorkflowTargetType.CONTRACT:
+        target = db.scalar(
+            select(Contract).where(Contract.id == target_id).with_for_update()
+        )
+    else:
+        target = db.scalar(
+            select(ApprovalForm).where(ApprovalForm.id == target_id).with_for_update()
+        )
+        expected_form_type = (
+            ContractType.PAYMENT
+            if target_type == WorkflowTargetType.PAYMENT_APPROVAL
+            else ContractType.BUSINESS
+        )
+        if target is not None and target.form_type != expected_form_type:
+            target = None
+    if target is None:
+        raise WorkflowValidationError(
+            "workflow_target_not_found",
+            "The requested workflow target does not exist.",
+            {"target_type": target_type.value, "target_id": target_id},
+        )
+    return target
+
+
+def _validate_start_assignments(
+    db: Session,
+    version: WorkflowVersion,
+    submitter_id: int,
+    designated_users: dict[str, int],
+    submitted_on: date,
+) -> tuple[UserAssignment, dict[str, UserAssignment]]:
+    designated_nodes = {
+        item.code: item
+        for item in version.nodes
+        if item.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER
+    }
+    missing_codes = sorted(set(designated_nodes) - set(designated_users))
+    if missing_codes:
+        raise WorkflowValidationError(
+            "missing_designated_user",
+            "Every designated workflow node requires one selected user.",
+            {"node_codes": missing_codes},
+        )
+    unknown_codes = sorted(set(designated_users) - set(designated_nodes))
+    if unknown_codes:
+        raise WorkflowValidationError(
+            "unknown_designated_node",
+            "Selected users include nodes that are not designated in this workflow.",
+            {"node_codes": unknown_codes},
+        )
+
+    selected_user_ids = list(designated_users.values())
+    if len(set(selected_user_ids)) != len(selected_user_ids) or submitter_id in selected_user_ids:
+        raise WorkflowValidationError(
+            "duplicate_workflow_actor",
+            "One person cannot occupy two nodes in the same workflow.",
+        )
+
+    workflow_position_codes = {item.position_code for item in version.nodes}
+    assignments = _active_assignments(
+        db,
+        workflow_position_codes,
+        submitted_on,
+        {submitter_id, *selected_user_ids},
+    )
+    assignments_by_user: dict[int, list[UserAssignment]] = {}
+    for assignment in assignments:
+        if _assignment_has_required_scope(assignment):
+            assignments_by_user.setdefault(assignment.user_id, []).append(assignment)
+
+    submit_node = next(
+        item for item in version.nodes if item.sequence == 0 and item.auto_complete_on_submit
+    )
+    submitter_assignments = assignments_by_user.get(submitter_id, [])
+    submit_assignment = next(
+        (item for item in submitter_assignments if item.position.code == submit_node.position_code),
+        None,
+    )
+    if submit_assignment is None:
+        raise WorkflowValidationError(
+            "ineligible_workflow_submitter",
+            "The submitter is not eligible for the submit node.",
+            {"node_code": submit_node.code, "user_id": submitter_id},
+        )
+    if any(item.position.code != submit_node.position_code for item in submitter_assignments):
+        raise WorkflowValidationError(
+            "duplicate_workflow_actor",
+            "One person cannot occupy two nodes in the same workflow.",
+            {"user_id": submitter_id},
+        )
+
+    selected_assignments: dict[str, UserAssignment] = {}
+    for node_code, user_id in designated_users.items():
+        node = designated_nodes[node_code]
+        user_assignments = assignments_by_user.get(user_id, [])
+        assignment = next(
+            (item for item in user_assignments if item.position.code == node.position_code),
+            None,
+        )
+        if assignment is None:
+            raise WorkflowValidationError(
+                "ineligible_designated_user",
+                "The selected user is not eligible for the designated node.",
+                {"node_code": node_code, "user_id": user_id},
+            )
+        if any(item.position.code != node.position_code for item in user_assignments):
+            raise WorkflowValidationError(
+                "duplicate_workflow_actor",
+                "One person cannot occupy two nodes in the same workflow.",
+                {"user_id": user_id},
+            )
+        selected_assignments[node_code] = assignment
+    return submit_assignment, selected_assignments
+
+
+def _start_workflow(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+    submitter_id: int,
+    designated_users: dict[str, int],
+    submitted_at: datetime,
+) -> int:
+    target = _workflow_target(db, target_type, target_id)
+    if target.created_by != submitter_id:
+        raise WorkflowValidationError(
+            "workflow_submitter_not_owner",
+            "Only the target creator can start its workflow.",
+            {"target_type": target_type.value, "target_id": target_id},
+        )
+    if target.status != ContractStatus.DRAFT or target.workflow_instance_id is not None:
+        raise WorkflowValidationError(
+            "workflow_already_started",
+            "The target already has a workflow instance.",
+            {"target_type": target_type.value, "target_id": target_id},
+        )
+    existing_instance = db.scalar(
+        select(WorkflowInstance.id).where(
+            WorkflowInstance.target_type == target_type,
+            WorkflowInstance.target_id == target_id,
+        )
+    )
+    if existing_instance is not None:
+        raise WorkflowValidationError(
+            "workflow_already_started",
+            "The target already has a workflow instance.",
+            {"target_type": target_type.value, "target_id": target_id},
+        )
+
+    workflow_code = WORKFLOW_CODE_BY_TARGET[target_type]
+    definition, version = _published_workflow(db, workflow_code)
+    submit_assignment, selected_assignments = _validate_start_assignments(
+        db,
+        version,
+        submitter_id,
+        designated_users,
+        submitted_at.date(),
+    )
+    submitter = submit_assignment.user
+    nodes = sorted(version.nodes, key=lambda item: item.sequence)
+    next_node = next((item for item in nodes if not item.auto_complete_on_submit), None)
+    if next_node is None:
+        raise WorkflowValidationError(
+            "workflow_has_no_approval_node",
+            "The workflow contains no approval node after submission.",
+        )
+
+    instance = WorkflowInstance(
+        definition_id=definition.id,
+        version_id=version.id,
+        target_type=target_type,
+        target_id=target_id,
+        status=WorkflowInstanceStatus.ACTIVE,
+        current_sequence=next_node.sequence,
+        submitted_by=submitter_id,
+        submitted_at=submitted_at,
+    )
+    db.add(instance)
+    db.flush()
+
+    tasks: list[WorkflowTask] = []
+    for node in nodes:
+        selected_assignment = selected_assignments.get(node.code)
+        if node.auto_complete_on_submit:
+            task_status = WorkflowTaskStatus.APPROVED
+        elif node.sequence == next_node.sequence:
+            task_status = WorkflowTaskStatus.ACTIVE
+        else:
+            task_status = WorkflowTaskStatus.PENDING
+        task = WorkflowTask(
+            instance_id=instance.id,
+            node_id=node.id,
+            sequence=node.sequence,
+            status=task_status,
+            required_position_code=node.position_code,
+            assignee_mode=node.assignee_mode,
+            designated_user_id=(selected_assignment.user_id if selected_assignment else None),
+            designated_assignment_id=(selected_assignment.id if selected_assignment else None),
+            activated_at=(submitted_at if task_status == WorkflowTaskStatus.ACTIVE else None),
+            completed_at=(submitted_at if task_status == WorkflowTaskStatus.APPROVED else None),
+        )
+        db.add(task)
+        tasks.append(task)
+    db.flush()
+
+    submit_task = next(item for item in tasks if item.sequence == 0)
+    db.add(WorkflowTaskAction(
+        task_id=submit_task.id,
+        action=WorkflowAction.SUBMIT,
+        actor_id=submitter_id,
+        actor_name=submitter.full_name,
+        organization_code=submit_assignment.organization.code,
+        organization_name=submit_assignment.organization.name,
+        position_code=submit_assignment.position.code,
+        position_name=submit_assignment.position.name,
+        signature_snapshot=submitter.signature,
+    ))
+    target.status = ContractStatus.PENDING
+    target.current_step = next_node.sequence
+    target.workflow_instance_id = instance.id
+    db.flush()
+    return instance.id
+
+
+def _is_duplicate_workflow_target(error: IntegrityError) -> bool:
+    message = " ".join(
+        str(part).lower()
+        for part in (error.statement, error.orig)
+        if part is not None
+    )
+    return any(token in message for token in ("unique", "duplicate")) and any(
+        token in message
+        for token in (
+            "uq_workflow_instance_target",
+            "wf_instance.target_type, wf_instance.target_id",
+        )
+    )
+
+
+def start_workflow(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+    submitter: User,
+    designated_users: dict[str, int],
+) -> WorkflowInstance:
+    target_type = WorkflowTargetType(target_type)
+    with db.no_autoflush:
+        submitter_id = submitter.id
+        connection = db.connection()
+    _ensure_sqlite_outer_transaction(connection)
+    workflow_session = Session(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    instance_id = None
+    try:
+        instance_id = _start_workflow(
+            workflow_session,
+            target_type,
+            target_id,
+            submitter_id,
+            dict(designated_users),
+            datetime.now(),
+        )
+        workflow_session.commit()
+    except IntegrityError as error:
+        workflow_session.rollback()
+        if not _is_duplicate_workflow_target(error):
+            raise
+        raise WorkflowValidationError(
+            "workflow_already_started",
+            "The target already has a workflow instance.",
+            {"target_type": target_type.value, "target_id": target_id},
+        ) from error
+    except Exception:
+        workflow_session.rollback()
+        raise
+    finally:
+        workflow_session.close()
+
+    _expire_parent_workflow_state(db, target_type, target_id)
+    with db.no_autoflush:
+        return db.get(WorkflowInstance, instance_id)
+
+
+def _expire_parent_workflow_state(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+) -> None:
+    target_type_class = Contract if target_type == WorkflowTargetType.CONTRACT else ApprovalForm
+    workflow_types = (WorkflowInstance, WorkflowTask, WorkflowTaskAction)
+    with db.no_autoflush:
+        for instance in list(db.identity_map.values()):
+            if isinstance(instance, workflow_types):
+                db.expire(instance)
+            elif isinstance(instance, target_type_class) and instance.id == target_id:
                 db.expire(instance)

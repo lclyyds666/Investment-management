@@ -7,16 +7,38 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.db.init_db  # noqa: F401
-from app.core.enums import AssignmentStatus, PositionCategory, WorkflowVersionStatus
+from app.core.enums import (
+    AssignmentStatus,
+    ContractStatus,
+    ContractType,
+    OrganizationType,
+    PositionCategory,
+    WorkflowAction,
+    WorkflowAssigneeMode,
+    WorkflowTargetType,
+    WorkflowTaskStatus,
+    WorkflowVersionStatus,
+)
 from app.db.base import Base
-from app.models.organization import Organization, Position, UserAssignment
+from app.models.approval_form import ApprovalForm
+from app.models.contract import Contract
+from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
-from app.models.workflow import WorkflowDefinition, WorkflowNode, WorkflowVersion
+from app.models.workflow import (
+    WorkflowDefinition,
+    WorkflowInstance,
+    WorkflowNode,
+    WorkflowTask,
+    WorkflowTaskAction,
+    WorkflowVersion,
+)
 from app.services.workflow_catalog import WORKFLOW_CATALOG
 from app.services.workflow_engine import (
     WorkflowValidationError,
+    eligible_designated_users,
     ensure_workflow_version_mutable,
     seed_workflow_definitions,
+    start_workflow,
     validate_workflow_version,
 )
 
@@ -258,6 +280,322 @@ class WorkflowPublicationTest(unittest.TestCase):
         self.assertEqual(self.db.query(WorkflowDefinition).count(), 0)
         self.assertEqual(self.db.query(WorkflowVersion).count(), 0)
         self.assertEqual(self.db.query(WorkflowNode).count(), 0)
+
+
+class WorkflowStartTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        self.users = {}
+        self.publisher = self.add_user("publisher", "Publisher")
+        self.handler = self.add_assignment("handler", "Handler", "supply.business_handler").user
+        self.leader = self.add_assignment("leader", "Amy Leader", "supply.company_leader").user
+        self.legal = self.add_assignment(
+            "legal", "Bob Legal", "external.legal_counsel", external_scope=True
+        ).user
+        self.governance = self.add_assignment(
+            "governance", "Cara Governance", "governance.supply_leader"
+        ).user
+        self.db.commit()
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
+        self.contract = Contract(
+            contract_no="TASK3-001",
+            title="Task 3 Contract",
+            created_by=self.handler.id,
+        )
+        self.db.add(self.contract)
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def add_user(self, username, full_name, active=True):
+        user = User(
+            username=username,
+            full_name=full_name,
+            hashed_password="test",
+            is_active=active,
+        )
+        self.db.add(user)
+        self.db.flush()
+        self.users[username] = user
+        return user
+
+    def add_assignment(
+        self,
+        username,
+        full_name,
+        position_code,
+        *,
+        valid_from=date(2026, 1, 1),
+        valid_until=None,
+        assignment_status=AssignmentStatus.ACTIVE,
+        user_active=True,
+        organization_active=True,
+        position_active=True,
+        external_scope=False,
+    ):
+        user = self.users.get(username) or self.add_user(username, full_name, user_active)
+        organization = self.db.scalar(
+            select(Organization).where(Organization.code == f"org.{position_code}")
+        )
+        if organization is None:
+            organization = Organization(
+                code=f"org.{position_code}",
+                name=f"Org {position_code}",
+                organization_type=(
+                    OrganizationType.EXTERNAL
+                    if position_code.startswith("external.")
+                    else OrganizationType.DEPARTMENT
+                ),
+                is_active=organization_active,
+            )
+            self.db.add(organization)
+            self.db.flush()
+        position = self.db.scalar(select(Position).where(Position.code == position_code))
+        if position is None:
+            position = Position(
+                code=position_code,
+                name=f"Position {position_code}",
+                category=(
+                    PositionCategory.EXTERNAL
+                    if position_code.startswith("external.")
+                    else PositionCategory.BUSINESS
+                ),
+                is_active=position_active,
+            )
+            self.db.add(position)
+            self.db.flush()
+        assignment = UserAssignment(
+            user_id=user.id,
+            organization_id=organization.id,
+            position_id=position.id,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            status=assignment_status,
+        )
+        self.db.add(assignment)
+        self.db.flush()
+        if position_code == "external.legal_counsel":
+            assignment.external_detail = ExternalAssignment(
+                provider_name="Legal Provider",
+                service_scopes=["contract_legal_review"] if external_scope else ["other"],
+            )
+        return assignment
+
+    def designated_users(self):
+        return {
+            "company_leader": self.leader.id,
+            "legal_counsel": self.legal.id,
+            "supply_governance_leader": self.governance.id,
+        }
+
+    def test_candidate_list_filters_scope_dates_and_active_entities_then_sorts_and_dedupes(self):
+        self.add_assignment("leader", "Amy Leader", "supply.company_leader")
+        self.add_assignment("later", "Zed Later", "supply.company_leader")
+        self.add_assignment(
+            "expired", "Expired", "supply.company_leader", valid_until=date(2026, 8, 11)
+        )
+        self.add_assignment(
+            "inactive", "Inactive", "supply.company_leader", user_active=False
+        )
+        wrong_scope = self.add_assignment(
+            "wrong-scope", "Wrong Scope", "external.legal_counsel"
+        )
+        self.db.commit()
+
+        candidates = eligible_designated_users(
+            self.db, "supply.contract.v2", "company_leader", date(2026, 8, 12)
+        )
+        legal_candidates = eligible_designated_users(
+            self.db, "supply.contract.v2", "legal_counsel", date(2026, 8, 12)
+        )
+
+        self.assertEqual([item.user_id for item in candidates], [self.leader.id, self.users["later"].id])
+        self.assertEqual(candidates[0].assignment_id, min(item.id for item in self.leader.assignments))
+        self.assertEqual([item.user_id for item in legal_candidates], [self.legal.id])
+        self.assertNotEqual(wrong_scope.user_id, self.legal.id)
+
+    def test_start_materializes_all_tasks_and_submit_snapshot(self):
+        instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+            self.handler,
+            self.designated_users(),
+        )
+
+        self.assertTrue(self.db.in_transaction())
+        self.assertEqual(instance.current_sequence, 1)
+        tasks = list(self.db.scalars(
+            select(WorkflowTask).where(WorkflowTask.instance_id == instance.id).order_by(WorkflowTask.sequence)
+        ))
+        self.assertEqual(len(tasks), 5)
+        self.assertEqual(
+            [task.status for task in tasks],
+            [
+                WorkflowTaskStatus.APPROVED,
+                WorkflowTaskStatus.ACTIVE,
+                WorkflowTaskStatus.PENDING,
+                WorkflowTaskStatus.PENDING,
+                WorkflowTaskStatus.PENDING,
+            ],
+        )
+        self.assertIsNone(tasks[0].designated_user_id)
+        self.assertEqual(tasks[1].designated_user_id, self.leader.id)
+        self.assertIsNotNone(tasks[1].designated_assignment_id)
+        self.assertTrue(all(
+            task.designated_user_id is None
+            for task in tasks
+            if task.assignee_mode == WorkflowAssigneeMode.SHARED_POSITION
+        ))
+        action = self.db.scalar(select(WorkflowTaskAction))
+        self.assertEqual(action.action, WorkflowAction.SUBMIT)
+        self.assertEqual(action.actor_id, self.handler.id)
+        self.assertEqual(action.actor_name, self.handler.full_name)
+        self.assertEqual(action.position_code, "supply.business_handler")
+        self.assertEqual(action.signature_snapshot, self.handler.signature)
+        self.db.refresh(self.contract)
+        self.assertEqual(self.contract.status, ContractStatus.PENDING)
+        self.assertEqual(self.contract.current_step, 1)
+        self.assertEqual(self.contract.workflow_instance_id, instance.id)
+
+    def test_start_supports_payment_and_business_targets(self):
+        payment = ApprovalForm(
+            form_type=ContractType.PAYMENT,
+            created_by=self.handler.id,
+        )
+        business = ApprovalForm(
+            form_type=ContractType.BUSINESS,
+            created_by=self.handler.id,
+        )
+        self.db.add_all([payment, business])
+        self.db.commit()
+
+        payment_instance = start_workflow(
+            self.db,
+            WorkflowTargetType.PAYMENT_APPROVAL,
+            payment.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        business_instance = start_workflow(
+            self.db,
+            WorkflowTargetType.BUSINESS_APPROVAL,
+            business.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+
+        self.assertEqual(self.db.query(WorkflowTask).filter_by(instance_id=payment_instance.id).count(), 7)
+        self.assertEqual(self.db.query(WorkflowTask).filter_by(instance_id=business_instance.id).count(), 5)
+
+    def test_start_rejects_missing_extra_ineligible_and_duplicate_people(self):
+        cases = [
+            ({"company_leader": self.leader.id}, "missing_designated_user"),
+            ({**self.designated_users(), "unknown": self.leader.id}, "unknown_designated_node"),
+            ({**self.designated_users(), "legal_counsel": self.publisher.id}, "ineligible_designated_user"),
+            ({**self.designated_users(), "legal_counsel": self.leader.id}, "duplicate_workflow_actor"),
+            ({**self.designated_users(), "company_leader": self.handler.id}, "duplicate_workflow_actor"),
+        ]
+        for designated_users, code in cases:
+            with self.subTest(code=code, designated_users=designated_users):
+                with self.assertRaises(WorkflowValidationError) as raised:
+                    start_workflow(
+                        self.db,
+                        WorkflowTargetType.CONTRACT,
+                        self.contract.id,
+                        self.handler,
+                        designated_users,
+                    )
+                self.assertEqual(raised.exception.code, code)
+                self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+                self.assertEqual(self.db.query(WorkflowTask).count(), 0)
+                self.assertEqual(self.db.query(WorkflowTaskAction).count(), 0)
+
+    def test_start_rejects_wrong_owner_and_duplicate_target_atomically(self):
+        outsider = self.add_assignment(
+            "outsider", "Outsider", "supply.business_handler"
+        ).user
+        self.db.commit()
+        with self.assertRaises(WorkflowValidationError) as raised:
+            start_workflow(
+                self.db,
+                WorkflowTargetType.CONTRACT,
+                self.contract.id,
+                outsider,
+                self.designated_users(),
+            )
+        self.assertEqual(raised.exception.code, "workflow_submitter_not_owner")
+
+        start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+            self.handler,
+            self.designated_users(),
+        )
+        with self.assertRaises(WorkflowValidationError) as raised:
+            start_workflow(
+                self.db,
+                WorkflowTargetType.CONTRACT,
+                self.contract.id,
+                self.handler,
+                self.designated_users(),
+            )
+        self.assertEqual(raised.exception.code, "workflow_already_started")
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+    def test_failed_start_preserves_parent_pending_and_success_rolls_back_with_caller(self):
+        valid_designated_users = self.designated_users()
+        target_id = self.contract.id
+        pending = User(username="pending-task3", full_name="Pending", hashed_password="test")
+        self.db.add(pending)
+        invalid = dict(valid_designated_users)
+        invalid.pop("legal_counsel")
+
+        with self.assertRaises(WorkflowValidationError):
+            start_workflow(
+                self.db,
+                WorkflowTargetType.CONTRACT,
+                target_id,
+                self.handler,
+                invalid,
+            )
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+
+        instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            target_id,
+            self.handler,
+            valid_designated_users,
+        )
+        self.assertIsNotNone(instance.id)
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+        self.db.expunge(pending)
+        self.db.rollback()
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+        self.assertIsNone(self.db.get(Contract, target_id).workflow_instance_id)
+
+
+class WorkflowPublicationContinuationTest(unittest.TestCase):
+    setUp = WorkflowPublicationTest.setUp
+    tearDown = WorkflowPublicationTest.tearDown
+    add_assignment = WorkflowPublicationTest.add_assignment
+    version = WorkflowPublicationTest.version
+    assert_parent_pending_unflushed = WorkflowPublicationTest.assert_parent_pending_unflushed
 
     def test_success_preserves_pending_caller_object_and_leaves_commit_to_caller(self):
         publisher_id = self.publisher.id
