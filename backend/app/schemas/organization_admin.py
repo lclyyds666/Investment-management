@@ -6,6 +6,12 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.enums import AssignmentStatus, CompanyCode, DataScope, OrganizationType, PositionCategory
 
 
+GOVERNANCE_POSITION_TARGETS = {
+    "governance.supply_leader": "supplymanagement",
+    "governance.fund_leader": "fundmanagement",
+}
+
+
 class OrganizationWrite(BaseModel):
     code: str = Field(min_length=2, max_length=64)
     name: str = Field(min_length=1, max_length=128)
@@ -38,6 +44,14 @@ class ExternalAssignmentWrite(BaseModel):
     provider_name: str
     service_scopes: list[str]
 
+    @model_validator(mode="after")
+    def normalize_external_detail(self):
+        self.provider_name = self.provider_name.strip()
+        self.service_scopes = [scope.strip() for scope in self.service_scopes]
+        if not self.provider_name or not self.service_scopes or any(not scope for scope in self.service_scopes):
+            raise ValueError("External assignment requires a provider and nonblank service scopes.")
+        return self
+
 
 class AssignmentWrite(BaseModel):
     organization_code: str
@@ -52,11 +66,15 @@ class AssignmentWrite(BaseModel):
     def validate_assignment(self):
         if self.valid_until is not None and self.valid_until < self.valid_from:
             raise ValueError("Assignment end date cannot precede its start date.")
+        target_company = GOVERNANCE_POSITION_TARGETS.get(self.position_code)
+        if target_company is not None and not any(
+            scope.scope_type == "company" and scope.scope_ref == target_company
+            for scope in self.governance_scopes
+        ):
+            raise ValueError("Governance assignments require a scope for their target subsidiary.")
         if self.position_code == "external.legal_counsel":
             if (
                 self.external is None
-                or not self.external.provider_name.strip()
-                or not self.external.service_scopes
                 or self.valid_until is None
             ):
                 raise ValueError(

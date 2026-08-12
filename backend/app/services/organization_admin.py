@@ -15,11 +15,15 @@ from app.models.organization import (
 )
 from app.models.user import User
 from app.schemas.organization_admin import (
+    GOVERNANCE_POSITION_TARGETS,
     OrganizationWrite,
     PositionPermissionWrite,
     PositionWrite,
     UserAssignmentsReplace,
 )
+
+
+SUPPORTED_BUSINESS_DOMAINS = frozenset({"investment", "supply", "fund"})
 
 
 STATIC_WORKFLOW_POSITION_SETS = (
@@ -137,12 +141,22 @@ def update_position(db: Session, position_id: int, payload: PositionWrite) -> Po
         raise
 
 
-def _valid_scope(scope: DataScope, scope_ref: str) -> bool:
-    if scope in {DataScope.COMPANY, DataScope.DEPARTMENT, DataScope.BUSINESS_DOMAIN}:
-        return bool(scope_ref)
-    if scope in {DataScope.OWN, DataScope.PARTICIPATED, DataScope.ASSIGNED}:
-        return not scope_ref
-    return True
+def _valid_scope(db: Session, scope: DataScope, scope_ref: str) -> bool:
+    if scope == DataScope.COMPANY:
+        return db.scalar(select(Organization.id).where(
+            Organization.code == scope_ref,
+            Organization.organization_type == "company",
+            Organization.is_active.is_(True),
+        )) is not None
+    if scope == DataScope.DEPARTMENT:
+        return db.scalar(select(Organization.id).where(
+            Organization.code == scope_ref,
+            Organization.organization_type == "department",
+            Organization.is_active.is_(True),
+        )) is not None
+    if scope == DataScope.BUSINESS_DOMAIN:
+        return scope_ref in SUPPORTED_BUSINESS_DOMAINS
+    return not scope_ref
 
 
 def replace_position_permissions(db: Session, position_id: int, payloads: list[PositionPermissionWrite]) -> list[PositionPermission]:
@@ -152,7 +166,7 @@ def replace_position_permissions(db: Session, position_id: int, payloads: list[P
     permissions = {item.permission_code: db.scalar(select(Permission).where(Permission.code == item.permission_code)) for item in payloads}
     if any(permission is None for permission in permissions.values()):
         raise AuthorizationConflictError("permission_not_found", "One or more permissions do not exist.")
-    if any(not _valid_scope(item.data_scope, item.scope_ref) for item in payloads):
+    if any(not _valid_scope(db, item.data_scope, item.scope_ref) for item in payloads):
         raise AuthorizationConflictError("invalid_permission_scope", "Permission scope and scope reference do not match.")
     try:
         db.query(PositionPermission).filter(PositionPermission.position_id == position.id).delete()
@@ -197,33 +211,49 @@ def replace_user_assignments(db: Session, user_id: int, payload: UserAssignments
         positions = {item.position_code: db.scalar(select(Position).where(Position.code == item.position_code)) for item in payload.assignments}
         if any(item is None for item in organizations.values()) or any(item is None for item in positions.values()):
             raise AuthorizationConflictError("assignment_reference_not_found", "Every organization and position code must resolve before replacement.", user_id=user_id)
+        existing_assignments = db.scalars(
+            select(UserAssignment).where(UserAssignment.user_id == user.id)
+        ).all()
         replacements: list[UserAssignment] = []
         for item in payload.assignments:
             position = positions[item.position_code]
-            if position.category == PositionCategory.GOVERNANCE:
-                if not any(scope.scope_type == "company" and scope.scope_ref == organizations[item.organization_code].company_code for scope in item.governance_scopes):
-                    raise AuthorizationConflictError("governance_scope_required", "Governance assignments require a matching target subsidiary scope.", user_id=user_id)
+            target_company = GOVERNANCE_POSITION_TARGETS.get(position.code)
+            organization = organizations[item.organization_code]
+            if target_company is not None and (
+                organization.code != target_company
+                or organization.company_code != target_company
+                or not any(
+                    scope.scope_type == "company" and scope.scope_ref == target_company
+                    for scope in item.governance_scopes
+                )
+            ):
+                raise AuthorizationConflictError(
+                    "governance_scope_required",
+                    "Governance assignments require their target subsidiary organization and scope.",
+                    user_id=user_id,
+                )
             replacements.append(UserAssignment(user_id=user.id, organization_id=organizations[item.organization_code].id, position_id=position.id, valid_from=item.valid_from, valid_until=item.valid_until, status=item.status, source="manual"))
+        db.add_all(replacements)
         for assignment, item in zip(replacements, payload.assignments):
             assignment.organization = organizations[item.organization_code]
             assignment.position = positions[item.position_code]
         validate_assignment_conflicts(user.id, replacements)
-        existing_assignments = db.scalars(
-            select(UserAssignment).where(UserAssignment.user_id == user.id)
-        ).all()
         for assignment in existing_assignments:
             db.delete(assignment)
         db.flush()
+        db.flush()
         for assignment, item in zip(replacements, payload.assignments):
-            db.add(assignment)
-            db.flush()
             db.add_all([GovernanceScope(assignment_id=assignment.id, scope_type=scope.scope_type, scope_ref=scope.scope_ref) for scope in item.governance_scopes])
             if item.external:
                 db.add(ExternalAssignment(assignment_id=assignment.id, provider_name=item.external.provider_name.strip(), service_scopes=item.external.service_scopes))
         db.flush()
-        results = db.scalars(select(UserAssignment).where(UserAssignment.user_id == user.id).options(joinedload(UserAssignment.organization), joinedload(UserAssignment.position))).unique().all()
         db.commit()
-        return results
+        return db.scalars(
+            select(UserAssignment)
+            .where(UserAssignment.user_id == user.id)
+            .options(joinedload(UserAssignment.organization), joinedload(UserAssignment.position))
+            .order_by(UserAssignment.id)
+        ).unique().all()
     except Exception:
         db.rollback()
         raise
