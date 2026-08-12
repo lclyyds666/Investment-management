@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.enums import (
+    ApprovalAction,
     AssignmentStatus,
     ContractStatus,
     ContractType,
@@ -16,6 +17,7 @@ from app.core.enums import (
     WorkflowTaskStatus,
     WorkflowVersionStatus,
 )
+from app.models.approval import Approval
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
@@ -72,6 +74,40 @@ WORKFLOW_CODE_BY_TARGET = {
     WorkflowTargetType.PAYMENT_APPROVAL: "supply.payment.v2",
     WorkflowTargetType.BUSINESS_APPROVAL: "supply.business.v2",
 }
+
+
+def _project_contract_action(
+    db: Session,
+    instance: WorkflowInstance,
+    task: WorkflowTask,
+    action: WorkflowTaskAction,
+) -> None:
+    if instance.target_type != WorkflowTargetType.CONTRACT:
+        return
+    if db.scalar(select(exists().where(Approval.workflow_task_action_id == action.id))):
+        return
+    db.add(Approval(
+        contract_id=instance.target_id,
+        approver_id=action.actor_id,
+        step=task.sequence,
+        approver_role=action.position_code[:32],
+        action=(
+            ApprovalAction.REJECT
+            if action.action == WorkflowAction.RETURN
+            else ApprovalAction.APPROVE
+        ),
+        comment=(
+            "提交审批（业务经办）"
+            if action.action == WorkflowAction.SUBMIT and not action.comment
+            else action.comment
+        ),
+        signature_snapshot=action.signature_snapshot,
+        workflow_task_action_id=action.id,
+        organization_code=action.organization_code,
+        organization_name=action.organization_name,
+        position_code=action.position_code,
+        position_name=action.position_name,
+    ))
 
 
 def ensure_workflow_version_mutable(version: WorkflowVersion) -> None:
@@ -656,7 +692,7 @@ def _start_workflow(
     db.flush()
 
     submit_task = next(item for item in tasks if item.sequence == 0)
-    db.add(WorkflowTaskAction(
+    submit_action = WorkflowTaskAction(
         task_id=submit_task.id,
         action=WorkflowAction.SUBMIT,
         actor_id=submitter_id,
@@ -666,7 +702,10 @@ def _start_workflow(
         position_code=submit_assignment.position.code,
         position_name=submit_assignment.position.name,
         signature_snapshot=submitter.signature,
-    ))
+    )
+    db.add(submit_action)
+    db.flush()
+    _project_contract_action(db, instance, submit_task, submit_action)
     target.status = ContractStatus.PENDING
     target.current_step = next_node.sequence
     target.workflow_instance_id = instance.id
@@ -1188,7 +1227,7 @@ def _complete_task(
             instance.current_sequence = next_task.sequence
             target.status = ContractStatus.PENDING
     target.current_step = instance.current_sequence
-    db.add(WorkflowTaskAction(
+    task_action = WorkflowTaskAction(
         task_id=task.id,
         action=action,
         actor_id=actor.id,
@@ -1200,7 +1239,10 @@ def _complete_task(
         comment=comment,
         signature_snapshot=actor.signature,
         returned_to_sequence=returned_to_sequence,
-    ))
+    )
+    db.add(task_action)
+    db.flush()
+    _project_contract_action(db, instance, task, task_action)
     db.flush()
     return instance.id
 

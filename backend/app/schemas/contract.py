@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 from app.core.enums import (
     CONTRACT_STATUS_LABELS,
     ContractStatus,
-    role_at_step,
 )
 
 
@@ -75,6 +74,9 @@ class ContractOut(ContractBase):
     created_by: int
     creator_name: str = ""  # 由端点补充（业务经办姓名）
     attachment_name: str = ""  # 合同附件原始文件名（空表示未上传）
+    workflow_instance_id: Optional[int] = None
+    active_task: Optional[dict] = None
+    can_act: bool = False
 
     @computed_field
     @property
@@ -90,16 +92,9 @@ class ContractOut(ContractBase):
     @computed_field
     @property
     def current_role(self) -> Optional[str]:
-        """审批中的合同：当前待审批角色值；否则 None。"""
-        if self.status != ContractStatus.PENDING:
-            return None
-        r = role_at_step(self.current_step)
-        return r.value if r else None
+        return self.active_task.get("position_code") if self.active_task else None
 
     @computed_field
     @property
     def current_role_label(self) -> Optional[str]:
-        if self.status != ContractStatus.PENDING:
-            return None
-        r = role_at_step(self.current_step)
-        return r.label if r else None
+        return self.active_task.get("position_name") if self.active_task else None

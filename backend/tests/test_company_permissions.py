@@ -434,6 +434,23 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 409)
                 self.assertEqual(response.json()["detail"], "已审批业务记录不可删除")
 
+    def test_supply_company_scope_handler_can_view_all_contracts(self):
+        self._add_current_user()
+        self._assign_supply_role(self.current_user.id, Role.BUSINESS_HANDLER)
+        self.db.add_all([
+            Contract(contract_no="OWN", title="Own", created_by=self.current_user.id),
+            Contract(contract_no="OTHER", title="Other", created_by=999),
+        ])
+        self.db.commit()
+
+        response = self.client.get("/api/v1/contracts")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            {item["contract_no"] for item in response.json()["data"]},
+            {"OWN", "OTHER"},
+        )
+
     def test_superuser_without_business_assignment_has_zero_pending_tasks(self):
         user = User(
             id=7,

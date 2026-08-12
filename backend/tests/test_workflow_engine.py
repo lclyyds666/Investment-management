@@ -25,6 +25,7 @@ from app.core.enums import (
     WorkflowVersionStatus,
 )
 from app.db.base import Base
+from app.models.approval import Approval
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
@@ -469,6 +470,14 @@ class WorkflowStartTest(unittest.TestCase):
         self.assertEqual(action.actor_name, self.handler.full_name)
         self.assertEqual(action.position_code, "supply.business_handler")
         self.assertEqual(action.signature_snapshot, self.handler.signature)
+        projection = self.db.scalar(
+            select(Approval).where(Approval.workflow_task_action_id == action.id)
+        )
+        self.assertEqual(projection.approver_role, "supply.business_handler")
+        self.assertEqual(projection.position_code, action.position_code)
+        self.assertEqual(projection.position_name, action.position_name)
+        self.assertEqual(projection.organization_code, action.organization_code)
+        self.assertEqual(projection.action.value, "approve")
         self.db.refresh(self.contract)
         self.assertEqual(self.contract.status, ContractStatus.PENDING)
         self.assertEqual(self.contract.current_step, 1)
@@ -787,6 +796,11 @@ class WorkflowAuthorizationTest(unittest.TestCase):
         ))
         self.assertEqual(action.returned_to_sequence, legal_task.sequence)
         self.assertEqual(action.position_code, "investment.duty.supply_risk_review")
+        projection = self.db.scalar(
+            select(Approval).where(Approval.workflow_task_action_id == action.id)
+        )
+        self.assertEqual(projection.action.value, "reject")
+        self.assertEqual(projection.position_code, action.position_code)
 
         complete_task(self.db, legal_task.id, self.legal, WorkflowAction.APPROVE, "approved again")
         self.db.refresh(risk_task)

@@ -14,6 +14,7 @@ from app.core.enums import AssignmentStatus, ContractStatus, WorkflowAction, Wor
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
+from app.models.approval import Approval
 from app.models.contract import Contract
 from app.models.approval_form import ApprovalForm
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
@@ -237,6 +238,50 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(action["comment"], "补充材料")
         self.assertEqual(action["actor_name"], self.leader.full_name)
 
+    def test_generic_workflow_actions_project_contract_approval_snapshots(self):
+        submit_projection = self.db.scalar(
+            select(Approval).where(Approval.contract_id == self.contract.id)
+        )
+        self.assertIsNotNone(submit_projection.workflow_task_action_id)
+        self.assertEqual(submit_projection.approver_role, "supply.business_handler")
+        self.assertEqual(submit_projection.position_code, "supply.business_handler")
+        self.assertEqual(submit_projection.position_name, "业务经办")
+
+        task = self.active_task()
+        self.current_user = self.leader
+        approved = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/approve",
+            json={"comment": "同意"},
+        )
+
+        self.assertEqual(approved.status_code, 200)
+        projection = self.db.scalar(
+            select(Approval)
+            .where(Approval.contract_id == self.contract.id)
+            .order_by(Approval.id.desc())
+        )
+        self.assertEqual(projection.action.value, "approve")
+        self.assertEqual(projection.position_code, "supply.company_leader")
+        self.assertEqual(projection.position_name, "供应链公司负责人")
+        self.assertEqual(projection.organization_code, "supplymanagement")
+
+        legal_task = self.active_task()
+        self.current_user = self.legal
+        returned = self.client.post(
+            f"/api/v1/workflows/tasks/{legal_task.id}/reject",
+            json={"reason": "请补充"},
+        )
+
+        self.assertEqual(returned.status_code, 200)
+        projection = self.db.scalar(
+            select(Approval)
+            .where(Approval.contract_id == self.contract.id)
+            .order_by(Approval.id.desc())
+        )
+        self.assertEqual(projection.action.value, "reject")
+        self.assertEqual(projection.position_code, "external.legal_counsel")
+
+
     def test_timeline_requires_target_view_permission_but_allows_information_maintainer(self):
         self.current_user = self.handler
         business_reader = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
@@ -383,6 +428,236 @@ class WorkflowApiTest(unittest.TestCase):
         persisted = self.db.get(WorkflowTask, task.id)
         self.assertEqual(persisted.status, WorkflowTaskStatus.ACTIVE)
         self.assertEqual(persisted.designated_user_id, self.other_leader.id)
+
+
+class ContractWorkflowApiTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
+        self.publisher = self.add_user("publisher", "Publisher")
+        self.handler = self.add_user("contract-handler", "Contract Handler")
+        self.leader = self.add_user("contract-leader", "Contract Leader")
+        self.legal = self.add_user("contract-legal", "Contract Legal")
+        self.risk = self.add_user("contract-risk", "Contract Risk")
+        self.governance = self.add_user("contract-governance", "Contract Governance")
+        self.assign(self.handler, "supplymanagement", "supply.business_handler")
+        self.assign(self.leader, "supplymanagement", "supply.company_leader")
+        legal_assignment = self.assign(self.legal, "external.legal", "external.legal_counsel")
+        self.db.add(ExternalAssignment(
+            assignment_id=legal_assignment.id,
+            provider_name="Legal Firm",
+            service_scopes=["contract_legal_review"],
+        ))
+        self.assign(self.risk, "investment.legal_risk", "investment.duty.supply_risk_review")
+        self.assign(self.governance, "supplymanagement", "governance.supply_leader")
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.contract = Contract(
+            contract_no="WF-CONTRACT-1",
+            title="Contract Route Cutover",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(self.contract)
+        self.db.commit()
+        self.current_user = self.handler
+        self.app = create_app()
+        self.app.dependency_overrides[get_db] = lambda: self.db
+        self.app.dependency_overrides[get_current_user] = lambda: self.current_user
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.app.dependency_overrides.clear()
+        self.db.close()
+        self.engine.dispose()
+
+    def add_user(self, username, full_name):
+        user = User(
+            username=username,
+            full_name=full_name,
+            hashed_password="test",
+            is_active=True,
+        )
+        self.db.add(user)
+        self.db.flush()
+        return user
+
+    def assign(self, user, organization_code, position_code):
+        assignment = UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        )
+        self.db.add(assignment)
+        self.db.flush()
+        return assignment
+
+    def designation_payload(self):
+        return {
+            "designated_users": {
+                "company_leader": self.leader.id,
+                "legal_counsel": self.legal.id,
+                "supply_governance_leader": self.governance.id,
+            }
+        }
+
+    def test_contract_submit_requires_three_designated_users(self):
+        response = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={"designated_users": {"company_leader": self.leader.id}},
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_contract_chain_uses_supply_governance_leader(self):
+        response = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        self.assertIsNotNone(data["workflow_instance_id"])
+        self.assertEqual(data["active_task"]["position_code"], "supply.company_leader")
+        self.assertFalse(data["can_act"])
+        tasks = list(self.db.scalars(
+            select(WorkflowTask)
+            .where(WorkflowTask.instance_id == data["workflow_instance_id"])
+            .order_by(WorkflowTask.sequence)
+        ))
+        self.assertEqual(tasks[-1].required_position_code, "governance.supply_leader")
+
+    def test_todo_and_legacy_wrappers_use_current_workflow_task(self):
+        submitted = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+        self.current_user = self.leader
+        todo = self.client.get("/api/v1/contracts/todo")
+        self.assertEqual([item["id"] for item in todo.json()["data"]], [self.contract.id])
+        self.assertTrue(todo.json()["data"][0]["can_act"])
+        approved = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/approve",
+            json={"comment": "负责人同意"},
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(approved.json()["data"]["active_task"]["position_code"], "external.legal_counsel")
+        self.current_user = self.legal
+        returned = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/reject",
+            json={"comment": "退回补充"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        self.assertEqual(returned.json()["data"]["active_task"]["position_code"], "supply.company_leader")
+        self.current_user = self.handler
+        timeline = self.client.get(
+            f"/api/v1/workflows/instances/{self.contract.workflow_instance_id}/timeline"
+        ).json()["data"]
+        self.assertEqual(timeline[-1]["action"], "return")
+
+    def test_legacy_reject_wrapper_requires_nonblank_reason(self):
+        submitted = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+        self.current_user = self.leader
+
+        response = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/reject",
+            json={"comment": "   "},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_external_legal_counsel_sees_only_designated_contract(self):
+        other = Contract(
+            contract_no="WF-CONTRACT-OTHER",
+            title="Other Contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(other)
+        self.db.commit()
+        submitted = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+
+        self.current_user = self.legal
+        listing = self.client.get("/api/v1/contracts")
+        assigned = self.client.get(f"/api/v1/contracts/{self.contract.id}")
+        unassigned = self.client.get(f"/api/v1/contracts/{other.id}")
+
+        self.assertEqual(listing.status_code, 200, listing.text)
+        self.assertEqual([item["id"] for item in listing.json()["data"]], [self.contract.id])
+        self.assertEqual(assigned.status_code, 200)
+        self.assertEqual(unassigned.status_code, 403)
+
+    def test_external_legal_counsel_without_designation_sees_empty_list(self):
+        self.current_user = self.legal
+
+        response = self.client.get("/api/v1/contracts")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], [])
+
+    def test_legal_doc_uses_position_snapshots_and_historical_fallback(self):
+        self.db.add_all([
+            Approval(
+                contract_id=self.contract.id,
+                approver_id=self.legal.id,
+                approver_role="ignored_for_new_row",
+                action="approve",
+                comment="法律意见",
+                position_code="external.legal_counsel",
+                position_name="外聘法律顾问",
+            ),
+            Approval(
+                contract_id=self.contract.id,
+                approver_id=self.risk.id,
+                approver_role="risk_auditor",
+                action="approve",
+                comment="风控意见",
+                position_code="investment.duty.supply_risk_review",
+                position_name="供应链风控复核",
+            ),
+            Approval(
+                contract_id=self.contract.id,
+                approver_id=self.governance.id,
+                approver_role="invest_director",
+                action="approve",
+                comment="历史治理意见",
+            ),
+        ])
+        self.db.commit()
+
+        with patch(
+            "app.api.v1.endpoints.contract.legal_doc_svc.build_legal_doc",
+            return_value=b"docx",
+        ) as build:
+            response = self.client.get(f"/api/v1/contracts/{self.contract.id}/legal-doc")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        opinions = build.call_args.args[1]
+        self.assertEqual(opinions["external.legal_counsel"]["comment"], "法律意见")
+        self.assertEqual(
+            opinions["investment.duty.supply_risk_review"]["comment"],
+            "风控意见",
+        )
+        self.assertEqual(opinions["governance.supply_leader"]["comment"], "历史治理意见")
 
 
 if __name__ == "__main__":
