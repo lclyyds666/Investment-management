@@ -40,12 +40,13 @@ STATIC_WORKFLOW_POSITION_SETS = (
 
 
 class AuthorizationConflictError(Exception):
-    def __init__(self, code: str, message: str, *, user_id: int | None = None, assignment_ids: tuple[int, ...] = ()) -> None:
+    def __init__(self, code: str, message: str, *, user_id: int | None = None, assignment_ids: tuple[int, ...] = (), conflicting_client_refs: tuple[str, ...] = ()) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.user_id = user_id
         self.assignment_ids = assignment_ids
+        self.conflicting_client_refs = conflicting_client_refs
 
 
 def _active_assignments(db: Session, entity, entity_id: int):
@@ -285,18 +286,24 @@ def _periods_overlap(left: UserAssignment, right: UserAssignment) -> bool:
     return left.valid_from <= right_end and right.valid_from <= left_end
 
 
-def validate_assignment_conflicts(user_id: int, assignments: list[UserAssignment]) -> None:
+def validate_assignment_conflicts(user_id: int, assignments: list[UserAssignment], client_refs: list[str | None] | None = None) -> None:
     active = [item for item in assignments if item.status == AssignmentStatus.ACTIVE]
     for workflow_set in STATIC_WORKFLOW_POSITION_SETS:
         candidates = [item for item in active if item.position.code in workflow_set]
         for index, left in enumerate(candidates):
             for right in candidates[index + 1:]:
                 if left.position_id != right.position_id and _periods_overlap(left, right):
+                    conflicting_client_refs = tuple(
+                        client_refs[assignments.index(item)]
+                        for item in (left, right)
+                        if client_refs and client_refs[assignments.index(item)]
+                    )
                     raise AuthorizationConflictError(
                         "assignment_workflow_conflict",
                         "Overlapping assignments conflict in a static workflow.",
                         user_id=user_id,
                         assignment_ids=tuple(item.id for item in (left, right) if item.id is not None),
+                        conflicting_client_refs=conflicting_client_refs,
                     )
 
 
@@ -392,7 +399,7 @@ def replace_user_assignments(
         for assignment, item in zip(replacements, payload.assignments):
             assignment.organization = organizations[item.organization_code]
             assignment.position = positions[item.position_code]
-        validate_assignment_conflicts(user.id, replacements)
+        validate_assignment_conflicts(user.id, replacements, [item.client_ref for item in payload.assignments])
         for assignment in existing_assignments:
             db.delete(assignment)
         db.flush()

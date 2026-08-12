@@ -469,11 +469,13 @@ class OrganizationAdminApiTest(unittest.TestCase):
                         "organization_code": "supplymanagement",
                         "position_code": "supply.business_handler",
                         "valid_from": "2026-01-01",
+                        "client_ref": "row-handler",
                     },
                     {
                         "organization_code": "supplymanagement",
                         "position_code": "supply.company_leader",
                         "valid_from": "2026-01-01",
+                        "client_ref": "row-leader",
                     },
                 ]
             },
@@ -481,6 +483,8 @@ class OrganizationAdminApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "assignment_workflow_conflict")
+        self.assertEqual(response.json()["detail"]["assignment_ids"], [])
+        self.assertEqual(response.json()["detail"]["conflicting_client_refs"], ["row-handler", "row-leader"])
 
     def test_duplicate_organization_code_update_returns_409_without_mutation(self):
         self.current_user = self.admin

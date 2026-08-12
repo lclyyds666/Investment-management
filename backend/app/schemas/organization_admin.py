@@ -54,6 +54,7 @@ class ExternalAssignmentWrite(BaseModel):
 
 
 class AssignmentWrite(BaseModel):
+    client_ref: str | None = Field(default=None, min_length=1, max_length=96)
     organization_code: str
     position_code: str
     valid_from: date

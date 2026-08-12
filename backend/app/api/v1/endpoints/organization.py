@@ -56,6 +56,7 @@ def _conflict_boundary(operation: Callable[[], Result]) -> Result:
                 "message": error.message,
                 "user_id": error.user_id,
                 "assignment_ids": error.assignment_ids,
+                "conflicting_client_refs": error.conflicting_client_refs,
             },
         ) from error
 
