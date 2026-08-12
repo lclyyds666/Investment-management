@@ -407,6 +407,36 @@ class WorkflowApiTest(unittest.TestCase):
         allowed = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
         self.assertEqual(allowed.status_code, 200)
 
+    def test_timeline_assigned_scope_requires_designation_on_that_instance(self):
+        other_legal, _ = self.add_external_legal("other-timeline-legal")
+        other_contract = Contract(
+            contract_no="WF-API-TIMELINE-OTHER",
+            title="Other legal timeline",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(other_contract)
+        self.db.flush()
+        other_instance = start_workflow(
+            self.db,
+            "contract",
+            other_contract.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "legal_counsel": other_legal.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        self.db.commit()
+
+        self.current_user = self.legal
+        assigned = self.client.get(f"/api/v1/workflows/instances/{self.instance.id}/timeline")
+        not_assigned = self.client.get(f"/api/v1/workflows/instances/{other_instance.id}/timeline")
+
+        self.assertEqual(assigned.status_code, 200, assigned.text)
+        self.assertEqual(not_assigned.status_code, 403, not_assigned.text)
+
     def test_reassignment_requires_superuser_reason_and_exact_effective_position(self):
         task = self.active_task()
         self.current_user = self.handler

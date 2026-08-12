@@ -10,9 +10,9 @@ const tasks = [{
   required_position_code: 'supply.company_leader',
   required_position_name: '供管公司负责人',
   designated_user: { id: 7, full_name: '张负责人' },
-  status: 'completed',
+  status: 'approved',
   actions: [
-    { id: 21, action: 'reassign', actor_name: '系统管理员', previous_assignee_name: '王负责人', new_assignee_name: '张负责人', reason: '岗位调整', created_at: '2026-08-12T09:00:00' },
+    { id: 21, action: 'reassign', actor_name: '系统管理员', position_name: '信息维护者', previous_assignee_name: '王负责人', new_assignee_name: '张负责人', reason: '岗位调整', created_at: '2026-08-12T09:00:00' },
     { id: 22, action: 'approve', actor_name: '张负责人', position_name: '供管公司负责人', comment: '同意办理', created_at: '2026-08-12T10:00:00' }
   ]
 }]
@@ -28,6 +28,17 @@ describe('WorkflowTimeline', () => {
     expect(text).toContain('同意办理')
     expect(text).toContain('王负责人 → 张负责人')
     expect(text).toContain('岗位调整')
+    expect(text).toContain('改派 · 系统管理员')
+    expect(text).toContain('信息维护者')
+    expect(text).toContain('已通过')
+  })
+
+  it.each([
+    ['pending', '待激活'], ['active', '办理中'], ['approved', '已通过'],
+    ['returned', '已退回'], ['skipped', '已跳过'], ['awaiting_reassignment', '待改派']
+  ])('renders real task status %s', (status, label) => {
+    const wrapper = mount(WorkflowTimeline, { props: { tasks: [{ ...tasks[0], status, actions: [] }] } })
+    expect(wrapper.text()).toContain(label)
   })
 
   it('renders a directional empty state without inventing pending nodes', () => {

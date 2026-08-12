@@ -184,11 +184,18 @@ def timeline(
         if instance.target_type == WorkflowTargetType.CONTRACT
         else "supply.approval.view"
     )
+    assigned_user_id = db.scalar(select(WorkflowTask.designated_user_id).where(
+        WorkflowTask.instance_id == instance.id,
+        WorkflowTask.designated_user_id == current_user.id,
+    ))
     if not current_user.is_superuser and not has_permission(
         db,
         current_user,
         view_permission,
-        PermissionContext(company_code="supplymanagement"),
+        PermissionContext(
+            company_code="supplymanagement",
+            assigned_user_id=assigned_user_id,
+        ),
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     tasks = sorted(instance.tasks, key=lambda item: (item.sequence, item.id))

@@ -5,7 +5,7 @@ const approvalApi = vi.hoisted(() => ({
   listForms: vi.fn(), createForm: vi.fn(), updateForm: vi.fn(), deleteForm: vi.fn(), submitForm: vi.fn(), uploadFormAttachment: vi.fn(),
   approveForm: vi.fn(), rejectForm: vi.fn(), listActions: vi.fn(), proofreadForm: vi.fn(), downloadFormPrint: vi.fn(), getForm: vi.fn(), fetchFormAttachmentBlob: vi.fn()
 }))
-const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])) }))
+const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowTimeline: vi.fn() }))
 const badgeStore = vi.hoisted(() => ({ refresh: vi.fn() }))
 vi.mock('@/api/approval', () => approvalApi)
 vi.mock('@/api/customer', () => ({ listCustomers: vi.fn(() => Promise.resolve([])) }))
@@ -126,5 +126,18 @@ describe('approval active-task actions', () => {
     expect(wrapper.vm.actionVisible).toBe(false)
     expect(approvalApi.listForms).toHaveBeenCalledTimes(2)
     expect(messages.warning).toHaveBeenCalledWith('该节点已由 李复核 办理')
+  })
+
+  it('keeps form details visible and exposes retry when timeline fails', async () => {
+    approvalApi.getForm.mockResolvedValue({ id: 10, workflow_instance_id: 100, workflow_version: 2 })
+    workflowApi.getWorkflowTimeline.mockRejectedValueOnce(new Error('denied')).mockResolvedValueOnce([])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.vm.openDetail({ id: 10 })
+    expect(wrapper.vm.detail.id).toBe(10)
+    expect(wrapper.vm.timelineError).toBe(true)
+    await wrapper.vm.loadDetailTimeline()
+    expect(workflowApi.getWorkflowTimeline).toHaveBeenCalledTimes(2)
+    expect(wrapper.vm.timelineError).toBe(false)
   })
 })

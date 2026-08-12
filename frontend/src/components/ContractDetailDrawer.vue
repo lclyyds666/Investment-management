@@ -56,6 +56,15 @@
       </el-descriptions>
 
       <h4 class="section-title"><el-icon><Guide /></el-icon> 岗位责任轨道</h4>
+      <el-alert
+        v-if="timelineError"
+        type="error"
+        :closable="false"
+        title="流程记录加载失败，可重试"
+        class="timeline-error"
+      >
+        <template #default><el-button link type="primary" @click="loadTimeline">重试</el-button></template>
+      </el-alert>
       <WorkflowTimeline v-if="contract.workflow_version >= 2" :tasks="workflowTasks" />
       <el-timeline v-else class="flow-timeline">
         <el-timeline-item
@@ -105,6 +114,7 @@ const loading = ref(false)
 const contract = ref(null)
 const approvals = ref([])
 const workflowTasks = ref([])
+const timelineError = ref(false)
 const docLoading = ref(false)
 
 const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) : ''))
@@ -141,17 +151,30 @@ function fmtDate(t) {
 async function load() {
   if (!props.contractId) return
   loading.value = true
+  contract.value = null
+  approvals.value = []
+  workflowTasks.value = []
+  timelineError.value = false
   try {
     const c = await getContract(props.contractId)
-    const [aps, tasks] = await Promise.all([
-      c.workflow_version >= 2 ? Promise.resolve([]) : listApprovals(props.contractId),
-      c.workflow_version >= 2 ? getWorkflowTimeline(c.workflow_instance_id) : Promise.resolve([])
-    ])
     contract.value = c
-    approvals.value = aps
-    workflowTasks.value = tasks
+    await loadTimeline()
   } finally {
     loading.value = false
+  }
+}
+
+async function loadTimeline() {
+  if (!contract.value) return
+  timelineError.value = false
+  try {
+    if (contract.value.workflow_version >= 2) {
+      workflowTasks.value = await getWorkflowTimeline(contract.value.workflow_instance_id)
+    } else {
+      approvals.value = await listApprovals(contract.value.id)
+    }
+  } catch {
+    timelineError.value = true
   }
 }
 
@@ -206,6 +229,7 @@ watch(
 .flow-timeline {
   padding-left: 4px;
 }
+.timeline-error { margin-bottom: 12px; }
 .flow-node-main {
   display: flex;
   align-items: center;

@@ -28,9 +28,10 @@
             <div v-for="entry in task.actions" :key="entry.id" class="audit-entry">
               <template v-if="entry.action === 'reassign'">
                 <div class="audit-title">
-                  <span>改派</span>
+                  <span>改派 · {{ entry.actor_name }}</span>
                   <time>{{ formatTime(entry.created_at) }}</time>
                 </div>
+                <p>{{ entry.position_name || '信息维护' }}</p>
                 <p>{{ entry.previous_assignee_name || '原办理人' }} → {{ entry.new_assignee_name || '待指定' }}</p>
                 <p v-if="entry.reason || entry.comment" class="comment">{{ entry.reason || entry.comment }}</p>
               </template>
@@ -58,10 +59,10 @@ defineProps({ tasks: { type: Array, default: () => [] } })
 const STATUS = {
   pending: { label: '待激活', type: 'info' },
   active: { label: '办理中', type: 'warning' },
-  completed: { label: '已完成', type: 'success' },
+  approved: { label: '已通过', type: 'success' },
   returned: { label: '已退回', type: 'danger' },
+  skipped: { label: '已跳过', type: 'info' },
   awaiting_reassignment: { label: '待改派', type: 'danger' },
-  cancelled: { label: '已取消', type: 'info' }
 }
 
 function statusMeta(status) {

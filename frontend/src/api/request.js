@@ -49,8 +49,11 @@ service.interceptors.response.use(
     // 友好错误提示：不向用户暴露原始 Axios 报错（如 "timeout of 15000ms exceeded"）
     let msg
     const detail = error.response?.data?.detail || error.response?.data?.message
+    if (status === 409 && detail?.code === 'task_already_completed') {
+      return Promise.reject(error)
+    }
     if (detail) {
-      msg = detail
+      msg = typeof detail === 'string' ? detail : detail.message || '请求失败，请稍后重试。'
     } else if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
       // 超时：多见于大文件上传 / 台账计算 / 后端冷启动
       msg = '请求超时，请稍后重试；上传大文件或复杂计算可能耗时较长，请耐心等待。'

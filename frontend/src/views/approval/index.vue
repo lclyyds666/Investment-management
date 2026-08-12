@@ -278,6 +278,15 @@
         </el-descriptions>
 
         <div class="timeline-title">岗位责任轨道</div>
+        <el-alert
+          v-if="timelineError"
+          type="error"
+          :closable="false"
+          title="流程记录加载失败，可重试"
+          class="timeline-error"
+        >
+          <template #default><el-button link type="primary" @click="loadDetailTimeline">重试</el-button></template>
+        </el-alert>
         <WorkflowTimeline v-if="detail.workflow_version >= 2" :tasks="workflowTasks" />
         <el-timeline v-else-if="actions.length">
           <el-timeline-item
@@ -622,21 +631,32 @@ const detailVisible = ref(false)
 const detail = ref(null)
 const actions = ref([])
 const workflowTasks = ref([])
+const timelineError = ref(false)
 async function openDetail(row) {
   detail.value = row
   actions.value = []
   workflowTasks.value = []
+  timelineError.value = false
   detailVisible.value = true
   try {
     const d = await getForm(row.id)
-    const [acts, tasks] = await Promise.all([
-      d.workflow_version >= 2 ? Promise.resolve([]) : listActions(row.id),
-      d.workflow_version >= 2 ? getWorkflowTimeline(d.workflow_instance_id) : Promise.resolve([])
-    ])
     detail.value = d
-    actions.value = acts
-    workflowTasks.value = tasks
-  } catch { /* 忽略 */ }
+    await loadDetailTimeline()
+  } catch { /* 基本详情由全局错误提示 */ }
+}
+
+async function loadDetailTimeline() {
+  if (!detail.value) return
+  timelineError.value = false
+  try {
+    if (detail.value.workflow_version >= 2) {
+      workflowTasks.value = await getWorkflowTimeline(detail.value.workflow_instance_id)
+    } else {
+      actions.value = await listActions(detail.value.id)
+    }
+  } catch {
+    timelineError.value = true
+  }
 }
 
 // 合同附件：预览 / 下载（任意登录用户可用）
@@ -723,6 +743,7 @@ loadCustomers()
 .md-body :deep(table) { border-collapse: collapse; width: 100%; }
 .md-body :deep(th), .md-body :deep(td) { border: 1px solid var(--el-border-color); padding: 6px 8px; }
 .timeline-title { font-weight: 600; margin: 18px 0 10px; color: var(--el-color-primary); }
+.timeline-error { margin-bottom: 12px; }
 .tl-row { display: flex; align-items: center; gap: 8px; }
 .tl-comment { color: var(--el-text-color-regular); font-size: 13px; margin-top: 2px; }
 .tl-sig { max-height: 44px; margin-top: 4px; }
