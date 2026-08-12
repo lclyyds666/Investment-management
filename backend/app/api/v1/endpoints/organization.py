@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, require_superuser
 from app.db.session import get_db
-from app.models.organization import Organization, Permission, Position, UserAssignment
+from app.models.organization import Organization, Permission, Position, PositionPermission, UserAssignment
 from app.models.user import User
 from app.schemas.organization_admin import (
     OrganizationWrite,
@@ -159,14 +159,31 @@ def directory_tree(
 
 @router.get("/positions")
 def list_positions(
-    _: User = Depends(_directory_reader),
+    _: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    positions = db.scalars(
+        select(Position)
+        .options(selectinload(Position.permission_links).selectinload(PositionPermission.permission))
+        .order_by(Position.code)
+    ).all()
     return [
-        _position_summary(position)
-        for position in db.scalars(
-            select(Position).where(Position.is_active.is_(True)).order_by(Position.code)
-        )
+        {
+            **_position_summary(position),
+            "is_active": position.is_active,
+            "permissions": [
+                {
+                    "permission_code": link.permission.code,
+                    "data_scope": link.data_scope.value,
+                    "scope_ref": link.scope_ref,
+                }
+                for link in sorted(
+                    position.permission_links,
+                    key=lambda link: (link.permission.code, link.data_scope.value, link.scope_ref),
+                )
+            ],
+        }
+        for position in positions
     ]
 
 

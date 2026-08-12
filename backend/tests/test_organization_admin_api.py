@@ -409,6 +409,38 @@ class OrganizationAdminApiTest(unittest.TestCase):
         response = self.client.get("/api/v1/organizations/permissions")
         self.assertEqual(response.status_code, 403)
 
+    def test_business_user_cannot_read_position_templates(self):
+        response = self.client.get("/api/v1/organizations/positions")
+        self.assertEqual(response.status_code, 403)
+
+    def test_superuser_positions_include_deterministic_permission_templates_only(self):
+        self.current_user = self.admin
+
+        response = self.client.get("/api/v1/organizations/positions")
+
+        self.assertEqual(response.status_code, 200)
+        position = next(item for item in response.json() if item["code"] == "external.legal_counsel")
+        self.assertTrue(position["is_active"])
+        self.assertEqual(position["permissions"], [
+            {
+                "permission_code": "supply.contract.review",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
+                "permission_code": "supply.contract.view",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
+                "permission_code": "supply.portal.enter",
+                "data_scope": "platform",
+                "scope_ref": "supplymanagement",
+            },
+        ])
+        self.assertNotIn("assignments", position)
+        self.assertNotIn("users", position)
+
     def test_business_user_cannot_replace_assignments(self):
         response = self.client.put(
             f"/api/v1/organizations/users/{self.worker.id}/assignments?reason=无权限操作",

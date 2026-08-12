@@ -71,13 +71,13 @@ const routes = [
       {
         path: 'positions',
         name: 'SystemPositions',
-        component: () => import('@/views/portal/ConstructionView.vue'),
+        component: () => import('@/views/system/positions.vue'),
         meta: { requiresSuperuser: true, title: '岗位与权限', icon: 'Key' }
       },
       {
         path: 'assignments',
         name: 'SystemAssignments',
-        component: () => import('@/views/portal/ConstructionView.vue'),
+        component: () => import('@/views/system/assignments.vue'),
         meta: { requiresSuperuser: true, title: '人员任职', icon: 'Connection' }
       },
       {
