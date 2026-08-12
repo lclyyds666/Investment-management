@@ -151,6 +151,39 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(AuthorizationConflictError, "scope"):
             replace_position_permissions(self.db, position.id, [invalid_scope])
 
+    def test_portal_platform_scopes_preserve_only_catalog_targets(self):
+        position = self.db.scalar(select(Position).where(Position.code == "supply.business_handler"))
+        portal_refs = {
+            "supply.portal.enter": "supplymanagement",
+            "investment.portal.enter": "investment",
+            "fund.portal.enter": "fundmanagement",
+        }
+        for permission_code, scope_ref in portal_refs.items():
+            with self.subTest(permission_code=permission_code):
+                links = replace_position_permissions(self.db, position.id, [
+                    PositionPermissionWrite(
+                        permission_code=permission_code,
+                        data_scope=DataScope.PLATFORM,
+                        scope_ref=scope_ref,
+                    )
+                ])
+                self.assertEqual(links[0].scope_ref, scope_ref)
+
+        for permission_code, scope_ref in (
+            ("supply.portal.enter", "investment"),
+            ("investment.portal.enter", "arbitrary"),
+            ("supply.contract.view", "supplymanagement"),
+        ):
+            with self.subTest(permission_code=permission_code, scope_ref=scope_ref):
+                with self.assertRaisesRegex(AuthorizationConflictError, "scope"):
+                    replace_position_permissions(self.db, position.id, [
+                        PositionPermissionWrite(
+                            permission_code=permission_code,
+                            data_scope=DataScope.PLATFORM,
+                            scope_ref=scope_ref,
+                        )
+                    ])
+
     def test_assignment_replacement_returns_committed_reloaded_rows(self):
         payload = UserAssignmentsReplace(assignments=[
             AssignmentWrite(

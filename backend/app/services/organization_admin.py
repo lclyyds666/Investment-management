@@ -24,6 +24,11 @@ from app.schemas.organization_admin import (
 
 
 SUPPORTED_BUSINESS_DOMAINS = frozenset({"investment", "supply", "fund"})
+PLATFORM_PERMISSION_REFS = {
+    "supply.portal.enter": "supplymanagement",
+    "investment.portal.enter": "investment",
+    "fund.portal.enter": "fundmanagement",
+}
 
 
 STATIC_WORKFLOW_POSITION_SETS = (
@@ -141,7 +146,9 @@ def update_position(db: Session, position_id: int, payload: PositionWrite) -> Po
         raise
 
 
-def _valid_scope(db: Session, scope: DataScope, scope_ref: str) -> bool:
+def _valid_scope(
+    db: Session, permission_code: str, scope: DataScope, scope_ref: str
+) -> bool:
     if scope == DataScope.COMPANY:
         return db.scalar(select(Organization.id).where(
             Organization.code == scope_ref,
@@ -156,6 +163,9 @@ def _valid_scope(db: Session, scope: DataScope, scope_ref: str) -> bool:
         )) is not None
     if scope == DataScope.BUSINESS_DOMAIN:
         return scope_ref in SUPPORTED_BUSINESS_DOMAINS
+    if scope == DataScope.PLATFORM:
+        expected_ref = PLATFORM_PERMISSION_REFS.get(permission_code, "")
+        return scope_ref == expected_ref
     return not scope_ref
 
 
@@ -166,7 +176,10 @@ def replace_position_permissions(db: Session, position_id: int, payloads: list[P
     permissions = {item.permission_code: db.scalar(select(Permission).where(Permission.code == item.permission_code)) for item in payloads}
     if any(permission is None for permission in permissions.values()):
         raise AuthorizationConflictError("permission_not_found", "One or more permissions do not exist.")
-    if any(not _valid_scope(db, item.data_scope, item.scope_ref) for item in payloads):
+    if any(
+        not _valid_scope(db, item.permission_code, item.data_scope, item.scope_ref)
+        for item in payloads
+    ):
         raise AuthorizationConflictError("invalid_permission_scope", "Permission scope and scope reference do not match.")
     try:
         db.query(PositionPermission).filter(PositionPermission.position_id == position.id).delete()
