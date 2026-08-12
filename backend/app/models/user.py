@@ -17,6 +17,9 @@ class User(Base):
     company_roles: Mapped[list["UserCompanyRole"]] = relationship(
         "UserCompanyRole", back_populates="user", cascade="all, delete-orphan"
     )
+    assignments: Mapped[list["UserAssignment"]] = relationship(
+        "UserAssignment", back_populates="user", cascade="all, delete-orphan"
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
     username: Mapped[str] = mapped_column(
