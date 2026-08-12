@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -46,6 +46,25 @@ class WorkflowValidationError(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
+
+
+class WorkflowTaskConflict(Exception):
+    def __init__(
+        self,
+        *,
+        actor_name: str,
+        action: str,
+        completed_at: datetime,
+    ) -> None:
+        super().__init__("task_already_completed")
+        self.code = "task_already_completed"
+        self.actor_name = actor_name
+        self.action = action
+        self.completed_at = completed_at
+
+
+class _WorkflowTaskCASFailed(Exception):
+    pass
 
 
 WORKFLOW_CODE_BY_TARGET = {
@@ -411,11 +430,11 @@ def seed_workflow_definitions(db: Session, publisher_id: int) -> None:
     _expire_parent_catalog_state(db)
 
 
-def _ensure_sqlite_outer_transaction(connection) -> None:
+def _ensure_sqlite_outer_transaction(connection, *, immediate: bool = False) -> None:
     if connection.dialect.name != "sqlite":
         return
     if not connection.connection.driver_connection.in_transaction:
-        connection.exec_driver_sql("BEGIN")
+        connection.exec_driver_sql("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
 
 def _expire_parent_catalog_state(db: Session) -> None:
@@ -956,6 +975,80 @@ def _workflow_target_for_instance(db: Session, instance: WorkflowInstance):
     return _workflow_target(db, instance.target_type, instance.target_id)
 
 
+def _task_activation_status(
+    db: Session,
+    task: WorkflowTask,
+    on_date: date,
+) -> WorkflowTaskStatus:
+    if task.assignee_mode != WorkflowAssigneeMode.DESIGNATED_USER:
+        return WorkflowTaskStatus.ACTIVE
+    assignment = _designated_task_assignment(db, task)
+    if _designated_task_assignment_is_effective(task, assignment, on_date):
+        return WorkflowTaskStatus.ACTIVE
+    return WorkflowTaskStatus.AWAITING_REASSIGNMENT
+
+
+def _resubmission_assignment(
+    db: Session,
+    task: WorkflowTask,
+    actor: User,
+    on_date: date,
+) -> UserAssignment | None:
+    if (
+        not task.node.auto_complete_on_submit
+        or actor.id != task.instance.submitted_by
+        or not actor.is_active
+    ):
+        return None
+    return next(
+        (
+            item
+            for item in _active_assignments(
+                db,
+                {task.required_position_code},
+                on_date,
+                {actor.id},
+            )
+            if _assignment_has_required_scope(item)
+        ),
+        None,
+    )
+
+
+def _load_task_conflict(db: Session, task_id: int) -> WorkflowTaskConflict:
+    task = db.get(WorkflowTask, task_id)
+    action = db.scalar(
+        select(WorkflowTaskAction)
+        .where(WorkflowTaskAction.task_id == task_id)
+        .order_by(WorkflowTaskAction.id.desc())
+    )
+    if task is None or action is None:
+        raise WorkflowValidationError(
+            "workflow_task_not_active",
+            "Only active workflow tasks can be completed.",
+        )
+    return WorkflowTaskConflict(
+        actor_name=action.actor_name,
+        action=action.action.value,
+        completed_at=task.completed_at or action.created_at,
+    )
+
+
+def _load_task_conflict_after_rollback(
+    db: Session,
+    connection,
+    task_id: int,
+) -> WorkflowTaskConflict:
+    if connection.dialect.name == "sqlite":
+        with db.no_autoflush:
+            task = db.get(WorkflowTask, task_id)
+            if task is not None:
+                db.expire(task)
+            return _load_task_conflict(db, task_id)
+    with Session(bind=connection.engine, autoflush=False) as conflict_session:
+        return _load_task_conflict(conflict_session, task_id)
+
+
 def _complete_task(
     db: Session,
     task_id: int,
@@ -968,24 +1061,59 @@ def _complete_task(
         select(WorkflowTask)
         .where(WorkflowTask.id == task_id)
         .options(joinedload(WorkflowTask.instance), joinedload(WorkflowTask.node))
-        .with_for_update()
     )
     if task is None:
         raise WorkflowValidationError("workflow_task_not_found", "The workflow task does not exist.")
     if task.status != WorkflowTaskStatus.ACTIVE:
-        raise WorkflowValidationError("workflow_task_not_active", "Only active workflow tasks can be completed.")
-    if action not in (WorkflowAction.APPROVE, WorkflowAction.RETURN):
-        raise WorkflowValidationError("invalid_workflow_action", "Only approve and return are supported.")
+        if db.scalar(select(exists().where(WorkflowTaskAction.task_id == task.id))):
+            raise _WorkflowTaskCASFailed()
+        raise WorkflowValidationError(
+            "workflow_task_not_active", "Only active workflow tasks can be completed."
+        )
+    if action not in (WorkflowAction.SUBMIT, WorkflowAction.APPROVE, WorkflowAction.RETURN):
+        raise WorkflowValidationError(
+            "invalid_workflow_action", "Only submit, approve and return are supported."
+        )
     if action == WorkflowAction.RETURN and not task.node.allow_reject:
         raise WorkflowValidationError("workflow_return_not_allowed", "This workflow node cannot be returned.")
     actor = db.get(User, actor_id)
-    assignment = _effective_task_assignment(db, task, actor, completed_at.date()) if actor else None
+    if action == WorkflowAction.SUBMIT:
+        assignment = (
+            _resubmission_assignment(db, task, actor, completed_at.date())
+            if actor
+            else None
+        )
+    else:
+        assignment = (
+            _effective_task_assignment(db, task, actor, completed_at.date())
+            if actor
+            else None
+        )
     if assignment is None:
         raise WorkflowValidationError("workflow_task_not_actionable", "The actor is not authorized for this task.")
 
     instance = task.instance
-    task.status = WorkflowTaskStatus.APPROVED if action == WorkflowAction.APPROVE else WorkflowTaskStatus.RETURNED
-    task.completed_at = completed_at
+    next_status = (
+        WorkflowTaskStatus.RETURNED
+        if action == WorkflowAction.RETURN
+        else WorkflowTaskStatus.APPROVED
+    )
+    updated = db.execute(
+        update(WorkflowTask)
+        .where(
+            WorkflowTask.id == task.id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+            WorkflowTask.version == task.version,
+        )
+        .values(
+            status=next_status,
+            completed_at=func.now(),
+            version=WorkflowTask.version + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if updated.rowcount != 1:
+        raise _WorkflowTaskCASFailed()
     returned_to_sequence = None
     target = _workflow_target_for_instance(db, instance)
     if action == WorkflowAction.RETURN:
@@ -996,25 +1124,38 @@ def _complete_task(
                 WorkflowTask.sequence < task.sequence,
             )
             .order_by(WorkflowTask.sequence.desc())
-            .with_for_update()
         )
         if previous_task is None:
             raise WorkflowValidationError("workflow_return_not_allowed", "The first workflow node cannot be returned.")
-        if previous_task.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER:
-            previous_assignment = _designated_task_assignment(db, previous_task)
-            previous_task.status = (
-                WorkflowTaskStatus.ACTIVE
-                if _designated_task_assignment_is_effective(
-                    previous_task, previous_assignment, completed_at.date()
-                )
-                else WorkflowTaskStatus.AWAITING_REASSIGNMENT
-            )
-        else:
-            previous_task.status = WorkflowTaskStatus.ACTIVE
+        previous_task.status = _task_activation_status(
+            db, previous_task, completed_at.date()
+        )
         previous_task.activated_at = completed_at
         previous_task.completed_at = None
+        previous_task.version += 1
+        db.execute(
+            update(WorkflowTask)
+            .where(
+                WorkflowTask.instance_id == instance.id,
+                WorkflowTask.sequence > task.sequence,
+            )
+            .values(
+                status=WorkflowTaskStatus.PENDING,
+                activated_at=None,
+                completed_at=None,
+                version=WorkflowTask.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        instance.status = WorkflowInstanceStatus.ACTIVE
+        instance.completed_at = None
         instance.current_sequence = previous_task.sequence
         returned_to_sequence = previous_task.sequence
+        target.status = (
+            ContractStatus.REJECTED
+            if previous_task.node.auto_complete_on_submit
+            else ContractStatus.PENDING
+        )
     else:
         next_task = db.scalar(
             select(WorkflowTask)
@@ -1023,16 +1164,22 @@ def _complete_task(
                 WorkflowTask.sequence > task.sequence,
             )
             .order_by(WorkflowTask.sequence)
-            .with_for_update()
         )
         if next_task is None:
             instance.status = WorkflowInstanceStatus.APPROVED
             instance.completed_at = completed_at
             target.status = ContractStatus.APPROVED
         else:
-            next_task.status = WorkflowTaskStatus.ACTIVE
+            next_task.status = _task_activation_status(
+                db, next_task, completed_at.date()
+            )
             next_task.activated_at = completed_at
+            next_task.completed_at = None
+            next_task.version += 1
+            instance.status = WorkflowInstanceStatus.ACTIVE
+            instance.completed_at = None
             instance.current_sequence = next_task.sequence
+            target.status = ContractStatus.PENDING
     target.current_step = instance.current_sequence
     db.add(WorkflowTaskAction(
         task_id=task.id,
@@ -1061,23 +1208,30 @@ def complete_task(
     with db.no_autoflush:
         actor_id = actor.id
         connection = db.connection()
-    _ensure_sqlite_outer_transaction(connection)
+    _ensure_sqlite_outer_transaction(connection, immediate=True)
     workflow_session = Session(
         bind=connection,
         autoflush=False,
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     )
+    conflict = False
     try:
         instance_id = _complete_task(
             workflow_session, task_id, actor_id, WorkflowAction(action), comment, datetime.now()
         )
         workflow_session.commit()
+    except _WorkflowTaskCASFailed:
+        workflow_session.rollback()
+        conflict = True
     except Exception:
         workflow_session.rollback()
         raise
     finally:
         workflow_session.close()
+
+    if conflict:
+        raise _load_task_conflict_after_rollback(db, connection, task_id)
 
     instance = db.get(WorkflowInstance, instance_id)
     _expire_parent_workflow_state(db, instance.target_type, instance.target_id)

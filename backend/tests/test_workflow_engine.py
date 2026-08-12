@@ -1,8 +1,11 @@
 import unittest
+import tempfile
+import threading
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +38,7 @@ from app.models.workflow import (
 )
 from app.services.workflow_catalog import WORKFLOW_CATALOG
 from app.services.workflow_engine import (
+    WorkflowTaskConflict,
     WorkflowValidationError,
     complete_task,
     eligible_designated_users,
@@ -782,6 +786,62 @@ class WorkflowAuthorizationTest(unittest.TestCase):
         self.assertEqual(action.returned_to_sequence, legal_task.sequence)
         self.assertEqual(action.position_code, "investment.duty.supply_risk_review")
 
+        complete_task(self.db, legal_task.id, self.legal, WorkflowAction.APPROVE, "approved again")
+        self.db.refresh(risk_task)
+        self.assertEqual(risk_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertIsNone(risk_task.completed_at)
+        complete_task(self.db, risk_task.id, self.reviewer_b, WorkflowAction.APPROVE, "approved")
+        actions = list(self.db.scalars(
+            select(WorkflowTaskAction)
+            .where(WorkflowTaskAction.task_id == risk_task.id)
+            .order_by(WorkflowTaskAction.id)
+        ))
+        self.assertEqual(
+            [item.action for item in actions],
+            [WorkflowAction.RETURN, WorkflowAction.APPROVE],
+        )
+
+    def test_return_to_handler_can_resubmit_same_instance_with_full_history(self):
+        original_instance_id = self.instance.id
+        complete_task(
+            self.db,
+            self.designated_task.id,
+            self.leader,
+            WorkflowAction.RETURN,
+            "handler changes required",
+        )
+        handler_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == original_instance_id,
+            WorkflowTask.sequence == 0,
+        ))
+        self.db.refresh(self.contract)
+        self.assertEqual(handler_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(self.contract.status, ContractStatus.REJECTED)
+        self.assertEqual(self.contract.current_step, 0)
+
+        complete_task(
+            self.db,
+            handler_task.id,
+            self.handler,
+            WorkflowAction.SUBMIT,
+            "resubmitted",
+        )
+        self.db.refresh(self.designated_task)
+        self.db.refresh(self.contract)
+        self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(self.contract.status, ContractStatus.PENDING)
+        self.assertEqual(self.contract.workflow_instance_id, original_instance_id)
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+        actions = list(self.db.scalars(
+            select(WorkflowTaskAction)
+            .where(WorkflowTaskAction.task_id == handler_task.id)
+            .order_by(WorkflowTaskAction.id)
+        ))
+        self.assertEqual(
+            [item.action for item in actions],
+            [WorkflowAction.SUBMIT, WorkflowAction.SUBMIT],
+        )
+
     def test_return_to_expired_designated_assignment_awaits_reassignment(self):
         complete_task(self.db, self.designated_task.id, self.leader, WorkflowAction.APPROVE, "approved")
         legal_task = self.db.scalar(select(WorkflowTask).where(
@@ -801,6 +861,170 @@ class WorkflowAuthorizationTest(unittest.TestCase):
         self.db.refresh(self.instance)
         self.assertEqual(legal_task.status, WorkflowTaskStatus.AWAITING_REASSIGNMENT)
         self.assertEqual(self.instance.current_sequence, legal_task.sequence)
+
+    def test_completion_conflict_preserves_parent_transaction_and_pending_objects(self):
+        task_id = self.designated_task.id
+        complete_task(
+            self.db,
+            task_id,
+            self.leader,
+            WorkflowAction.APPROVE,
+            "winner",
+        )
+        pending = User(
+            username="pending-completion-conflict",
+            full_name="Pending Completion Conflict",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+
+        with self.assertRaises(WorkflowTaskConflict) as raised:
+            complete_task(
+                self.db,
+                task_id,
+                self.leader_b,
+                WorkflowAction.APPROVE,
+                "loser",
+            )
+
+        self.assertEqual(raised.exception.code, "task_already_completed")
+        self.assertEqual(raised.exception.actor_name, self.leader.full_name)
+        self.assertEqual(raised.exception.action, WorkflowAction.APPROVE.value)
+        self.assertIsInstance(raised.exception.completed_at, datetime)
+        self.assertTrue(self.db.in_transaction())
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+        self.db.commit()
+        self.assertIsNotNone(self.db.scalar(
+            select(User).where(User.username == "pending-completion-conflict")
+        ))
+
+
+class WorkflowConcurrencyTest(unittest.TestCase):
+    add_user = WorkflowStartTest.add_user
+    add_assignment = WorkflowStartTest.add_assignment
+    designated_users = WorkflowStartTest.designated_users
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        database_path = Path(self.temp_dir.name) / "workflow-concurrency.db"
+        self.engine = create_engine(
+            f"sqlite+pysqlite:///{database_path.as_posix()}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        with self.engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        self.users = {}
+        self.publisher = self.add_user("publisher", "Publisher")
+        self.handler = self.add_assignment(
+            "handler", "Handler", "supply.business_handler"
+        ).user
+        self.leader = self.add_assignment(
+            "leader", "Amy Leader", "supply.company_leader"
+        ).user
+        self.legal = self.add_assignment(
+            "legal", "Bob Legal", "external.legal_counsel", external_scope=True
+        ).user
+        self.governance = self.add_assignment(
+            "governance", "Cara Governance", "governance.supply_leader"
+        ).user
+        self.reviewer_a = self.add_assignment(
+            "reviewer-a", "Reviewer A", "investment.duty.supply_risk_review"
+        ).user
+        self.reviewer_b = self.add_assignment(
+            "reviewer-b", "Reviewer B", "investment.duty.supply_risk_review"
+        ).user
+        self.db.commit()
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
+        contract = Contract(
+            contract_no="TASK5-CONCURRENT",
+            title="Task 5 Concurrent Contract",
+            created_by=self.handler.id,
+        )
+        self.db.add(contract)
+        self.db.commit()
+        instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            contract.id,
+            self.handler,
+            self.designated_users(),
+        )
+        self.db.commit()
+        leader_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 1,
+        ))
+        complete_task(self.db, leader_task.id, self.leader, WorkflowAction.APPROVE, "approved")
+        self.db.commit()
+        legal_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 2,
+        ))
+        complete_task(self.db, legal_task.id, self.legal, WorkflowAction.APPROVE, "approved")
+        self.db.commit()
+        self.task_id = self.db.scalar(select(WorkflowTask.id).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 3,
+        ))
+        self.actor_ids = (self.reviewer_a.id, self.reviewer_b.id)
+        self.db.close()
+
+    def tearDown(self):
+        self.engine.dispose()
+        self.temp_dir.cleanup()
+
+    def test_two_shared_actors_can_only_complete_once(self):
+        barrier = threading.Barrier(2)
+        results = []
+
+        def act(user_id):
+            with Session(self.engine) as session:
+                actor = session.get(User, user_id)
+                barrier.wait()
+                try:
+                    complete_task(
+                        session,
+                        self.task_id,
+                        actor,
+                        WorkflowAction.APPROVE,
+                        "",
+                    )
+                    session.commit()
+                    results.append(("approved", actor.full_name))
+                except WorkflowTaskConflict as error:
+                    results.append((
+                        "conflict",
+                        error.actor_name,
+                        error.action,
+                        error.completed_at,
+                    ))
+
+        threads = [threading.Thread(target=act, args=(user_id,)) for user_id in self.actor_ids]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertCountEqual([item[0] for item in results], ["approved", "conflict"])
+        winner = next(item for item in results if item[0] == "approved")
+        conflict = next(item for item in results if item[0] == "conflict")
+        self.assertEqual(conflict[1], winner[1])
+        self.assertEqual(conflict[2], WorkflowAction.APPROVE.value)
+        self.assertIsInstance(conflict[3], datetime)
+        with Session(self.engine) as session:
+            count = session.scalar(
+                select(func.count())
+                .select_from(WorkflowTaskAction)
+                .where(
+                    WorkflowTaskAction.task_id == self.task_id,
+                    WorkflowTaskAction.action == WorkflowAction.APPROVE,
+                )
+            )
+            self.assertEqual(count, 1)
 
 
 class WorkflowPublicationContinuationTest(unittest.TestCase):
