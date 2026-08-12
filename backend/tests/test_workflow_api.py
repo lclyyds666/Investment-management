@@ -1,8 +1,10 @@
 import unittest
 from datetime import date, timedelta
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import openpyxl
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -10,16 +12,23 @@ from sqlalchemy.pool import StaticPool
 
 import app.db.init_db  # noqa: F401
 from app.api.deps import get_current_user
-from app.core.enums import AssignmentStatus, ContractStatus, WorkflowAction, WorkflowTaskStatus
+from app.core.enums import (
+    AssignmentStatus,
+    ContractStatus,
+    ContractType,
+    WorkflowAction,
+    WorkflowTaskStatus,
+)
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
 from app.models.approval import Approval
 from app.models.contract import Contract
-from app.models.approval_form import ApprovalForm
+from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
 from app.models.workflow import WorkflowTask, WorkflowTaskAction
+from app.services.approval_print import build_approval_form_xlsx
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.workflow_engine import seed_workflow_definitions, start_workflow
 
@@ -762,6 +771,409 @@ class ContractWorkflowApiTest(unittest.TestCase):
             "风控意见",
         )
         self.assertEqual(opinions["governance.supply_leader"]["comment"], "历史治理意见")
+
+
+class ApprovalFormWorkflowApiTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
+        self.publisher = self.add_user("form-publisher", "Publisher")
+        self.handler = self.add_user("form-handler", "Form Handler")
+        self.other_handler = self.add_user("form-other-handler", "Other Handler")
+        self.reviewer_a = self.add_user("form-reviewer-a", "Reviewer A")
+        self.reviewer_b = self.add_user("form-reviewer-b", "Reviewer B")
+        self.finance_handler = self.add_user("form-finance-handler", "Finance Handler")
+        self.leader = self.add_user("form-leader", "Company Leader")
+        self.other_leader = self.add_user("form-other-leader", "Other Leader")
+        self.risk = self.add_user("form-risk", "Risk Reviewer")
+        self.finance_reviewer = self.add_user("form-finance-reviewer", "Finance Reviewer")
+        self.governance = self.add_user("form-governance", "Governance Leader")
+        self.legal = self.add_user("form-legal", "Legal Counsel")
+        self.admin = self.add_user("form-admin", "Information Maintainer", is_superuser=True)
+        self.assign(self.handler, "supplymanagement", "supply.business_handler")
+        self.assign(self.other_handler, "supplymanagement", "supply.business_handler")
+        self.assign(self.reviewer_a, "supplymanagement", "supply.business_reviewer")
+        self.assign(self.reviewer_b, "supplymanagement", "supply.business_reviewer")
+        self.assign(self.finance_handler, "supplymanagement", "supply.finance_handler")
+        self.assign(self.leader, "supplymanagement", "supply.company_leader")
+        self.assign(self.other_leader, "supplymanagement", "supply.company_leader")
+        self.assign(self.risk, "investment.legal_risk", "investment.duty.supply_risk_review")
+        self.assign(
+            self.finance_reviewer,
+            "investment.asset_finance",
+            "investment.duty.supply_finance_review",
+        )
+        self.assign(self.governance, "supplymanagement", "governance.supply_leader")
+        legal_assignment = self.assign(self.legal, "external.legal", "external.legal_counsel")
+        self.db.add(ExternalAssignment(
+            assignment_id=legal_assignment.id,
+            provider_name="Legal Firm",
+            service_scopes=["contract_legal_review"],
+        ))
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.payment = self.add_form(ContractType.PAYMENT, "WF-FORM-PAYMENT")
+        self.business = self.add_form(ContractType.BUSINESS, "WF-FORM-BUSINESS")
+        self.db.commit()
+        self.current_user = self.handler
+        self.app = create_app()
+        self.app.dependency_overrides[get_db] = lambda: self.db
+        self.app.dependency_overrides[get_current_user] = lambda: self.current_user
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.app.dependency_overrides.clear()
+        self.db.close()
+        self.engine.dispose()
+
+    def add_user(self, username, full_name, *, is_superuser=False):
+        user = User(
+            username=username,
+            full_name=full_name,
+            hashed_password="test",
+            is_superuser=is_superuser,
+            is_active=True,
+        )
+        self.db.add(user)
+        self.db.flush()
+        return user
+
+    def assign(self, user, organization_code, position_code):
+        assignment = UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        )
+        self.db.add(assignment)
+        self.db.flush()
+        return assignment
+
+    def add_form(self, form_type, contract_no):
+        form = ApprovalForm(
+            form_type=form_type,
+            contract_no=contract_no,
+            business_desc="Workflow cutover",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(form)
+        self.db.flush()
+        return form
+
+    def designation_payload(self):
+        return {
+            "designated_users": {
+                "company_leader": self.leader.id,
+                "supply_governance_leader": self.governance.id,
+            }
+        }
+
+    def submit(self, form):
+        return self.client.post(
+            f"/api/v1/approval-forms/{form.id}/submit",
+            json=self.designation_payload(),
+        )
+
+    def active_task(self, form):
+        return self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == form.workflow_instance_id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        ))
+
+    def test_payment_and_business_require_two_designations_and_materialize_confirmed_chains(self):
+        missing_payment = self.add_form(ContractType.PAYMENT, "WF-FORM-MISSING-PAYMENT")
+        missing_business = self.add_form(ContractType.BUSINESS, "WF-FORM-MISSING-BUSINESS")
+        self.db.commit()
+        for form in (missing_payment, missing_business):
+            with self.subTest(form_type=form.form_type):
+                missing = self.client.post(
+                    f"/api/v1/approval-forms/{form.id}/submit",
+                    json={"designated_users": {"company_leader": self.leader.id}},
+                )
+                self.assertEqual(missing.status_code, 422)
+
+        payment = self.submit(self.payment)
+        business = self.submit(self.business)
+
+        self.assertEqual(payment.status_code, 200, payment.text)
+        self.assertEqual(business.status_code, 200, business.text)
+        self.assertEqual(payment.json()["data"]["active_task"]["position_code"], "supply.business_reviewer")
+        self.assertEqual(business.json()["data"]["active_task"]["position_code"], "supply.business_reviewer")
+        payment_tasks = list(self.db.scalars(select(WorkflowTask).where(
+            WorkflowTask.instance_id == payment.json()["data"]["workflow_instance_id"]
+        ).order_by(WorkflowTask.sequence)))
+        business_tasks = list(self.db.scalars(select(WorkflowTask).where(
+            WorkflowTask.instance_id == business.json()["data"]["workflow_instance_id"]
+        ).order_by(WorkflowTask.sequence)))
+        self.assertEqual(len(payment_tasks), 7)
+        self.assertEqual(len(business_tasks), 5)
+        self.assertIn("investment.duty.supply_finance_review", {
+            task.required_position_code for task in payment_tasks
+        })
+        self.assertNotIn("investment.duty.supply_finance_review", {
+            task.required_position_code for task in business_tasks
+        })
+        self.assertNotIn("external.legal_counsel", {
+            task.required_position_code for task in payment_tasks + business_tasks
+        })
+
+    def test_todo_and_compatibility_actions_use_active_workflow_task(self):
+        submitted = self.submit(self.business)
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+        self.current_user = self.reviewer_a
+        first_todo = self.client.get("/api/v1/approval-forms/todo")
+        self.current_user = self.reviewer_b
+        second_todo = self.client.get("/api/v1/approval-forms/todo")
+        self.assertEqual([item["id"] for item in first_todo.json()["data"]], [self.business.id])
+        self.assertEqual([item["id"] for item in second_todo.json()["data"]], [self.business.id])
+
+        approved = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/approve",
+            json={"comment": "复核同意"},
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(approved.json()["data"]["active_task"]["position_code"], "supply.company_leader")
+        self.current_user = self.other_leader
+        self.assertEqual(self.client.get("/api/v1/approval-forms/todo").json()["data"], [])
+        self.current_user = self.leader
+        self.assertEqual(
+            [item["id"] for item in self.client.get("/api/v1/approval-forms/todo").json()["data"]],
+            [self.business.id],
+        )
+        returned = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/reject",
+            json={"comment": "退回复核"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        self.assertEqual(returned.json()["data"]["active_task"]["position_code"], "supply.business_reviewer")
+
+    def test_return_to_handler_resubmits_same_instance_and_preserves_projection(self):
+        first = self.submit(self.business)
+        instance_id = first.json()["data"]["workflow_instance_id"]
+        self.current_user = self.reviewer_a
+        returned = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/reject",
+            json={"comment": "请补充"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        self.current_user = self.handler
+        resumed = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/submit",
+            json={},
+        )
+
+        self.assertEqual(resumed.status_code, 200, resumed.text)
+        self.assertEqual(resumed.json()["data"]["workflow_instance_id"], instance_id)
+        actions = list(self.db.scalars(
+            select(WorkflowTaskAction)
+            .join(WorkflowTaskAction.task)
+            .where(WorkflowTask.instance_id == instance_id)
+            .order_by(WorkflowTaskAction.id)
+        ))
+        self.assertEqual(
+            [action.action for action in actions],
+            [WorkflowAction.SUBMIT, WorkflowAction.RETURN, WorkflowAction.SUBMIT],
+        )
+        projections = list(self.db.scalars(
+            select(ApprovalFormAction)
+            .where(ApprovalFormAction.form_id == self.business.id)
+            .order_by(ApprovalFormAction.id)
+        ))
+        self.assertEqual([item.action.value for item in projections], ["approve", "reject", "approve"])
+        self.assertTrue(all(item.workflow_task_action_id is not None for item in projections))
+        self.assertEqual(projections[-1].position_code, "supply.business_handler")
+
+    def test_generic_actions_project_snapshots_but_reassign_does_not_fake_approval(self):
+        submitted = self.submit(self.business)
+        task_id = submitted.json()["data"]["active_task"]["id"]
+        submit_projection = self.db.scalar(select(ApprovalFormAction).where(
+            ApprovalFormAction.form_id == self.business.id
+        ))
+        self.assertEqual(submit_projection.position_code, "supply.business_handler")
+        self.current_user = self.reviewer_a
+        approved = self.client.post(
+            f"/api/v1/workflows/tasks/{task_id}/approve",
+            json={"comment": "通用入口通过"},
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        projection = self.db.scalar(
+            select(ApprovalFormAction)
+            .where(ApprovalFormAction.form_id == self.business.id)
+            .order_by(ApprovalFormAction.id.desc())
+        )
+        self.assertEqual(projection.action.value, "approve")
+        self.assertEqual(projection.position_code, "supply.business_reviewer")
+        self.assertEqual(projection.position_name, "业务复核")
+
+        leader_task = self.active_task(self.business)
+        before = self.db.query(ApprovalFormAction).count()
+        self.current_user = self.admin
+        reassigned = self.client.post(
+            f"/api/v1/workflows/tasks/{leader_task.id}/reassign",
+            json={"user_id": self.other_leader.id, "reason": "负责人调整"},
+        )
+        self.assertEqual(reassigned.status_code, 200, reassigned.text)
+        self.assertEqual(self.db.query(ApprovalFormAction).count(), before)
+        self.current_user = self.other_leader
+        returned = self.client.post(
+            f"/api/v1/workflows/tasks/{leader_task.id}/reject",
+            json={"reason": "通用入口退回"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        return_projection = self.db.scalar(
+            select(ApprovalFormAction)
+            .where(ApprovalFormAction.form_id == self.business.id)
+            .order_by(ApprovalFormAction.id.desc())
+        )
+        self.assertEqual(return_projection.action.value, "reject")
+        self.assertEqual(return_projection.position_code, "supply.company_leader")
+
+    def test_legacy_reject_wrapper_requires_nonblank_reason(self):
+        submitted = self.submit(self.business)
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+        self.current_user = self.reviewer_a
+
+        response = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/reject",
+            json={"comment": "   "},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_pending_count_uses_actionable_shared_and_designated_tasks(self):
+        submitted = self.submit(self.business)
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+
+        for reviewer in (self.reviewer_a, self.reviewer_b):
+            with self.subTest(reviewer=reviewer.username):
+                self.current_user = reviewer
+                data = self.client.get("/api/v1/approval/pending-count").json()["data"]
+                self.assertEqual(data, {"contract": 0, "business": 1, "total": 1})
+
+        self.current_user = self.reviewer_a
+        self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/approve",
+            json={"comment": "复核完成"},
+        )
+        self.current_user = self.leader
+        selected = self.client.get("/api/v1/approval/pending-count").json()["data"]
+        self.current_user = self.other_leader
+        unselected = self.client.get("/api/v1/approval/pending-count").json()["data"]
+
+        self.assertEqual(selected["business"], 1)
+        self.assertEqual(unselected["business"], 0)
+        leader_task = self.active_task(self.business)
+        leader_task.status = WorkflowTaskStatus.AWAITING_REASSIGNMENT
+        self.db.commit()
+        self.current_user = self.leader
+        self.assertEqual(
+            self.client.get("/api/v1/approval/pending-count").json()["data"]["business"],
+            0,
+        )
+        self.current_user = self.admin
+        admin_data = self.client.get("/api/v1/approval/pending-count").json()["data"]
+        self.assertEqual(admin_data["total"], 0)
+        self.assertEqual(admin_data["reassignment"], 1)
+
+    def test_pending_count_counts_contract_workflow_task_separately(self):
+        contract = Contract(
+            contract_no="WF-FORM-STATS-CONTRACT",
+            title="Stats Contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(contract)
+        self.db.commit()
+        start_workflow(
+            self.db,
+            "contract",
+            contract.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "legal_counsel": self.legal.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        self.db.commit()
+
+        self.current_user = self.leader
+        selected = self.client.get("/api/v1/approval/pending-count").json()["data"]
+        self.current_user = self.other_leader
+        unselected = self.client.get("/api/v1/approval/pending-count").json()["data"]
+
+        self.assertEqual(selected["contract"], 1)
+        self.assertEqual(unselected["contract"], 0)
+
+    def test_print_endpoint_passes_position_snapshot(self):
+        submitted = self.submit(self.business)
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+
+        with patch(
+            "app.api.v1.endpoints.approval.print_svc.build_approval_form_xlsx",
+            return_value=b"xlsx",
+        ) as build:
+            response = self.client.get(f"/api/v1/approval-forms/{self.business.id}/print")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        steps = build.call_args.args[1]
+        self.assertEqual(steps[0]["position_code"], "supply.business_handler")
+        self.assertEqual(steps[0]["role"], "supply.business_handler")
+
+
+class ApprovalPrintWorkflowTest(unittest.TestCase):
+    def _workbook(self, form_type, steps):
+        data = build_approval_form_xlsx(
+            {
+                "form_type": form_type,
+                "department": "供管公司",
+                "business_desc": "打印测试",
+            },
+            steps,
+        )
+        return openpyxl.load_workbook(BytesIO(data)).active
+
+    def test_new_workflow_prints_by_position_code_and_updates_governance_label(self):
+        ws = self._workbook(ContractType.BUSINESS, [{
+            "step": 0,
+            "position_code": "governance.supply_leader",
+            "role": "business_handler",
+            "name": "分管领导",
+            "comment": "同意",
+            "signature": "",
+        }])
+
+        self.assertEqual(ws["B9"].value, "供管公司分管领导")
+        self.assertIn("同意", ws["C9"].value)
+        self.assertIn("分管领导", ws["C9"].value)
+        self.assertIsNone(ws["C6"].value)
+
+    def test_historical_print_falls_back_to_legacy_role(self):
+        ws = self._workbook(ContractType.PAYMENT, [{
+            "step": 0,
+            "position_code": None,
+            "role": "invest_director",
+            "name": "历史领导",
+            "comment": "历史意见",
+            "signature": "",
+        }])
+
+        self.assertEqual(ws["B12"].value, "供管公司分管领导")
+        self.assertIn("历史意见", ws["C12"].value)
+        self.assertIn("历史领导", ws["C12"].value)
+        self.assertIsNone(ws["C9"].value)
 
 
 if __name__ == "__main__":

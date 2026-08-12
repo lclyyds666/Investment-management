@@ -13,7 +13,7 @@ from pathlib import Path
 
 import openpyxl
 
-from app.core.enums import ContractType, form_chain
+from app.core.enums import ContractType
 
 logger = logging.getLogger("app.approval_print")
 
@@ -42,10 +42,34 @@ _DATA_CELLS = {
     },
 }
 
-# 签批栏映射：审批链 step → 单元格（顺序与 enums.*_APPROVAL_CHAIN 一一对应）
+# 签批栏按岗位代码映射。仅历史 v1 行在无岗位快照时回退旧 role。
 _SIGN_CELLS = {
-    ContractType.PAYMENT: ["C9", "F9", "C10", "F10", "C11", "F11", "C12"],
-    ContractType.BUSINESS: ["C6", "F6", "C7", "C8", "C9"],
+    ContractType.PAYMENT: {
+        "supply.business_handler": "C9",
+        "supply.business_reviewer": "F9",
+        "supply.finance_handler": "C10",
+        "supply.company_leader": "F10",
+        "investment.duty.supply_risk_review": "C11",
+        "investment.duty.supply_finance_review": "F11",
+        "governance.supply_leader": "C12",
+    },
+    ContractType.BUSINESS: {
+        "supply.business_handler": "C6",
+        "supply.business_reviewer": "F6",
+        "supply.company_leader": "C7",
+        "investment.duty.supply_risk_review": "C8",
+        "governance.supply_leader": "C9",
+    },
+}
+
+_LEGACY_ROLE_POSITIONS = {
+    "business_handler": "supply.business_handler",
+    "business_reviewer": "supply.business_reviewer",
+    "finance_handler": "supply.finance_handler",
+    "scm_director": "supply.company_leader",
+    "risk_auditor": "investment.duty.supply_risk_review",
+    "finance_reviewer": "investment.duty.supply_finance_review",
+    "invest_director": "governance.supply_leader",
 }
 
 
@@ -78,6 +102,7 @@ def build_approval_form_xlsx(form: dict, steps: list[dict]) -> bytes:
     form_type: ContractType = form["form_type"]
     wb = openpyxl.load_workbook(_template_path(form_type))
     ws = wb["Sheet1"]
+    ws["B12" if form_type == ContractType.PAYMENT else "B9"] = "供管公司分管领导"
 
     cells = _DATA_CELLS[form_type]
 
@@ -103,15 +128,17 @@ def build_approval_form_xlsx(form: dict, steps: list[dict]) -> bytes:
         _set("bank_name", form.get("bank_name") or "")
         _set("bank_account", form.get("bank_account") or "")
 
-    # 签批栏：按 step 填姓名/意见 + 电子签名
-    chain = form_chain(form_type)
-    by_step = {s["step"]: s for s in steps if isinstance(s.get("step"), int)}
+    # 新流程按岗位快照定位签批栏；历史 v1 行才读取旧 role。
+    by_position = {}
+    for item in steps:
+        position_code = item.get("position_code")
+        if not position_code:
+            position_code = _LEGACY_ROLE_POSITIONS.get(item.get("role") or "")
+        if position_code:
+            by_position[position_code] = item
     sign_cells = _SIGN_CELLS[form_type]
-    for step in range(len(chain)):
-        if step >= len(sign_cells):
-            break
-        cell = sign_cells[step]
-        act = by_step.get(step)
+    for position_code, cell in sign_cells.items():
+        act = by_position.get(position_code)
         if not act:
             continue
         name = act.get("name") or ""

@@ -11,7 +11,6 @@ from app.core.enums import (
     ApprovalAction,
     ContractStatus,
     ContractType,
-    form_role_at_step,
     role_label,
 )
 
@@ -70,6 +69,9 @@ class ApprovalFormOut(ApprovalFormBase):
     created_by: int
     creator_name: str = ""  # 由端点补充
     created_at: Optional[datetime] = None
+    workflow_instance_id: Optional[int] = None
+    active_task: Optional[dict] = None
+    can_act: bool = False
 
     @computed_field
     @property
@@ -84,18 +86,12 @@ class ApprovalFormOut(ApprovalFormBase):
     @computed_field
     @property
     def current_role(self) -> Optional[str]:
-        if self.status != ContractStatus.PENDING:
-            return None
-        r = form_role_at_step(self.form_type, self.current_step)
-        return r.value if r else None
+        return self.active_task.get("position_code") if self.active_task else None
 
     @computed_field
     @property
     def current_role_label(self) -> Optional[str]:
-        if self.status != ContractStatus.PENDING:
-            return None
-        r = form_role_at_step(self.form_type, self.current_step)
-        return r.label if r else None
+        return self.active_task.get("position_name") if self.active_task else None
 
 
 class ApprovalFormActionOut(BaseModel):
@@ -110,12 +106,16 @@ class ApprovalFormActionOut(BaseModel):
     action: ApprovalAction
     comment: str = ""
     signature_snapshot: Optional[str] = None
+    organization_code: Optional[str] = None
+    organization_name: Optional[str] = None
+    position_code: Optional[str] = None
+    position_name: Optional[str] = None
     created_at: datetime
 
     @computed_field
     @property
     def role_label(self) -> str:
-        return role_label(self.approver_role)
+        return self.position_name or role_label(self.approver_role)
 
 
 class ApproveRequest(BaseModel):
@@ -124,3 +124,11 @@ class ApproveRequest(BaseModel):
 
 class RejectRequest(BaseModel):
     comment: str = Field(min_length=1, description="驳回原因（必填）")
+
+    @field_validator("comment")
+    @classmethod
+    def require_nonblank_comment(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("退回原因不能为空")
+        return normalized

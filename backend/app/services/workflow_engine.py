@@ -18,7 +18,7 @@ from app.core.enums import (
     WorkflowVersionStatus,
 )
 from app.models.approval import Approval
-from app.models.approval_form import ApprovalForm
+from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.contract import Contract
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
@@ -82,8 +82,6 @@ def project_contract_action(
     task: WorkflowTask,
     action: WorkflowTaskAction,
 ) -> None:
-    if instance.target_type != WorkflowTargetType.CONTRACT:
-        return
     legacy_action = {
         WorkflowAction.SUBMIT: ApprovalAction.APPROVE,
         WorkflowAction.APPROVE: ApprovalAction.APPROVE,
@@ -91,26 +89,36 @@ def project_contract_action(
     }.get(action.action)
     if legacy_action is None:
         return
-    if db.scalar(select(exists().where(Approval.workflow_task_action_id == action.id))):
-        return
-    db.add(Approval(
-        contract_id=instance.target_id,
-        approver_id=action.actor_id,
-        step=task.sequence,
-        approver_role=action.position_code[:32],
-        action=legacy_action,
-        comment=(
+    common_values = {
+        "approver_id": action.actor_id,
+        "step": task.sequence,
+        "approver_role": action.position_code[:32],
+        "action": legacy_action,
+        "comment": (
             "提交审批（业务经办）"
             if action.action == WorkflowAction.SUBMIT and not action.comment
             else action.comment
         ),
-        signature_snapshot=action.signature_snapshot,
-        workflow_task_action_id=action.id,
-        organization_code=action.organization_code,
-        organization_name=action.organization_name,
-        position_code=action.position_code,
-        position_name=action.position_name,
-    ))
+        "signature_snapshot": action.signature_snapshot,
+        "workflow_task_action_id": action.id,
+        "organization_code": action.organization_code,
+        "organization_name": action.organization_name,
+        "position_code": action.position_code,
+        "position_name": action.position_name,
+    }
+    if instance.target_type == WorkflowTargetType.CONTRACT:
+        if db.scalar(select(exists().where(Approval.workflow_task_action_id == action.id))):
+            return
+        db.add(Approval(contract_id=instance.target_id, **common_values))
+    elif instance.target_type in {
+        WorkflowTargetType.PAYMENT_APPROVAL,
+        WorkflowTargetType.BUSINESS_APPROVAL,
+    }:
+        if db.scalar(select(exists().where(
+            ApprovalFormAction.workflow_task_action_id == action.id
+        ))):
+            return
+        db.add(ApprovalFormAction(form_id=instance.target_id, **common_values))
 
 
 def ensure_workflow_version_mutable(version: WorkflowVersion) -> None:
@@ -1011,6 +1019,89 @@ def my_active_tasks(
         task for task in tasks
         if task_is_actionable_by(db, task, user, effective_date)
     ]
+
+
+def actionable_active_task_counts(
+    db: Session,
+    user: User,
+) -> dict[WorkflowTargetType, int]:
+    if not user.is_active:
+        return {}
+    effective_date = date.today()
+    refresh_invalid_designated_tasks(db, effective_date)
+    effective_assignment = exists(
+        select(UserAssignment.id)
+        .join(UserAssignment.organization)
+        .join(UserAssignment.position)
+        .where(
+            UserAssignment.user_id == user.id,
+            UserAssignment.status == AssignmentStatus.ACTIVE,
+            UserAssignment.valid_from <= effective_date,
+            (UserAssignment.valid_until.is_(None) | (UserAssignment.valid_until >= effective_date)),
+            Organization.is_active.is_(True),
+            Position.is_active.is_(True),
+            Position.code == WorkflowTask.required_position_code,
+        )
+    )
+    designated_assignment = exists(
+        select(UserAssignment.id)
+        .join(UserAssignment.organization)
+        .join(UserAssignment.position)
+        .where(
+            UserAssignment.id == WorkflowTask.designated_assignment_id,
+            UserAssignment.user_id == user.id,
+            UserAssignment.status == AssignmentStatus.ACTIVE,
+            UserAssignment.valid_from <= effective_date,
+            (UserAssignment.valid_until.is_(None) | (UserAssignment.valid_until >= effective_date)),
+            Organization.is_active.is_(True),
+            Position.is_active.is_(True),
+            Position.code == WorkflowTask.required_position_code,
+        )
+    )
+    other_task = WorkflowTask.__table__.alias("count_other_workflow_task")
+    other_action = WorkflowTaskAction.__table__.alias("count_other_workflow_action")
+    actor_already_participates = exists().where(
+        other_task.c.instance_id == WorkflowTask.instance_id,
+        other_task.c.id != WorkflowTask.id,
+        or_(
+            other_task.c.designated_user_id == user.id,
+            exists().where(
+                other_action.c.task_id == other_task.c.id,
+                other_action.c.actor_id == user.id,
+            ),
+        ),
+    )
+    rows = db.execute(
+        select(WorkflowInstance.target_type, func.count(WorkflowTask.id))
+        .join(WorkflowTask, WorkflowTask.instance_id == WorkflowInstance.id)
+        .where(
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+            ~actor_already_participates,
+            or_(
+                (
+                    (WorkflowTask.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER)
+                    & (WorkflowTask.designated_user_id == user.id)
+                    & designated_assignment
+                ),
+                (
+                    (WorkflowTask.assignee_mode == WorkflowAssigneeMode.SHARED_POSITION)
+                    & effective_assignment
+                    & (WorkflowInstance.submitted_by != user.id)
+                ),
+            ),
+        )
+        .group_by(WorkflowInstance.target_type)
+    ).all()
+    return {WorkflowTargetType(target_type): count for target_type, count in rows}
+
+
+def awaiting_reassignment_count(db: Session) -> int:
+    refresh_invalid_designated_tasks(db)
+    return db.scalar(
+        select(func.count(WorkflowTask.id)).where(
+            WorkflowTask.status == WorkflowTaskStatus.AWAITING_REASSIGNMENT
+        )
+    ) or 0
 
 
 def _workflow_target_for_instance(db: Session, instance: WorkflowInstance):
