@@ -112,3 +112,25 @@ The legacy role tables and their rows remain untouched by this process. The
 rollback boundary is the new permission feature routing: disable that routing
 and continue reading the untouched legacy role rows while the migration is
 investigated or reversed operationally.
+
+## Active Legacy Workflow Cutover
+
+Do not enable version 2 submissions until this sequence finishes successfully:
+
+1. Pause all new contract and approval-form submissions.
+2. Run `python scripts/migrate_active_workflows.py --report active-workflow-preview.json`.
+3. Resolve every `needs_designation` and `invalid_state` row in the report. A
+   designated position must have exactly one eligible person; the migration never
+   chooses between zero or multiple candidates.
+4. Rerun the dry-run until it contains no unresolved pending row, then run
+   `python scripts/migrate_active_workflows.py --apply --report active-workflow-applied.json`.
+5. Verify the database contains no `pending` contract or approval form whose
+   `workflow_instance_id` is null, and compare the applied report to the preview.
+6. Enable version 2 submissions.
+
+The dry-run performs no writes. Apply materializes only pending legacy rows whose
+current step maps to a shared position and whose future designated positions each
+have exactly one eligible person. Existing approved/rejected rows remain version 1
+history and receive no workflow instance or runtime task. Migration also creates no
+synthetic `SUBMIT`, workflow action, `Approval`, or `ApprovalFormAction` audit row;
+the existing version 1 history remains authoritative for actions before cutover.

@@ -26,7 +26,7 @@ from app.core.enums import (
 )
 from app.db.base import Base
 from app.models.approval import Approval
-from app.models.approval_form import ApprovalForm
+from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.contract import Contract
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
@@ -53,6 +53,7 @@ from app.services.workflow_engine import (
     task_is_actionable_by,
     validate_workflow_version,
 )
+from scripts.migrate_active_workflows import migrate_active_workflows
 
 
 class WorkflowCatalogTest(unittest.TestCase):
@@ -682,6 +683,247 @@ class WorkflowStartTest(unittest.TestCase):
         self.db.rollback()
         self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
         self.assertIsNone(self.db.get(Contract, target_id).workflow_instance_id)
+
+
+class ActiveWorkflowMigrationTest(unittest.TestCase):
+    add_user = WorkflowStartTest.add_user
+    add_assignment = WorkflowStartTest.add_assignment
+
+    def setUp(self):
+        WorkflowStartTest.setUp(self)
+        self.contract.status = ContractStatus.PENDING
+        self.contract.current_step = 3
+        self.db.add(Approval(
+            contract_id=self.contract.id,
+            approver_id=self.handler.id,
+            step=0,
+            approver_role="business_handler",
+            action="approve",
+            comment="legacy submit",
+        ))
+        self.db.commit()
+
+    def tearDown(self):
+        WorkflowStartTest.tearDown(self)
+
+    def add_form(self, form_type, status, current_step):
+        form = ApprovalForm(
+            form_type=form_type,
+            created_by=self.handler.id,
+            status=status,
+            current_step=current_step,
+        )
+        self.db.add(form)
+        self.db.flush()
+        return form
+
+    def report_item(self, report, target_type, target_id):
+        return next(
+            item for item in report["items"]
+            if item["target_type"] == target_type and item["target_id"] == target_id
+        )
+
+    def test_dry_run_classifies_all_legacy_states_without_writes(self):
+        designated_current = self.add_form(ContractType.PAYMENT, ContractStatus.PENDING, 3)
+        invalid = Contract(
+            contract_no="TASK9-INVALID",
+            title="Invalid legacy state",
+            created_by=self.handler.id,
+            status=ContractStatus.PENDING,
+            current_step=99,
+        )
+        historical_approved = self.add_form(
+            ContractType.BUSINESS, ContractStatus.APPROVED, 4
+        )
+        historical_rejected = Contract(
+            contract_no="TASK9-REJECTED",
+            title="Historical rejected",
+            created_by=self.handler.id,
+            status=ContractStatus.REJECTED,
+            current_step=2,
+        )
+        self.db.add_all([invalid, historical_rejected])
+        self.db.commit()
+        before = {
+            "instances": self.db.query(WorkflowInstance).count(),
+            "tasks": self.db.query(WorkflowTask).count(),
+            "actions": self.db.query(WorkflowTaskAction).count(),
+            "approvals": self.db.query(Approval).count(),
+        }
+
+        report = migrate_active_workflows(
+            self.db, apply=False, as_of=date(2026, 8, 13)
+        )
+
+        shared = self.report_item(report, "contract", self.contract.id)
+        self.assertEqual(shared["current_step"], 3)
+        self.assertEqual(shared["expected_role"], "risk_auditor")
+        self.assertEqual(shared["classification"], "mappable_shared")
+        self.assertEqual(shared["admin_action"], "run apply migration")
+        self.assertEqual(
+            self.report_item(report, "payment_approval", designated_current.id)["classification"],
+            "needs_designation",
+        )
+        self.assertEqual(
+            self.report_item(report, "contract", invalid.id)["classification"],
+            "invalid_state",
+        )
+        self.assertEqual(
+            self.report_item(report, "business_approval", historical_approved.id)["classification"],
+            "historical_only",
+        )
+        self.assertEqual(
+            self.report_item(report, "contract", historical_rejected.id)["classification"],
+            "historical_only",
+        )
+        self.assertEqual(before, {
+            "instances": self.db.query(WorkflowInstance).count(),
+            "tasks": self.db.query(WorkflowTask).count(),
+            "actions": self.db.query(WorkflowTaskAction).count(),
+            "approvals": self.db.query(Approval).count(),
+        })
+        self.assertIsNone(self.contract.workflow_instance_id)
+
+    def test_apply_materializes_tasks_without_submit_or_approval_audit_and_is_idempotent(self):
+        original_approval_count = self.db.query(Approval).count()
+        handler_assignment = next(
+            item for item in self.handler.assignments
+            if item.position.code == "supply.business_handler"
+        )
+        handler_assignment.status = AssignmentStatus.INACTIVE
+        self.db.commit()
+
+        report = migrate_active_workflows(
+            self.db,
+            apply=True,
+            as_of=date(2026, 8, 13),
+            migrated_at=datetime(2026, 8, 13, 9, 0),
+        )
+
+        self.assertEqual(report["migrated"], 1)
+        self.db.refresh(self.contract)
+        instance = self.db.get(WorkflowInstance, self.contract.workflow_instance_id)
+        self.assertEqual(instance.current_sequence, 3)
+        self.assertEqual(instance.submitted_by, self.handler.id)
+        tasks = list(self.db.scalars(
+            select(WorkflowTask)
+            .where(WorkflowTask.instance_id == instance.id)
+            .order_by(WorkflowTask.sequence)
+        ))
+        self.assertEqual(
+            [task.status for task in tasks],
+            [
+                WorkflowTaskStatus.APPROVED,
+                WorkflowTaskStatus.APPROVED,
+                WorkflowTaskStatus.APPROVED,
+                WorkflowTaskStatus.ACTIVE,
+                WorkflowTaskStatus.PENDING,
+            ],
+        )
+        self.assertEqual(tasks[4].designated_user_id, self.governance.id)
+        self.assertIsNotNone(tasks[4].designated_assignment_id)
+        self.assertEqual(self.db.query(WorkflowTaskAction).count(), 0)
+        self.assertEqual(self.db.query(Approval).count(), original_approval_count)
+
+        second = migrate_active_workflows(
+            self.db, apply=True, as_of=date(2026, 8, 13)
+        )
+        self.assertEqual(second["migrated"], 0)
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+        self.assertEqual(self.db.query(WorkflowTask).count(), 5)
+
+    def test_apply_never_guesses_zero_or_multiple_future_designated_users(self):
+        self.governance.is_active = False
+        self.db.commit()
+        zero_report = migrate_active_workflows(
+            self.db, apply=True, as_of=date(2026, 8, 13)
+        )
+        zero_item = self.report_item(zero_report, "contract", self.contract.id)
+        self.assertEqual(zero_item["classification"], "needs_designation")
+        self.assertIn("supply_governance_leader", zero_item["admin_action"])
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+
+        self.governance.is_active = True
+        self.add_assignment(
+            "governance-2", "Other Governance", "governance.supply_leader"
+        )
+        self.db.commit()
+        multiple_report = migrate_active_workflows(
+            self.db, apply=True, as_of=date(2026, 8, 13)
+        )
+        multiple_item = self.report_item(multiple_report, "contract", self.contract.id)
+        self.assertEqual(multiple_item["classification"], "needs_designation")
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+
+    def test_apply_materializes_approval_form_without_legacy_action(self):
+        self.contract.status = ContractStatus.APPROVED
+        payment = self.add_form(
+            ContractType.PAYMENT, ContractStatus.PENDING, 1
+        )
+        self.db.commit()
+
+        report = migrate_active_workflows(
+            self.db,
+            apply=True,
+            as_of=date(2026, 8, 13),
+            migrated_at=datetime(2026, 8, 13, 9, 0),
+        )
+
+        self.assertEqual(report["migrated"], 1)
+        self.db.refresh(payment)
+        instance = self.db.get(WorkflowInstance, payment.workflow_instance_id)
+        self.assertEqual(instance.target_type, WorkflowTargetType.PAYMENT_APPROVAL)
+        self.assertEqual(instance.current_sequence, 1)
+        self.assertEqual(self.db.query(WorkflowTask).filter_by(
+            instance_id=instance.id
+        ).count(), 7)
+        self.assertEqual(self.db.query(WorkflowTaskAction).count(), 0)
+        self.assertEqual(self.db.query(ApprovalFormAction).count(), 0)
+
+    def test_apply_participates_in_caller_transaction(self):
+        pending = User(
+            username="pending-task9",
+            full_name="Pending Task 9",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+        migrate_active_workflows(
+            self.db, apply=True, as_of=date(2026, 8, 13)
+        )
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+        with self.db.no_autoflush:
+            self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
+
+        self.db.rollback()
+
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+        self.assertIsNone(self.db.get(Contract, self.contract.id).workflow_instance_id)
+
+    def test_unlinked_existing_instance_is_invalid_state_not_a_second_instance(self):
+        definition = self.db.scalar(select(WorkflowDefinition).where(
+            WorkflowDefinition.code == "supply.contract.v2"
+        ))
+        self.db.add(WorkflowInstance(
+            definition_id=definition.id,
+            version_id=definition.active_version_id,
+            target_type=WorkflowTargetType.CONTRACT,
+            target_id=self.contract.id,
+            status=WorkflowInstanceStatus.ACTIVE,
+            current_sequence=3,
+            submitted_by=self.handler.id,
+            submitted_at=datetime(2026, 8, 12, 9, 0),
+        ))
+        self.db.commit()
+
+        report = migrate_active_workflows(
+            self.db, apply=True, as_of=date(2026, 8, 13)
+        )
+
+        item = self.report_item(report, "contract", self.contract.id)
+        self.assertEqual(item["classification"], "invalid_state")
+        self.assertIn("workflow instance", item["admin_action"])
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 1)
 
 
 class WorkflowAuthorizationTest(unittest.TestCase):

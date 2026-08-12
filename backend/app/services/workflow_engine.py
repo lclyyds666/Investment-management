@@ -788,6 +788,162 @@ def start_workflow(
         return db.get(WorkflowInstance, instance_id)
 
 
+def _materialize_legacy_workflow(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+    current_sequence: int,
+    designated_assignment_ids: dict[str, int],
+    materialized_at: datetime,
+) -> int:
+    target = _workflow_target(db, target_type, target_id)
+    if target.status != ContractStatus.PENDING or target.workflow_instance_id is not None:
+        raise WorkflowValidationError(
+            "legacy_workflow_not_migratable",
+            "Only pending legacy targets without a workflow instance can be migrated.",
+            {"target_type": target_type.value, "target_id": target_id},
+        )
+    if db.scalar(select(WorkflowInstance.id).where(
+        WorkflowInstance.target_type == target_type,
+        WorkflowInstance.target_id == target_id,
+    )) is not None:
+        raise WorkflowValidationError(
+            "workflow_already_started",
+            "The target already has a workflow instance.",
+            {"target_type": target_type.value, "target_id": target_id},
+        )
+
+    definition, version = _published_workflow(db, WORKFLOW_CODE_BY_TARGET[target_type])
+    nodes = sorted(version.nodes, key=lambda item: item.sequence)
+    current_node = next(
+        (item for item in nodes if item.sequence == current_sequence), None
+    )
+    if (
+        current_node is None
+        or current_node.assignee_mode != WorkflowAssigneeMode.SHARED_POSITION
+    ):
+        raise WorkflowValidationError(
+            "legacy_workflow_current_step_not_shared",
+            "Legacy migration requires a current shared-position node.",
+            {"current_sequence": current_sequence},
+        )
+
+    future_designated_nodes = {
+        item.code: item
+        for item in nodes
+        if item.sequence > current_sequence
+        and item.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER
+    }
+    if set(designated_assignment_ids) != set(future_designated_nodes):
+        raise WorkflowValidationError(
+            "legacy_workflow_designations_incomplete",
+            "Every future designated node requires one validated assignment.",
+            {"node_codes": sorted(future_designated_nodes)},
+        )
+    selected_assignments: dict[str, UserAssignment] = {}
+    selected_user_ids: set[int] = set()
+    for node_code, assignment_id in designated_assignment_ids.items():
+        node = future_designated_nodes[node_code]
+        eligible_assignments = [
+            item for item in _active_assignments(
+                db, {node.position_code}, materialized_at.date()
+            )
+            if _assignment_has_required_scope(item)
+        ]
+        eligible_user_ids = {item.user_id for item in eligible_assignments}
+        assignment = next(
+            (item for item in eligible_assignments if item.id == assignment_id), None
+        )
+        if (
+            len(eligible_user_ids) != 1
+            or assignment is None
+            or assignment.position.code != node.position_code
+            or assignment.user_id == target.created_by
+            or assignment.user_id in selected_user_ids
+        ):
+            raise WorkflowValidationError(
+                "legacy_workflow_designation_invalid",
+                "A future designated assignment is no longer uniquely eligible.",
+                {"node_code": node_code, "assignment_id": assignment_id},
+            )
+        selected_assignments[node_code] = assignment
+        selected_user_ids.add(assignment.user_id)
+
+    instance = WorkflowInstance(
+        definition_id=definition.id,
+        version_id=version.id,
+        target_type=target_type,
+        target_id=target_id,
+        status=WorkflowInstanceStatus.ACTIVE,
+        current_sequence=current_sequence,
+        submitted_by=target.created_by,
+        submitted_at=materialized_at,
+    )
+    db.add(instance)
+    db.flush()
+    for node in nodes:
+        selected_assignment = selected_assignments.get(node.code)
+        if node.sequence < current_sequence:
+            task_status = WorkflowTaskStatus.APPROVED
+        elif node.sequence == current_sequence:
+            task_status = WorkflowTaskStatus.ACTIVE
+        else:
+            task_status = WorkflowTaskStatus.PENDING
+        db.add(WorkflowTask(
+            instance_id=instance.id,
+            node_id=node.id,
+            sequence=node.sequence,
+            status=task_status,
+            required_position_code=node.position_code,
+            assignee_mode=node.assignee_mode,
+            designated_user_id=(selected_assignment.user_id if selected_assignment else None),
+            designated_assignment_id=(selected_assignment.id if selected_assignment else None),
+            activated_at=(materialized_at if task_status == WorkflowTaskStatus.ACTIVE else None),
+        ))
+    target.workflow_instance_id = instance.id
+    db.flush()
+    return instance.id
+
+
+def materialize_legacy_workflow(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+    current_sequence: int,
+    designated_assignment_ids: dict[str, int],
+    materialized_at: datetime,
+) -> WorkflowInstance:
+    target_type = WorkflowTargetType(target_type)
+    with db.no_autoflush:
+        connection = db.connection()
+    _ensure_sqlite_outer_transaction(connection)
+    workflow_session = Session(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    try:
+        instance_id = _materialize_legacy_workflow(
+            workflow_session,
+            target_type,
+            target_id,
+            current_sequence,
+            dict(designated_assignment_ids),
+            materialized_at,
+        )
+        workflow_session.commit()
+    except Exception:
+        workflow_session.rollback()
+        raise
+    finally:
+        workflow_session.close()
+
+    _expire_parent_workflow_state(db, target_type, target_id)
+    with db.no_autoflush:
+        return db.get(WorkflowInstance, instance_id)
+
+
 def _expire_parent_workflow_state(
     db: Session,
     target_type: WorkflowTargetType,
