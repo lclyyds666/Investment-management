@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date
 
@@ -41,12 +42,24 @@ class MigrationIssue(BaseModel):
     reason: str
 
 
+class MigrationRow(BaseModel):
+    user_id: int
+    username: str
+    legacy_role: str
+    organization_code: str | None = None
+    position_code: str | None = None
+
+
 class MigrationReport(BaseModel):
     created: int = 0
+    created_rows: list[MigrationRow] = Field(default_factory=list)
     existing: int = 0
+    existing_rows: list[MigrationRow] = Field(default_factory=list)
     unresolved: list[MigrationIssue] = Field(default_factory=list)
     skipped_admin: int = 0
+    skipped_admin_rows: list[MigrationRow] = Field(default_factory=list)
     skipped_unassigned: int = 0
+    skipped_unassigned_rows: list[MigrationRow] = Field(default_factory=list)
 
 
 def _legacy_role(db: Session, user: User) -> Role:
@@ -63,50 +76,64 @@ def _issue(report: MigrationReport, user: User, role: Role, reason: str) -> None
     ))
 
 
+def _row(user: User, role: Role, target: LegacyTarget | None = None) -> MigrationRow:
+    return MigrationRow(
+        user_id=user.id,
+        username=user.username,
+        legacy_role=role.value,
+        organization_code=target.organization_code if target else None,
+        position_code=target.position_code if target else None,
+    )
+
+
 def migrate_legacy_assignments(db: Session, dry_run: bool) -> MigrationReport:
     """Translate legacy roles without changing legacy data or overwriting assignments."""
     report = MigrationReport()
     pending_assignments: list[UserAssignment] = []
     try:
-        for user in db.scalars(select(User).order_by(User.id)):
-            if user.is_superuser:
-                report.skipped_admin += 1
-                continue
-            role = _legacy_role(db, user)
-            if role == Role.UNASSIGNED:
-                report.skipped_unassigned += 1
-                continue
-            target = legacy_target(role)
-            if target is None:
-                _issue(report, user, role, "No normalized position mapping exists for this legacy role.")
-                continue
-            organization = db.scalar(select(Organization).where(Organization.code == target.organization_code))
-            position = db.scalar(select(Position).where(Position.code == target.position_code))
-            if organization is None or position is None:
-                missing = "organization" if organization is None else "position"
-                _issue(report, user, role, f"Required normalized {missing} code is missing from the catalog.")
-                continue
-            existing = db.scalar(select(UserAssignment).where(
-                UserAssignment.user_id == user.id,
-                UserAssignment.organization_id == organization.id,
-                UserAssignment.position_id == position.id,
-            ))
-            if existing is not None:
-                report.existing += 1
-                continue
-            assignment = UserAssignment(
-                user_id=user.id, organization_id=organization.id, position_id=position.id,
-                valid_from=date.today(), status=AssignmentStatus.ACTIVE, source="legacy",
-            )
-            report.created += 1
-            if not dry_run:
-                db.add(assignment)
-                pending_assignments.append(assignment)
-            if target.external:
-                _issue(report, user, role, "External legal counsel effective end date requires administrator confirmation.")
+        with db.no_autoflush if dry_run else nullcontext():
+            for user in db.scalars(select(User).order_by(User.id)):
+                if user.is_superuser:
+                    report.skipped_admin += 1
+                    report.skipped_admin_rows.append(_row(user, user.role))
+                    continue
+                role = _legacy_role(db, user)
+                if role == Role.UNASSIGNED:
+                    report.skipped_unassigned += 1
+                    report.skipped_unassigned_rows.append(_row(user, role))
+                    continue
+                target = legacy_target(role)
+                if target is None:
+                    _issue(report, user, role, "No normalized position mapping exists for this legacy role.")
+                    continue
+                organization = db.scalar(select(Organization).where(Organization.code == target.organization_code))
+                position = db.scalar(select(Position).where(Position.code == target.position_code))
+                if organization is None or position is None:
+                    missing = "organization" if organization is None else "position"
+                    _issue(report, user, role, f"Required normalized {missing} code is missing from the catalog.")
+                    continue
+                existing = db.scalar(select(UserAssignment).where(
+                    UserAssignment.user_id == user.id,
+                    UserAssignment.organization_id == organization.id,
+                    UserAssignment.position_id == position.id,
+                ))
+                if existing is not None:
+                    report.existing += 1
+                    report.existing_rows.append(_row(user, role, target))
+                    continue
+                assignment = UserAssignment(
+                    user_id=user.id, organization_id=organization.id, position_id=position.id,
+                    valid_from=date.today(), status=AssignmentStatus.ACTIVE, source="legacy",
+                )
+                report.created += 1
+                report.created_rows.append(_row(user, role, target))
+                if not dry_run:
+                    db.add(assignment)
+                    pending_assignments.append(assignment)
+                if target.external:
+                    _issue(report, user, role, "External legal counsel effective end date requires administrator confirmation.")
 
         if dry_run:
-            db.rollback()
             return report
         if report.unresolved and any("Required normalized" in issue.reason for issue in report.unresolved):
             db.rollback()
@@ -120,5 +147,6 @@ def migrate_legacy_assignments(db: Session, dry_run: bool) -> MigrationReport:
         db.commit()
         return report
     except Exception:
-        db.rollback()
+        if not dry_run:
+            db.rollback()
         raise

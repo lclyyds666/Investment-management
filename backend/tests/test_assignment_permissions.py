@@ -1,11 +1,12 @@
 import unittest
+from datetime import date
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
-from app.core.enums import Role
+from app.core.enums import AssignmentStatus, Role
 from app.db.base import Base
-from app.models.organization import ExternalAssignment, UserAssignment
+from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.portal import UserCompanyRole
 from app.models.user import User
 from app.services.legacy_assignment_migration import legacy_target, migrate_legacy_assignments
@@ -127,6 +128,7 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         ).all()
         self.assertEqual(first.created, 1)
         self.assertEqual(second.existing, 1)
+        self.assertEqual(second.existing_rows[0].username, "handler")
         self.assertEqual(len(assignments), 1)
 
     def test_dry_run_does_not_persist_assignments(self):
@@ -139,6 +141,24 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         ).all()
         self.assertEqual(report.created, 1)
         self.assertEqual(assignments, [])
+
+    def test_dry_run_preserves_caller_pending_changes(self):
+        self.add_user("preview", Role.BUSINESS_HANDLER)
+        pending_user = User(
+            username="pending",
+            full_name="pending",
+            hashed_password="test",
+            role=Role.UNASSIGNED,
+        )
+        self.db.add(pending_user)
+
+        migrate_legacy_assignments(self.db, dry_run=True)
+
+        self.assertIn(pending_user, self.db.new)
+        self.db.commit()
+        self.assertIsNotNone(
+            self.db.scalar(select(User).where(User.username == "pending"))
+        )
 
     def test_supply_company_role_takes_precedence_over_legacy_user_role(self):
         user = self.add_user("company-role", Role.FINANCE_HANDLER)
@@ -156,6 +176,61 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         )
         self.assertEqual(assignment.position.code, "supply.business_reviewer")
 
+    def test_user_role_is_used_when_no_supply_company_role_exists(self):
+        user = self.add_user("user-role", Role.FINANCE_HANDLER)
+
+        migrate_legacy_assignments(self.db, dry_run=False)
+
+        assignment = self.db.scalar(
+            select(UserAssignment).where(UserAssignment.user_id == user.id)
+        )
+        self.assertEqual(assignment.position.code, "supply.finance_handler")
+
+    def test_manual_assignment_is_preserved_as_existing(self):
+        user = self.add_user("manual", Role.BUSINESS_HANDLER)
+        organization = self.db.scalar(
+            select(Organization).where(Organization.code == "supplymanagement")
+        )
+        position = self.db.scalar(
+            select(Position).where(Position.code == "supply.business_handler")
+        )
+        manual_assignment = UserAssignment(
+            user_id=user.id,
+            organization_id=organization.id,
+            position_id=position.id,
+            valid_from=date.today(),
+            status=AssignmentStatus.ACTIVE,
+            source="manual",
+        )
+        self.db.add(manual_assignment)
+        self.db.commit()
+
+        report = migrate_legacy_assignments(self.db, dry_run=False)
+
+        assignments = self.db.scalars(
+            select(UserAssignment).where(UserAssignment.user_id == user.id)
+        ).all()
+        self.assertEqual(report.existing, 1)
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(assignments[0].source, "manual")
+
+    def test_missing_catalog_code_rolls_back_migration(self):
+        handler = self.add_user("handler", Role.BUSINESS_HANDLER)
+        self.add_user("reviewer", Role.BUSINESS_REVIEWER)
+        self.db.execute(
+            delete(Position).where(Position.code == "supply.business_reviewer")
+        )
+        self.db.commit()
+
+        report = migrate_legacy_assignments(self.db, dry_run=False)
+
+        assignments = self.db.scalars(
+            select(UserAssignment).where(UserAssignment.user_id == handler.id)
+        ).all()
+        self.assertEqual(assignments, [])
+        self.assertEqual(len(report.unresolved), 1)
+        self.assertIn("position", report.unresolved[0].reason)
+
     def test_unassigned_role_is_skipped_without_an_error(self):
         user = self.add_user("unassigned", Role.UNASSIGNED)
 
@@ -167,6 +242,7 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         self.assertEqual(report.skipped_unassigned, 1)
         self.assertEqual(report.unresolved, [])
         self.assertEqual(assignments, [])
+        self.assertEqual(report.skipped_unassigned_rows[0].username, "unassigned")
 
     def test_superuser_receives_no_business_assignment(self):
         user = self.add_user("admin", Role.BUSINESS_HANDLER, is_superuser=True)
@@ -178,6 +254,7 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         ).all()
         self.assertEqual(report.skipped_admin, 1)
         self.assertEqual(assignments, [])
+        self.assertEqual(report.skipped_admin_rows[0].username, "admin")
 
     def test_legal_counsel_requires_end_date_confirmation(self):
         user = self.add_user("legal", Role.LEGAL_COUNSEL)
@@ -194,3 +271,4 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         self.assertTrue(report.unresolved)
         self.assertIn("effective end date", report.unresolved[0].reason)
         self.assertEqual(external.service_scopes, ["contract_legal_review"])
+        self.assertEqual(report.created_rows[0].username, "legal")
