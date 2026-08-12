@@ -27,7 +27,7 @@ from app.models.contract import Contract
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
-from app.models.workflow import WorkflowTask, WorkflowTaskAction
+from app.models.workflow import WorkflowInstance, WorkflowTask, WorkflowTaskAction
 from app.services.approval_print import build_approval_form_xlsx
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.workflow_engine import seed_workflow_definitions, start_workflow
@@ -125,6 +125,29 @@ class WorkflowApiTest(unittest.TestCase):
         self.db.flush()
         return assignment
 
+    def add_external_legal(self, username, *, service_scopes=None):
+        user = self.add_user(username, username)
+        assignment = self.assign(user, "external.legal", "external.legal_counsel")
+        self.db.add(ExternalAssignment(
+            assignment_id=assignment.id,
+            provider_name="Legal Firm",
+            service_scopes=(
+                ["contract_legal_review"]
+                if service_scopes is None
+                else service_scopes
+            ),
+        ))
+        self.db.flush()
+        return user, assignment
+
+    def advance_contract_to_legal(self):
+        self.current_user = self.leader
+        response = self.client.post(
+            f"/api/v1/workflows/tasks/{self.active_task().id}/approve",
+            json={"comment": "负责人同意"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
     def active_task(self):
         return self.db.scalar(
             select(WorkflowTask).where(
@@ -189,6 +212,76 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(first.json()["data"][0]["instance_id"], instance.id)
         self.assertEqual(second.json()["data"][0]["instance_id"], instance.id)
         self.assertIn("approve", first.json()["data"][0]["allowed_actions"])
+
+    def test_pending_count_allows_assigned_legal_and_does_not_leak_unassigned_target(self):
+        other_legal, _ = self.add_external_legal("other-legal")
+        self.db.commit()
+        self.advance_contract_to_legal()
+
+        self.current_user = self.legal
+        assigned = self.client.get("/api/v1/approval/pending-count")
+        self.current_user = other_legal
+        unassigned = self.client.get("/api/v1/approval/pending-count")
+        self.current_user = self.publisher
+        unauthorized = self.client.get("/api/v1/approval/pending-count")
+
+        self.assertEqual(assigned.status_code, 200, assigned.text)
+        self.assertEqual(assigned.json()["data"], {
+            "contract": 1,
+            "business": 0,
+            "total": 1,
+        })
+        self.assertEqual(unassigned.status_code, 200, unassigned.text)
+        self.assertEqual(unassigned.json()["data"], {
+            "contract": 0,
+            "business": 0,
+            "total": 0,
+        })
+        self.assertEqual(unauthorized.status_code, 403)
+
+    def test_pending_count_excludes_designated_legal_without_required_scope(self):
+        self.advance_contract_to_legal()
+        legal_detail = self.db.scalar(select(ExternalAssignment).where(
+            ExternalAssignment.assignment_id == self.active_task().designated_assignment_id
+        ))
+        legal_detail.service_scopes = []
+        self.db.commit()
+        self.current_user = self.legal
+
+        response = self.client.get("/api/v1/approval/pending-count")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["contract"], 0)
+        self.db.expire_all()
+        self.assertEqual(self.active_task(), None)
+
+    def test_pending_count_excludes_expired_locked_legal_assignment(self):
+        self.advance_contract_to_legal()
+        locked_assignment = self.db.get(
+            UserAssignment,
+            self.active_task().designated_assignment_id,
+        )
+        locked_assignment.valid_until = date.today() - timedelta(days=1)
+        replacement = self.assign(self.legal, "external.legal", "external.legal_counsel")
+        self.db.add(ExternalAssignment(
+            assignment_id=replacement.id,
+            provider_name="Replacement Legal Firm",
+            service_scopes=["contract_legal_review"],
+        ))
+        self.db.commit()
+        self.current_user = self.legal
+
+        response = self.client.get("/api/v1/approval/pending-count")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["contract"], 0)
+        self.assertEqual(
+            self.db.scalar(select(WorkflowTask.status).where(
+                WorkflowTask.instance_id == self.instance.id,
+                WorkflowTask.sequence == 2,
+            )),
+            WorkflowTaskStatus.AWAITING_REASSIGNMENT,
+        )
 
     def test_designated_task_is_visible_and_actionable_only_by_selected_user(self):
         task = self.active_task()
@@ -1131,15 +1224,40 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
         steps = build.call_args.args[1]
         self.assertEqual(steps[0]["position_code"], "supply.business_handler")
         self.assertEqual(steps[0]["role"], "supply.business_handler")
+        self.assertFalse(build.call_args.args[0]["legacy_workflow"])
+
+        with patch(
+            "app.api.v1.endpoints.approval.print_svc.build_approval_form_xlsx",
+            return_value=b"xlsx",
+        ) as legacy_build:
+            legacy_response = self.client.get(
+                f"/api/v1/approval-forms/{self.payment.id}/print"
+            )
+        self.assertEqual(legacy_response.status_code, 200, legacy_response.text)
+        self.assertTrue(legacy_build.call_args.args[0]["legacy_workflow"])
+
+        instance = self.db.get(WorkflowInstance, self.business.workflow_instance_id)
+        instance.workflow_version.version = 1
+        self.db.commit()
+        with patch(
+            "app.api.v1.endpoints.approval.print_svc.build_approval_form_xlsx",
+            return_value=b"xlsx",
+        ) as v1_build:
+            v1_response = self.client.get(
+                f"/api/v1/approval-forms/{self.business.id}/print"
+            )
+        self.assertEqual(v1_response.status_code, 200, v1_response.text)
+        self.assertTrue(v1_build.call_args.args[0]["legacy_workflow"])
 
 
 class ApprovalPrintWorkflowTest(unittest.TestCase):
-    def _workbook(self, form_type, steps):
+    def _workbook(self, form_type, steps, *, legacy_workflow=False):
         data = build_approval_form_xlsx(
             {
                 "form_type": form_type,
                 "department": "供管公司",
                 "business_desc": "打印测试",
+                "legacy_workflow": legacy_workflow,
             },
             steps,
         )
@@ -1168,12 +1286,26 @@ class ApprovalPrintWorkflowTest(unittest.TestCase):
             "name": "历史领导",
             "comment": "历史意见",
             "signature": "",
-        }])
+        }], legacy_workflow=True)
 
         self.assertEqual(ws["B12"].value, "供管公司分管领导")
         self.assertIn("历史意见", ws["C12"].value)
         self.assertIn("历史领导", ws["C12"].value)
         self.assertIsNone(ws["C9"].value)
+
+    def test_v2_missing_position_snapshot_does_not_fall_back_to_legacy_role(self):
+        ws = self._workbook(ContractType.BUSINESS, [{
+            "step": 0,
+            "position_code": None,
+            "role": "invest_director",
+            "name": "异常旧角色",
+            "comment": "不应打印",
+            "signature": "",
+        }])
+
+        self.assertEqual(ws["B9"].value, "供管公司分管领导")
+        self.assertIsNone(ws["C9"].value)
+        self.assertIsNone(ws["C6"].value)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from app.core.enums import CompanyCode, WorkflowTargetType
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import Response
-from app.services.assignment_permissions import PermissionContext, has_permission
+from app.services.assignment_permissions import permission_grants
 from app.services.workflow_engine import (
     actionable_active_task_counts,
     awaiting_reassignment_count,
@@ -15,7 +15,7 @@ from app.services.workflow_engine import (
 
 router = APIRouter()
 
-_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_VIEW_PERMISSIONS = {"supply.contract.view", "supply.approval.view"}
 
 def _require_pending_view(
     current_user: User = Depends(get_current_user),
@@ -23,10 +23,8 @@ def _require_pending_view(
 ) -> User:
     if current_user.is_superuser:
         return current_user
-    context = _supply_context()
-    if not any(
-        has_permission(db, current_user, permission_code, context)
-        for permission_code in ("supply.contract.view", "supply.approval.view")
+    if not _VIEW_PERMISSIONS.intersection(
+        grant.code for grant in permission_grants(db, current_user.id)
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     return current_user
@@ -41,17 +39,25 @@ def pending_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_pending_view),
 ):
-    context = _supply_context()
-    counts = {} if current_user.is_superuser else actionable_active_task_counts(db, current_user)
+    grant_codes = (
+        set()
+        if current_user.is_superuser
+        else {grant.code for grant in permission_grants(db, current_user.id)}
+    )
+    counts = (
+        {}
+        if current_user.is_superuser
+        else actionable_active_task_counts(db, current_user)
+    )
     contract_cnt = (
         counts.get(WorkflowTargetType.CONTRACT, 0)
-        if has_permission(db, current_user, "supply.contract.view", context)
+        if "supply.contract.view" in grant_codes
         else 0
     )
     business_cnt = (
         counts.get(WorkflowTargetType.PAYMENT_APPROVAL, 0)
         + counts.get(WorkflowTargetType.BUSINESS_APPROVAL, 0)
-        if has_permission(db, current_user, "supply.approval.view", context)
+        if "supply.approval.view" in grant_codes
         else 0
     )
     result = {

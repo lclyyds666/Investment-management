@@ -526,6 +526,14 @@ def print_form(
     _: User = Depends(_approval_dl_guard),
 ):
     form = _get_form_or_404(db, form_id)
+    instance = (
+        db.get(WorkflowInstance, form.workflow_instance_id)
+        if form.workflow_instance_id is not None
+        else None
+    )
+    legacy_workflow = form.workflow_instance_id is None or (
+        instance is not None and instance.workflow_version.version < 2
+    )
     actions = db.scalars(
         select(ApprovalFormAction)
         .where(ApprovalFormAction.form_id == form_id)
@@ -549,6 +557,7 @@ def print_form(
     data = print_svc.build_approval_form_xlsx(
         {
             "form_type": form.form_type,
+            "legacy_workflow": legacy_workflow,
             "department": form.department,
             "apply_date": form.apply_date,
             "customer_name": form.customer_name,

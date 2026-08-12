@@ -321,13 +321,14 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
         self.assertNotEqual(allowed.status_code, 403, allowed.text)
 
-    def test_assigned_only_legal_position_fails_closed_for_resource_guard(self):
-        self.current_user = SimpleNamespace(id=8, is_superuser=False)
-        self._assign_supply_role(8, Role.LEGAL_COUNSEL)
+    def test_assigned_only_legal_position_can_read_zero_pending_count(self):
+        self._add_current_user()
+        self._assign_supply_role(self.current_user.id, Role.LEGAL_COUNSEL)
 
         response = self.client.get("/api/v1/approval/pending-count")
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["total"], 0)
 
     def _set_permission(self, permission_code: str):
         self.db.query(UserAssignment).filter(UserAssignment.user_id == self.current_user.id).delete()

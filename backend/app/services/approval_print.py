@@ -128,11 +128,12 @@ def build_approval_form_xlsx(form: dict, steps: list[dict]) -> bytes:
         _set("bank_name", form.get("bank_name") or "")
         _set("bank_account", form.get("bank_account") or "")
 
-    # 新流程按岗位快照定位签批栏；历史 v1 行才读取旧 role。
+    # 新流程按岗位快照定位签批栏；显式历史 v1 行才读取旧 role。
+    legacy_workflow = form.get("legacy_workflow") is True
     by_position = {}
     for item in steps:
         position_code = item.get("position_code")
-        if not position_code:
+        if not position_code and legacy_workflow:
             position_code = _LEGACY_ROLE_POSITIONS.get(item.get("role") or "")
         if position_code:
             by_position[position_code] = item
