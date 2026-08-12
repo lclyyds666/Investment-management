@@ -782,6 +782,8 @@ def _effective_task_assignment(
 ) -> UserAssignment | None:
     if not user.is_active or task.status != WorkflowTaskStatus.ACTIVE:
         return None
+    if _actor_has_other_workflow_role(db, task, user.id):
+        return None
     if task.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER:
         assignment = db.scalar(
             select(UserAssignment)
@@ -805,7 +807,7 @@ def _effective_task_assignment(
             return None
         return assignment
 
-    if task.instance.submitted_by == user.id or _actor_has_other_workflow_role(db, task, user.id):
+    if task.instance.submitted_by == user.id:
         return None
     assignments = _active_assignments(
         db,
