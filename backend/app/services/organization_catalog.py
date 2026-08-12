@@ -42,7 +42,7 @@ POSITION_CATALOG = (
 
 PERMISSION_CODES = (
     "supply.portal.enter", "supply.dashboard.view", "supply.operation.view", "supply.operation.export",
-    "supply.scenic.view", "supply.scenic.create", "supply.scenic.update", "supply.scenic.review", "supply.scenic.export",
+    "supply.scenic.view", "supply.scenic.create", "supply.scenic.update", "supply.scenic.delete", "supply.scenic.review", "supply.scenic.export",
     "supply.finance.view", "supply.finance.update", "supply.finance.review", "supply.finance.export",
     "supply.contract.view", "supply.contract.create", "supply.contract.update", "supply.contract.delete", "supply.contract.submit", "supply.contract.review", "supply.contract.approve", "supply.contract.return", "supply.contract.export",
     "supply.approval.view", "supply.approval.create", "supply.approval.update", "supply.approval.delete", "supply.approval.submit", "supply.approval.review", "supply.approval.approve", "supply.approval.return", "supply.approval.export",
@@ -77,7 +77,7 @@ def _supply_grants(position_code: str, permission_codes: set[str] | frozenset[st
 
 POSITION_GRANTS = (
     *_supply_grants("supply.business_handler", SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | {
-        "supply.scenic.create", "supply.scenic.update",
+        "supply.scenic.create", "supply.scenic.update", "supply.scenic.delete",
         "supply.contract.create", "supply.contract.update", "supply.contract.delete", "supply.contract.submit",
         "supply.approval.create", "supply.approval.update", "supply.approval.delete", "supply.approval.submit",
         "supply.customer.create", "supply.customer.update", "supply.customer.delete", "supply.finance.update",

@@ -14,6 +14,7 @@ from app.services.organization_catalog import (
     ORGANIZATION_CATALOG,
     PERMISSION_CATALOG,
     POSITION_CATALOG,
+    POSITION_GRANTS,
     seed_authorization_catalog,
 )
 
@@ -73,6 +74,18 @@ class AuthorizationCatalogTest(unittest.TestCase):
             "supply.channel.configure",
             "organization.directory.view",
         }.issubset(codes))
+
+    def test_business_handler_has_the_independent_scenic_delete_grant(self):
+        self.assertIn(
+            "supply.scenic.delete",
+            {item["code"] for item in PERMISSION_CATALOG},
+        )
+        delete_grantees = {
+            item["position_code"]
+            for item in POSITION_GRANTS
+            if item["permission_code"] == "supply.scenic.delete"
+        }
+        self.assertEqual(delete_grantees, {"supply.business_handler"})
 
     def test_legacy_roles_map_to_confirmed_positions(self):
         self.assertEqual(
