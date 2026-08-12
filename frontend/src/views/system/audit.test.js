@@ -16,7 +16,8 @@ describe('authorization audit display', () => {
   it.each([
     ['organization_update', 'organization#5', { code: 'supplymanagement', name: '供应链', organization_type: 'company', parent_code: 'investment', company_code: 'supplymanagement', is_active: true, sort_order: 20 }, '组织：supplymanagement / 供应链'],
     ['position_update', 'position#7', { code: 'supply.business_handler', name: '业务经办', category: 'business', is_active: true }, '岗位：supply.business_handler / 业务经办'],
+    ['position_create', 'position#8', { code: 'fund.general_manager', name: '基金总经理', category: 'executive', is_active: true }, '岗位：fund.general_manager / 基金总经理 / executive / 启用'],
     ['position_permissions_replace', 'position#7', [{ permission_code: 'supply.contract.view', data_scope: 'company', scope_ref: 'supplymanagement' }], '权限：supply.contract.view / company / supplymanagement']
-  ])('renders %s structured snapshots and derived target label', async (action, target, snapshot, text) => { const wrapper = await mountRows([authorization(action, target, snapshot, snapshot)]); expect(wrapper.text()).toContain(text); expect(wrapper.text()).toContain(action === 'organization_update' ? '目标组织：organization#5' : '目标岗位：position#7') })
+  ])('renders %s structured snapshots and derived target label', async (action, target, snapshot, text) => { const wrapper = await mountRows([authorization(action, target, snapshot, snapshot)]); expect(wrapper.text()).toContain(text); expect(wrapper.text()).toContain(`${action === 'organization_update' ? '目标组织' : '目标岗位'}：${target}`) })
   it('keeps generic request rows generic', async () => { const wrapper = await mountRows([{ id: 3, module: 'contract', action: 'update', target_desc: '合同#3', method: 'PUT', path: '/contracts/3', ip: '127.0.0.1', status: 'success' }]); expect(wrapper.text()).toContain('合同#3'); expect(wrapper.text()).toContain('PUT /contracts/3'); expect(wrapper.find('[data-testid="authorization-audit-detail"]').exists()).toBe(false) })
 })

@@ -147,7 +147,7 @@ function snapshotTags(row, snapshot, isAfter) {
     return `${[organization, position].filter(Boolean).join(' / ')}${status}${term ? ` / ${term}` : ''}${governance}${external}`.trim()
   })
   if (row.action.startsWith('organization_')) return items.map(item => `组织：${item.code || '—'}${item.name ? ` / ${item.name}` : ''}${item.organization_type ? ` / ${item.organization_type}` : ''}${item.parent_code ? ` / 上级 ${item.parent_code}` : ''}${item.company_code ? ` / 公司 ${item.company_code}` : ''}${item.is_active === false ? ' / 停用' : ''}${Number.isInteger(item.sort_order) ? ` / 排序 ${item.sort_order}` : ''}`)
-  if (row.action === 'position_update') return items.map(item => `岗位：${item.code || '—'}${item.name ? ` / ${item.name}` : ''}${item.category ? ` / ${item.category}` : ''}${item.is_active === false ? ' / 停用' : ''}`)
+  if (['position_create', 'position_update'].includes(row.action)) return items.map(item => `岗位：${item.code || '—'}${item.name ? ` / ${item.name}` : ''}${item.category ? ` / ${item.category}` : ''}${item.is_active === false ? ' / 停用' : ' / 启用'}`)
   if (row.action === 'position_permissions_replace') return items.map(item => `权限：${item.permission_code || '—'}${item.data_scope ? ` / ${item.data_scope}` : ''}${item.scope_ref ? ` / ${item.scope_ref}` : ''}`)
   return isAfter ? ['已更新'] : ['原配置']
 }
