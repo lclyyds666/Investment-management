@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.enums import AssignmentStatus, WorkflowAssigneeMode, WorkflowVersionStatus
@@ -137,87 +138,137 @@ def _load_definition(db: Session, code: str) -> WorkflowDefinition | None:
     )
 
 
-def seed_workflow_definitions(db: Session, publisher_id: int) -> None:
-    pending_publications: list[tuple[WorkflowDefinition, WorkflowVersion]] = []
-    try:
+def _raise_catalog_drift(workflow_code: str, version: int | None = None) -> None:
+    details = {"workflow_code": workflow_code}
+    if version is not None:
+        details["version"] = version
+    raise WorkflowValidationError(
+        "workflow_catalog_drift",
+        "Persisted workflow content differs from the confirmed catalog.",
+        details,
+    )
+
+
+def _verify_published_catalog(db: Session) -> None:
+    with db.no_autoflush:
         for catalog_definition in WORKFLOW_DEFINITIONS:
             definition = _load_definition(db, catalog_definition.code)
-            if definition is None:
-                definition = WorkflowDefinition(
-                    code=catalog_definition.code,
-                    name=catalog_definition.name,
-                    target_type=catalog_definition.target_type,
-                )
-                db.add(definition)
-                db.flush()
-            elif (
-                definition.name != catalog_definition.name
+            if (
+                definition is None
+                or definition.name != catalog_definition.name
                 or definition.target_type != catalog_definition.target_type
             ):
-                raise WorkflowValidationError(
-                    "workflow_catalog_drift",
-                    "Persisted workflow definition differs from the confirmed catalog.",
-                    {"workflow_code": catalog_definition.code},
-                )
-
+                _raise_catalog_drift(catalog_definition.code)
             version = next(
                 (item for item in definition.versions if item.version == catalog_definition.version),
                 None,
             )
-            if version is not None:
-                if (
-                    version.status != WorkflowVersionStatus.PUBLISHED
-                    or _persisted_nodes(version) != _catalog_nodes(catalog_definition)
-                    or definition.active_version_id != version.id
-                ):
-                    raise WorkflowValidationError(
-                        "workflow_catalog_drift",
-                        "Persisted workflow version differs from the confirmed catalog.",
-                        {"workflow_code": catalog_definition.code, "version": catalog_definition.version},
-                    )
-                continue
+            if (
+                version is None
+                or version.status != WorkflowVersionStatus.PUBLISHED
+                or _persisted_nodes(version) != _catalog_nodes(catalog_definition)
+                or definition.active_version_id != version.id
+            ):
+                _raise_catalog_drift(catalog_definition.code, catalog_definition.version)
 
-            version = WorkflowVersion(
-                definition_id=definition.id,
-                version=catalog_definition.version,
-                status=WorkflowVersionStatus.DRAFT,
+
+def _is_catalog_unique_race(error: IntegrityError) -> bool:
+    message = " ".join(
+        str(part).lower()
+        for part in (error.statement, error.orig)
+        if part is not None
+    )
+    is_unique = any(token in message for token in ("unique", "duplicate"))
+    is_catalog_constraint = any(token in message for token in (
+        "wf_definition.code",
+        "ix_wf_definition_code",
+        "uq_workflow_version_definition_version",
+        "wf_version.definition_id, wf_version.version",
+    ))
+    return is_unique and is_catalog_constraint
+
+
+def _seed_workflow_definitions(db: Session, publisher_id: int) -> None:
+    pending_publications: list[tuple[WorkflowDefinition, WorkflowVersion]] = []
+    for catalog_definition in WORKFLOW_DEFINITIONS:
+        with db.no_autoflush:
+            definition = _load_definition(db, catalog_definition.code)
+        if definition is None:
+            definition = WorkflowDefinition(
+                code=catalog_definition.code,
+                name=catalog_definition.name,
+                target_type=catalog_definition.target_type,
             )
-            db.add(version)
+            db.add(definition)
             db.flush()
-            version.nodes = [
-                WorkflowNode(
-                    sequence=sequence,
-                    code=item.code,
-                    name=item.name,
-                    position_code=item.position_code,
-                    assignee_mode=WorkflowAssigneeMode(item.mode),
-                    auto_complete_on_submit=item.auto_complete_on_submit,
-                    allow_reject=item.allow_reject,
-                )
-                for sequence, item in enumerate(catalog_definition.nodes)
-            ]
-            db.flush()
-            pending_publications.append((definition, version))
+        elif (
+            definition.name != catalog_definition.name
+            or definition.target_type != catalog_definition.target_type
+        ):
+            _raise_catalog_drift(catalog_definition.code)
 
-        issues = [
-            issue
-            for _, version in pending_publications
-            for issue in validate_workflow_version(db, version)
+        version = next(
+            (item for item in definition.versions if item.version == catalog_definition.version),
+            None,
+        )
+        if version is not None:
+            if (
+                version.status != WorkflowVersionStatus.PUBLISHED
+                or _persisted_nodes(version) != _catalog_nodes(catalog_definition)
+                or definition.active_version_id != version.id
+            ):
+                _raise_catalog_drift(catalog_definition.code, catalog_definition.version)
+            continue
+
+        version = WorkflowVersion(
+            definition_id=definition.id,
+            version=catalog_definition.version,
+            status=WorkflowVersionStatus.DRAFT,
+        )
+        db.add(version)
+        db.flush()
+        version.nodes = [
+            WorkflowNode(
+                sequence=sequence,
+                code=item.code,
+                name=item.name,
+                position_code=item.position_code,
+                assignee_mode=WorkflowAssigneeMode(item.mode),
+                auto_complete_on_submit=item.auto_complete_on_submit,
+                allow_reject=item.allow_reject,
+            )
+            for sequence, item in enumerate(catalog_definition.nodes)
         ]
-        if issues:
-            raise WorkflowValidationError(
-                "workflow_validation_failed",
-                "Workflow publication is blocked by assignment conflicts.",
-                {"issues": [issue.__dict__ for issue in issues]},
-            )
+        db.flush()
+        pending_publications.append((definition, version))
 
-        published_at = datetime.now()
-        for definition, version in pending_publications:
-            version.status = WorkflowVersionStatus.PUBLISHED
-            version.published_at = published_at
-            version.published_by = publisher_id
-            definition.active_version_id = version.id
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    issues = [
+        issue
+        for _, version in pending_publications
+        for issue in validate_workflow_version(db, version)
+    ]
+    if issues:
+        raise WorkflowValidationError(
+            "workflow_validation_failed",
+            "Workflow publication is blocked by assignment conflicts.",
+            {"issues": [issue.__dict__ for issue in issues]},
+        )
+
+    published_at = datetime.now()
+    for definition, version in pending_publications:
+        version.status = WorkflowVersionStatus.PUBLISHED
+        version.published_at = published_at
+        version.published_by = publisher_id
+        definition.active_version_id = version.id
+    db.flush()
+
+
+def seed_workflow_definitions(db: Session, publisher_id: int) -> None:
+    try:
+        with db.begin_nested():
+            _seed_workflow_definitions(db, publisher_id)
+    except IntegrityError as error:
+        if not _is_catalog_unique_race(error):
+            raise
+        db.expire_all()
+        _verify_published_catalog(db)

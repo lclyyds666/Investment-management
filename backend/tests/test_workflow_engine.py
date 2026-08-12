@@ -1,7 +1,9 @@
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.db.init_db  # noqa: F401
@@ -159,12 +161,14 @@ class WorkflowPublicationTest(unittest.TestCase):
 
     def test_seed_publishes_exact_three_versions_and_is_idempotent(self):
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
         counts = (
             self.db.query(WorkflowDefinition).count(),
             self.db.query(WorkflowVersion).count(),
             self.db.query(WorkflowNode).count(),
         )
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
         self.assertEqual(counts, (3, 3, 17))
         self.assertEqual(
             (self.db.query(WorkflowDefinition).count(), self.db.query(WorkflowVersion).count(), self.db.query(WorkflowNode).count()),
@@ -175,6 +179,7 @@ class WorkflowPublicationTest(unittest.TestCase):
 
     def test_catalog_drift_raises_without_mutation(self):
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
         node = self.version().nodes[1]
         node.name = "drifted"
         self.db.commit()
@@ -188,12 +193,14 @@ class WorkflowPublicationTest(unittest.TestCase):
 
     def test_published_version_is_immutable(self):
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
         with self.assertRaises(WorkflowValidationError) as raised:
             ensure_workflow_version_mutable(self.version())
         self.assertEqual(raised.exception.code, "workflow_version_immutable")
 
     def test_conflict_validation_uses_inclusive_dates_and_designated_nodes(self):
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
         left = self.add_assignment(
             "conflicted",
             "supply.company_leader",
@@ -215,6 +222,7 @@ class WorkflowPublicationTest(unittest.TestCase):
 
     def test_validation_ignores_nonoverlap_inactive_entities_and_same_position(self):
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
         self.add_assignment("nonoverlap", "supply.business_handler", valid_until=date(2026, 6, 29))
         self.add_assignment("nonoverlap", "supply.company_leader", valid_from=date(2026, 6, 30))
         self.add_assignment("inactive-user", "supply.business_handler", user_active=False)
@@ -242,6 +250,119 @@ class WorkflowPublicationTest(unittest.TestCase):
         self.assertEqual(self.db.query(WorkflowDefinition).count(), 0)
         self.assertEqual(self.db.query(WorkflowVersion).count(), 0)
         self.assertEqual(self.db.query(WorkflowNode).count(), 0)
+
+    def test_success_preserves_pending_caller_object_and_leaves_commit_to_caller(self):
+        pending = User(
+            username="pending-success",
+            full_name="Pending Success",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+
+        seed_workflow_definitions(self.db, self.publisher.id)
+
+        self.assertTrue(self.db.in_transaction())
+        self.assertIn(pending, self.db)
+        self.db.commit()
+        self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-success")))
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+
+    def test_drift_preserves_pending_caller_object_and_outer_transaction(self):
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
+        node = self.version().nodes[1]
+        node.name = "drifted"
+        self.db.commit()
+        pending = User(
+            username="pending-drift",
+            full_name="Pending Drift",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+
+        with self.assertRaises(WorkflowValidationError):
+            seed_workflow_definitions(self.db, self.publisher.id)
+
+        self.assertTrue(self.db.in_transaction())
+        self.assertIn(pending, self.db)
+        self.db.commit()
+        self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-drift")))
+
+    def test_validation_error_preserves_pending_caller_object(self):
+        self.add_assignment("conflicted", "supply.business_handler")
+        self.add_assignment("conflicted", "supply.company_leader")
+        pending = User(
+            username="pending-validation",
+            full_name="Pending Validation",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+
+        with self.assertRaises(WorkflowValidationError):
+            seed_workflow_definitions(self.db, self.publisher.id)
+
+        self.assertIn(pending, self.db)
+        self.db.commit()
+        self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-validation")))
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 0)
+
+    def test_recognized_unique_race_reloads_exact_catalog(self):
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
+        publisher_id = self.publisher.id
+        original_flush = self.db.flush
+        raised = False
+
+        def race_once(*args, **kwargs):
+            nonlocal raised
+            if not raised:
+                raised = True
+                raise IntegrityError(
+                    "INSERT INTO wf_definition",
+                    {},
+                    Exception("UNIQUE constraint failed: wf_definition.code"),
+                )
+            return original_flush(*args, **kwargs)
+
+        with patch.object(self.db, "flush", side_effect=race_once):
+            seed_workflow_definitions(self.db, publisher_id)
+
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+
+    def test_unrelated_integrity_error_is_not_swallowed(self):
+        with patch.object(
+            self.db,
+            "flush",
+            side_effect=IntegrityError(
+                "INSERT INTO sys_user",
+                {},
+                Exception("NOT NULL constraint failed: sys_user.username"),
+            ),
+        ):
+            with self.assertRaises(IntegrityError):
+                seed_workflow_definitions(self.db, self.publisher.id)
+
+    def test_recognized_unique_race_reload_rejects_drift(self):
+        seed_workflow_definitions(self.db, self.publisher.id)
+        self.db.commit()
+        publisher_id = self.publisher.id
+        node = self.version().nodes[1]
+        node.name = "concurrent drift"
+        self.db.commit()
+
+        with patch.object(
+            self.db,
+            "flush",
+            side_effect=IntegrityError(
+                "INSERT INTO wf_definition",
+                {},
+                Exception("UNIQUE constraint failed: wf_definition.code"),
+            ),
+        ):
+            with self.assertRaises(WorkflowValidationError) as raised:
+                seed_workflow_definitions(self.db, publisher_id)
+
+        self.assertEqual(raised.exception.code, "workflow_catalog_drift")
 
 
 if __name__ == "__main__":
