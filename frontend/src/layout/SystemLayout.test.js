@@ -30,7 +30,7 @@ vi.mock('vue-router', () => ({
 vi.mock('@/store/portal', () => ({
   usePortalStore: () => ({
     isSuperuser: true,
-    permissions: { permissions: ['organization.directory.view'] }
+    hasPermission: () => true
   })
 }))
 

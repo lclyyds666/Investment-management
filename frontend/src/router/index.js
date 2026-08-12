@@ -1,12 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import {
-  APPROVAL_CENTER_ROLES,
-  COMPANY_CODES,
-  DIRECTOR_ROLES,
-  FINANCE_ROLES,
-  RESOURCE_CODES,
-  ROLES
-} from '@/constants/business'
+import { COMPANY_CODES, RESOURCE_CODES } from '@/constants/business'
 import { legacySupplyRedirects } from './legacyRedirects'
 
 export { ROLES } from '@/constants/business'
@@ -148,8 +141,7 @@ const routes = [
           title: '经营数据中心',
           icon: 'TrendCharts',
           company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_OPERATION,
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
+          resource: RESOURCE_CODES.SUPPLY_OPERATION
         }
       },
       {
@@ -162,8 +154,7 @@ const routes = [
           group: '渠道业务',
           groupIcon: 'Connection',
           company: supplyCompany,
-          resource: RESOURCE_CODES.SCENIC_ANALYTICS,
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ROLES.FINANCE_HANDLER, ...DIRECTOR_ROLES]
+          resource: RESOURCE_CODES.SCENIC_ANALYTICS
         }
       },
       {
@@ -186,8 +177,7 @@ const routes = [
           group: '智慧财务',
           groupIcon: 'Wallet',
           company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_FINANCE,
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
+          resource: RESOURCE_CODES.SUPPLY_FINANCE
         }
       },
       {
@@ -200,8 +190,7 @@ const routes = [
           group: '智慧财务',
           groupIcon: 'Wallet',
           company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_FINANCE,
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ...FINANCE_ROLES, ...DIRECTOR_ROLES]
+          resource: RESOURCE_CODES.SUPPLY_FINANCE
         }
       },
       {
@@ -214,8 +203,7 @@ const routes = [
           group: '经营合规',
           groupIcon: 'DocumentChecked',
           company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_CONTRACT,
-          roles: [ROLES.BUSINESS_HANDLER, ROLES.BUSINESS_REVIEWER, ROLES.RISK_AUDITOR, ...DIRECTOR_ROLES, ROLES.LEGAL_COUNSEL]
+          resource: RESOURCE_CODES.SUPPLY_CONTRACT
         }
       },
       {
@@ -228,8 +216,7 @@ const routes = [
           group: '经营合规',
           groupIcon: 'DocumentChecked',
           company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_APPROVAL,
-          roles: APPROVAL_CENTER_ROLES
+          resource: RESOURCE_CODES.SUPPLY_APPROVAL
         }
       },
       {

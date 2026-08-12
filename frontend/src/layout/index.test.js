@@ -27,10 +27,12 @@ vi.mock('vue-router', () => ({
 
 vi.mock('@/store/user', () => ({
   useUserStore: () => ({
-    isSuperuser: true,
-    role: 'info_maintainer',
-    hasRole: () => true
+    isSuperuser: true
   })
+}))
+
+vi.mock('@/store/portal', () => ({
+  usePortalStore: () => ({ hasResource: () => true })
 }))
 
 vi.mock('@/store/approvalBadge', () => ({

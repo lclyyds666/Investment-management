@@ -6,29 +6,31 @@ export const usePortalStore = defineStore('portal', () => {
   const applications = ref([])
   const permissions = ref({
     is_superuser: false,
-    company_roles: {},
+    assignments: [],
+    permissions: [],
     resources: []
   })
   const isLoaded = ref(false)
   const isSuperuser = computed(() => permissions.value.is_superuser)
+  const assignments = computed(() => permissions.value.assignments || [])
 
   let inFlightPromise = null
   let contextVersion = 0
 
-  function companyRole(companyCode) {
-    const companyRoles = permissions.value.company_roles || {}
-    if (Array.isArray(companyRoles)) {
-      return companyRoles.find((item) => item.company_code === companyCode)?.role || ''
-    }
-    return companyRoles[companyCode] || ''
-  }
-
   function hasCompany(companyCode) {
-    return isSuperuser.value || Boolean(companyRole(companyCode))
+    return applications.value.some(item => item.code === companyCode && item.accessible)
   }
 
   function hasResource(resourceCode) {
-    return isSuperuser.value || (permissions.value.resources || []).includes(resourceCode)
+    return (permissions.value.resources || []).includes(resourceCode)
+  }
+
+  function hasPosition(positionCode) {
+    return assignments.value.some(item => item.position_code === positionCode)
+  }
+
+  function hasPermission(permissionCode) {
+    return (permissions.value.permissions || []).some(item => item.code === permissionCode)
   }
 
   function clearPortalContext() {
@@ -37,7 +39,8 @@ export const usePortalStore = defineStore('portal', () => {
     applications.value = []
     permissions.value = {
       is_superuser: false,
-      company_roles: {},
+      assignments: [],
+      permissions: [],
       resources: []
     }
     isLoaded.value = false
@@ -56,7 +59,8 @@ export const usePortalStore = defineStore('portal', () => {
       applications.value = loadedApplications || []
       permissions.value = loadedPermissions || {
         is_superuser: false,
-        company_roles: {},
+        assignments: [],
+        permissions: [],
         resources: []
       }
       isLoaded.value = true
@@ -73,9 +77,11 @@ export const usePortalStore = defineStore('portal', () => {
     permissions,
     isLoaded,
     isSuperuser,
-    companyRole,
+    assignments,
     hasCompany,
     hasResource,
+    hasPosition,
+    hasPermission,
     loadPortalContext,
     clearPortalContext
   }

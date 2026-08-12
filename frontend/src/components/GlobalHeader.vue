@@ -55,9 +55,7 @@ defineProps({
 
 const router = useRouter()
 const portalStore = usePortalStore()
-const canViewDirectory = computed(() => portalStore.isSuperuser || (
-  portalStore.permissions.permissions || []
-).some(({ code }) => code === 'organization.directory.view'))
+const canViewDirectory = computed(() => portalStore.hasPermission('organization.directory.view'))
 const openAssistant = () => router.push({ name: 'PortalHome' })
 </script>
 

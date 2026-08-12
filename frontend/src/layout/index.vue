@@ -59,14 +59,13 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
-import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
+import { usePortalStore } from '@/store/portal'
 import GlobalHeader from '@/components/GlobalHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
-const userStore = useUserStore()
+const portalStore = usePortalStore()
 const badgeStore = useApprovalBadgeStore()
 
 const activeMenu = computed(() => route.path)
@@ -111,14 +110,10 @@ function toggleCollapse() {
 // 从路由表生成菜单：按角色 / 超管过滤，再按 meta.group 归组为折叠子菜单
 const menus = computed(() => {
   const root = router.options.routes.find((r) => r.path === '/supplymanagement')
-  const isLegalCounsel = !userStore.isSuperuser && userStore.role === ROLES.LEGAL_COUNSEL
   const visible = (root?.children || [])
     .filter((c) => c.meta?.title)
-    // 按 meta.roles 控制各角色可见菜单（无 roles = 全部可见；hasRole 对超管恒 true）
-    .filter((c) => userStore.hasRole(c.meta.roles))
+    .filter((c) => !c.meta?.resource || portalStore.hasResource(c.meta.resource))
     .map((c) => ({ ...c, resolvedPath: router.resolve({ name: c.name }).path }))
-    // 法律顾问仅保留其允许入口（合同管理 / 客户档案库 / 个人设置）
-    .filter((c) => !isLegalCounsel || LEGAL_COUNSEL_PATHS.includes(c.resolvedPath))
 
   const result = []
   const groups = {}

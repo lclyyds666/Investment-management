@@ -46,9 +46,7 @@ const portalStore = usePortalStore()
 const compactViewport = ref(window.innerWidth <= 760)
 const manuallyCollapsed = ref(localStorage.getItem('system_sidebar_collapsed') === '1')
 const collapsed = computed(() => compactViewport.value || manuallyCollapsed.value)
-const hasDirectoryPermission = computed(() => portalStore.isSuperuser || (
-  portalStore.permissions.permissions || []
-).some(({ code }) => code === 'organization.directory.view'))
+const hasDirectoryPermission = computed(() => portalStore.hasPermission('organization.directory.view'))
 
 const menus = computed(() => {
   const root = router.options.routes.find(item => item.path === '/system')
