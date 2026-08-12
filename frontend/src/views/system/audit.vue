@@ -2,7 +2,8 @@
   <div class="audit-page">
     <section class="reassignment-audits" data-testid="reassignment-audits">
       <div class="reassignment-heading"><div><small>审批治理</small><h3>改派审计</h3></div><span>{{ reassignmentAudits.length }} 条记录</span></div>
-      <div v-if="reassignmentAudits.length" class="audit-track">
+      <el-alert v-if="reassignmentError" :title="reassignmentError" type="error" :closable="false" show-icon />
+      <div v-if="reassignmentAudits.length" v-loading="reassignmentLoading" class="audit-track">
         <article v-for="entry in reassignmentAudits" :key="entry.id" class="reassignment-entry">
           <div class="audit-time">{{ fmtTime(entry.created_at) }}</div>
           <div class="audit-change"><strong>{{ entry.old_assignee_name || '原办理人' }} <b>→</b> {{ entry.new_assignee_name }}</strong><span>{{ entry.required_position_name || entry.required_position_code }}</span></div>
@@ -10,6 +11,9 @@
         </article>
       </div>
       <el-empty v-else :image-size="42" description="暂无改派审计" />
+      <div v-if="reassignmentTotal > reassignmentPageSize" class="pager">
+        <el-pagination background layout="total, prev, pager, next" :total="reassignmentTotal" :current-page="reassignmentPage" :page-size="reassignmentPageSize" @current-change="onReassignmentPage" />
+      </div>
     </section>
     <el-card shadow="never">
       <template #header>
@@ -128,6 +132,13 @@ const total = ref(0)
 const meta = reactive({ actions: [], modules: [] })
 const dateRange = ref([])
 const reassignmentAudits = ref([])
+const reassignmentTotal = ref(0)
+const reassignmentPage = ref(1)
+const reassignmentPageSize = 10
+const reassignmentLoading = ref(false)
+const reassignmentError = ref('')
+const metaLoading = ref(false)
+const metaError = ref('')
 
 const filters = reactive({
   keyword: '', module: '', action: '', status: '', method: '',
@@ -188,6 +199,41 @@ async function load() {
   }
 }
 
+async function loadMeta() {
+  metaLoading.value = true
+  metaError.value = ''
+  try {
+    const result = await getAuditMeta()
+    meta.actions = result.actions || []
+    meta.modules = result.modules || []
+  } catch {
+    metaError.value = '筛选选项加载失败'
+  } finally {
+    metaLoading.value = false
+  }
+}
+
+async function loadReassignmentAudits() {
+  reassignmentLoading.value = true
+  reassignmentError.value = ''
+  try {
+    const result = await listReassignmentAudits({ page: reassignmentPage.value, page_size: reassignmentPageSize })
+    reassignmentAudits.value = result.items || []
+    reassignmentTotal.value = result.total || 0
+  } catch {
+    reassignmentAudits.value = []
+    reassignmentTotal.value = 0
+    reassignmentError.value = '改派审计加载失败'
+  } finally {
+    reassignmentLoading.value = false
+  }
+}
+
+async function onReassignmentPage(page) {
+  reassignmentPage.value = page
+  await loadReassignmentAudits()
+}
+
 function onSearch() { filters.page = 1; load() }
 function onReset() {
   filters.keyword = filters.module = filters.action = filters.status = ''
@@ -209,9 +255,12 @@ async function onExport() {
 }
 
 onMounted(async () => {
-  try { const [m, audits] = await Promise.all([getAuditMeta(), listReassignmentAudits()]); meta.actions = m.actions || []; meta.modules = m.modules || []; reassignmentAudits.value = audits || [] } catch { /* 忽略 */ }
+  loadMeta()
+  loadReassignmentAudits()
   load()
 })
+
+defineExpose({ meta, metaLoading, metaError, reassignmentAudits, reassignmentTotal, reassignmentLoading, reassignmentError, onReassignmentPage })
 </script>
 
 <style scoped lang="scss">

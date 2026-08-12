@@ -49,4 +49,37 @@ describe('ReassignTaskDialog', () => {
     expect(api.reassignWorkflowTask).toHaveBeenCalledWith(41, 9, '岗位调整')
     expect(wrapper.emitted('reassigned')).toHaveLength(1)
   })
+
+  it('ignores stale candidates after switching tasks and closing', async () => {
+    let resolveA
+    let resolveB
+    api.listWorkflowCandidates
+      .mockImplementationOnce(() => new Promise(resolve => { resolveA = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveB = resolve }))
+    const wrapper = mount(ReassignTaskDialog, { props: { modelValue: true, task }, global: { stubs: { ElDialog: { template: '<div><slot/><slot name="footer"/></div>' }, ElSelect: true, ElOption: true, ElInput: true, ElButton: true, ElTag: true } } })
+    await wrapper.setProps({ task: { ...task, id: 42, target_title: 'B合同' } })
+    resolveB([{ user_id: 12, full_name: 'B候选人' }])
+    await flushPromises()
+    expect(wrapper.vm.candidates[0].full_name).toBe('B候选人')
+    resolveA([{ user_id: 11, full_name: 'A候选人' }])
+    await flushPromises()
+    expect(wrapper.vm.candidates[0].full_name).toBe('B候选人')
+    await wrapper.setProps({ modelValue: false })
+    expect(wrapper.vm.candidates).toEqual([])
+  })
+
+  it('submits only once while a reassignment is pending', async () => {
+    let resolveSubmit
+    api.reassignWorkflowTask.mockImplementation(() => new Promise(resolve => { resolveSubmit = resolve }))
+    const wrapper = mount(ReassignTaskDialog, { props: { modelValue: true, task }, global: { stubs: { ElDialog: { template: '<div><slot/><slot name="footer"/></div>' }, ElSelect: true, ElOption: true, ElInput: true, ElButton: true, ElTag: true } } })
+    await flushPromises()
+    wrapper.vm.userId = 9
+    wrapper.vm.reason = '岗位调整'
+    const first = wrapper.vm.submit()
+    const second = wrapper.vm.submit()
+    expect(api.reassignWorkflowTask).toHaveBeenCalledTimes(1)
+    expect(wrapper.vm.canSubmit).toBe(false)
+    resolveSubmit({})
+    await Promise.all([first, second])
+  })
 })

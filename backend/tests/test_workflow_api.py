@@ -577,6 +577,36 @@ class WorkflowApiTest(unittest.TestCase):
             {self.other_leader.id},
         )
 
+        mixed = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={
+                "task_id": task.id,
+                "workflow_code": "supply.contract.v2",
+                "node_code": "company_leader",
+            },
+        )
+        missing = self.client.get("/api/v1/workflows/candidates")
+        self.assertEqual(mixed.status_code, 422)
+        self.assertEqual(missing.status_code, 422)
+
+    def test_task_candidates_require_awaiting_designated_task(self):
+        task = self.active_task()
+        self.current_user = self.admin
+        active = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={"task_id": task.id},
+        )
+        self.assertEqual(active.status_code, 422)
+
+        task.assignee_mode = "shared_position"
+        task.status = WorkflowTaskStatus.AWAITING_REASSIGNMENT
+        self.db.commit()
+        shared = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={"task_id": task.id},
+        )
+        self.assertEqual(shared.status_code, 422)
+
     def test_superuser_reassignment_audit_is_structured(self):
         task = self.active_task()
         task = self.await_reassignment(task)
@@ -590,17 +620,49 @@ class WorkflowApiTest(unittest.TestCase):
         audits = self.client.get("/api/v1/workflows/reassignment-audits")
 
         self.assertEqual(audits.status_code, 200, audits.text)
-        self.assertEqual(audits.json()["data"][0]["old_assignee_name"], "Leader")
-        self.assertEqual(audits.json()["data"][0]["new_assignee_name"], "Other Leader")
-        self.assertEqual(audits.json()["data"][0]["required_position_name"], "供应链公司负责人")
-        self.assertEqual(audits.json()["data"][0]["operator_name"], self.admin.full_name)
-        self.assertEqual(audits.json()["data"][0]["reason"], "原负责人岗位失效")
-        self.assertTrue(audits.json()["data"][0]["created_at"])
+        item = audits.json()["data"]["items"][0]
+        self.assertEqual(item["old_assignee_name"], "Leader")
+        self.assertEqual(item["new_assignee_name"], "Other Leader")
+        self.assertEqual(item["required_position_name"], "供应链公司负责人")
+        self.assertEqual(item["operator_name"], self.admin.full_name)
+        self.assertEqual(item["reason"], "原负责人岗位失效")
+        self.assertTrue(item["created_at"])
         position = self.db.scalar(select(Position).where(Position.code == "supply.company_leader"))
         position.name = "已改名岗位"
         self.db.commit()
         renamed = self.client.get("/api/v1/workflows/reassignment-audits")
-        self.assertEqual(renamed.json()["data"][0]["required_position_name"], "供应链公司负责人")
+        self.assertEqual(renamed.json()["data"]["items"][0]["required_position_name"], "供应链公司负责人")
+
+    def test_reassignment_audits_are_sorted_and_paginated(self):
+        task = self.await_reassignment(self.active_task())
+        self.current_user = self.admin
+        first = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/reassign",
+            json={"user_id": self.other_leader.id, "reason": "第一次改派"},
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        task = self.db.get(WorkflowTask, task.id)
+        task.status = WorkflowTaskStatus.AWAITING_REASSIGNMENT
+        task.designated_user_id = self.leader.id
+        task.designated_assignment_id = self.leader.assignments[0].id
+        self.db.commit()
+        second = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/reassign",
+            json={"user_id": self.other_leader.id, "reason": "第二次改派"},
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+
+        page_one = self.client.get(
+            "/api/v1/workflows/reassignment-audits",
+            params={"page": 1, "page_size": 1},
+        )
+        page_two = self.client.get(
+            "/api/v1/workflows/reassignment-audits",
+            params={"page": 2, "page_size": 1},
+        )
+        self.assertEqual(page_one.json()["data"]["total"], 2)
+        self.assertEqual(page_one.json()["data"]["items"][0]["reason"], "第二次改派")
+        self.assertEqual(page_two.json()["data"]["items"][0]["reason"], "第一次改派")
 
     def test_reassignment_cas_conflict_rolls_back_task_and_action_atomically(self):
         task = self.active_task()

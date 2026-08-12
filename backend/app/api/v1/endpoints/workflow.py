@@ -2,7 +2,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_superuser
@@ -136,6 +136,13 @@ def candidates(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    task_selector = task_id is not None
+    catalog_selector = workflow_code is not None or node_code is not None
+    if task_selector == catalog_selector or (catalog_selector and not (workflow_code and node_code)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="provide exactly task_id or workflow_code with node_code",
+        )
     if task_id is not None:
         if not current_user.is_superuser:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
@@ -149,6 +156,10 @@ def candidates(
         )
         if task is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow task not found")
+        if task.assignee_mode != WorkflowAssigneeMode.DESIGNATED_USER:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="only designated tasks have reassignment candidates")
+        if task.status != WorkflowTaskStatus.AWAITING_REASSIGNMENT:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="task is not awaiting reassignment")
         result = eligible_users_for_position(
             db,
             task.required_position_code,
@@ -172,8 +183,6 @@ def candidates(
         return Response.ok([
             item.model_dump() for item in result if item.user_id not in participant_ids
         ])
-    if not workflow_code or not node_code:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="workflow_code and node_code or task_id are required")
     permission_code = SUBMIT_PERMISSION_BY_WORKFLOW.get(workflow_code)
     if permission_code is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow not found")
@@ -247,18 +256,24 @@ def awaiting_reassignment(
     } for task in tasks])
 
 
-@router.get("/reassignment-audits", response_model=Response[list[dict]])
+@router.get("/reassignment-audits", response_model=Response[dict])
 def reassignment_audits(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
     _: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ):
+    filters = (WorkflowTaskAction.action == WorkflowAction.REASSIGN,)
+    total = db.scalar(select(func.count(WorkflowTaskAction.id)).where(*filters)) or 0
     actions = db.scalars(
         select(WorkflowTaskAction)
-        .where(WorkflowTaskAction.action == WorkflowAction.REASSIGN)
+        .where(*filters)
         .options(joinedload(WorkflowTaskAction.task))
         .order_by(WorkflowTaskAction.created_at.desc(), WorkflowTaskAction.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     ).all()
-    return Response.ok([{
+    return Response.ok({"items": [{
         "id": action.id,
         "task_id": action.task_id,
         "old_assignee_name": action.previous_assignee_name,
@@ -268,7 +283,7 @@ def reassignment_audits(
         "operator_name": action.actor_name,
         "reason": action.reason or action.comment,
         "created_at": action.created_at,
-    } for action in actions])
+    } for action in actions], "total": total, "page": page, "page_size": page_size})
 
 
 @router.get("/my-tasks", response_model=Response[list[dict]])

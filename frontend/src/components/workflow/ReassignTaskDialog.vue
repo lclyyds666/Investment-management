@@ -30,7 +30,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listWorkflowCandidates, reassignWorkflowTask } from '@/api/workflow'
 
@@ -40,20 +40,25 @@ const candidates = ref([])
 const userId = ref(null)
 const reason = ref('')
 const submitting = ref(false)
-const canSubmit = computed(() => Boolean(userId.value && reason.value.trim()))
+const canSubmit = computed(() => Boolean(!submitting.value && userId.value && reason.value.trim()))
+let generation = 0
 
 async function loadCandidates() {
-  if (!props.task?.id) return
-  const result = await listWorkflowCandidates({ taskId: props.task.id })
+  const taskId = props.task?.id
+  if (!taskId) return
+  const requestGeneration = ++generation
+  const result = await listWorkflowCandidates({ taskId })
+  if (requestGeneration !== generation || !props.modelValue || props.task?.id !== taskId) return
   candidates.value = result.map(candidate => ({
     ...candidate,
     disabled: Number(candidate.user_id) === Number(props.task.previous_assignee?.id)
   }))
 }
 
-function close() { emit('update:modelValue', false) }
+function invalidate() { generation += 1; candidates.value = [] }
+function close() { invalidate(); emit('update:modelValue', false) }
 async function submit() {
-  if (!canSubmit.value) return
+  if (submitting.value || !canSubmit.value) return
   submitting.value = true
   try {
     await reassignWorkflowTask(props.task.id, userId.value, reason.value.trim())
@@ -68,13 +73,16 @@ async function submit() {
 }
 
 watch(() => [props.modelValue, props.task?.id], async ([visible]) => {
+  invalidate()
   if (!visible) return
   userId.value = null
   reason.value = ''
   await loadCandidates()
 }, { immediate: true })
 
-defineExpose({ candidates, userId, reason, submit })
+onBeforeUnmount(invalidate)
+
+defineExpose({ candidates, userId, reason, submitting, canSubmit, submit })
 </script>
 
 <style scoped>

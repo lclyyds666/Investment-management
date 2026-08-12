@@ -13,8 +13,8 @@ export function listAwaitingReassignmentTasks() {
   return request.get('/workflows/awaiting-reassignment')
 }
 
-export function listReassignmentAudits() {
-  return request.get('/workflows/reassignment-audits')
+export function listReassignmentAudits(params = {}) {
+  return request.get('/workflows/reassignment-audits', { params })
 }
 
 export function listMyWorkflowTasks(targetType) {
