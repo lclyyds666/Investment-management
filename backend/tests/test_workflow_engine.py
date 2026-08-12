@@ -36,10 +36,14 @@ from app.models.workflow import (
 from app.services.workflow_catalog import WORKFLOW_CATALOG
 from app.services.workflow_engine import (
     WorkflowValidationError,
+    complete_task,
     eligible_designated_users,
     ensure_workflow_version_mutable,
+    my_active_tasks,
+    refresh_invalid_designated_tasks,
     seed_workflow_definitions,
     start_workflow,
+    task_is_actionable_by,
     validate_workflow_version,
 )
 
@@ -663,6 +667,109 @@ class WorkflowStartTest(unittest.TestCase):
         self.db.rollback()
         self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
         self.assertIsNone(self.db.get(Contract, target_id).workflow_instance_id)
+
+
+class WorkflowAuthorizationTest(unittest.TestCase):
+    add_user = WorkflowStartTest.add_user
+    add_assignment = WorkflowStartTest.add_assignment
+    designated_users = WorkflowStartTest.designated_users
+
+    def setUp(self):
+        WorkflowStartTest.setUp(self)
+        self.reviewer_a = self.add_assignment(
+            "reviewer-a", "Reviewer A", "investment.duty.supply_risk_review"
+        ).user
+        self.reviewer_b = self.add_assignment(
+            "reviewer-b", "Reviewer B", "investment.duty.supply_risk_review"
+        ).user
+        self.leader_b = self.add_assignment(
+            "leader-b", "Leader B", "supply.company_leader"
+        ).user
+        self.admin = self.add_user("admin", "Admin")
+        self.admin.is_superuser = True
+        self.db.commit()
+        self.instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+            self.handler,
+            self.designated_users(),
+        )
+        self.db.commit()
+        self.designated_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 1,
+        ))
+        self.shared_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 3,
+        ))
+        self.db.commit()
+
+    def test_any_active_shared_position_holder_can_act(self):
+        self.shared_task.status = WorkflowTaskStatus.ACTIVE
+        self.db.commit()
+        self.assertTrue(task_is_actionable_by(self.db, self.shared_task, self.reviewer_a))
+        self.assertTrue(task_is_actionable_by(self.db, self.shared_task, self.reviewer_b))
+
+    def test_designated_task_only_allows_selected_user(self):
+        self.assertTrue(task_is_actionable_by(self.db, self.designated_task, self.leader))
+        self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.leader_b))
+
+    def test_superuser_cannot_act_without_business_assignment(self):
+        self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.admin))
+
+    def test_expired_designated_assignment_marks_task_for_reassignment(self):
+        expired_assignment = self.add_assignment(
+            "expired-leader", "Expired Leader", "supply.company_leader",
+            valid_until=date(2026, 8, 11),
+        )
+        self.db.commit()
+        self.designated_task.designated_user_id = expired_assignment.user_id
+        self.designated_task.designated_assignment_id = expired_assignment.id
+        self.db.commit()
+        refresh_invalid_designated_tasks(self.db, on_date=date(2026, 8, 12))
+        self.assertEqual(
+            self.db.get(WorkflowTask, self.designated_task.id).status,
+            WorkflowTaskStatus.AWAITING_REASSIGNMENT,
+        )
+
+    def test_inbox_returns_only_actionable_active_tasks(self):
+        self.shared_task.status = WorkflowTaskStatus.ACTIVE
+        self.db.commit()
+        self.assertEqual(
+            [task.id for task in my_active_tasks(self.db, self.reviewer_a)],
+            [self.shared_task.id],
+        )
+        self.assertEqual(
+            [task.id for task in my_active_tasks(self.db, self.leader)],
+            [self.designated_task.id],
+        )
+        self.assertEqual(my_active_tasks(self.db, self.admin), [])
+
+    def test_complete_and_return_moves_between_adjacent_nodes_with_snapshots(self):
+        complete_task(self.db, self.designated_task.id, self.leader, WorkflowAction.APPROVE, "approved")
+        legal_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 2,
+        ))
+        complete_task(self.db, legal_task.id, self.legal, WorkflowAction.APPROVE, "approved")
+        risk_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 3,
+        ))
+        self.assertEqual(risk_task.status, WorkflowTaskStatus.ACTIVE)
+        complete_task(self.db, risk_task.id, self.reviewer_a, WorkflowAction.RETURN, "needs revision")
+        self.db.refresh(legal_task)
+        self.db.refresh(risk_task)
+        self.assertEqual(legal_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(risk_task.status, WorkflowTaskStatus.RETURNED)
+        action = self.db.scalar(select(WorkflowTaskAction).where(
+            WorkflowTaskAction.task_id == risk_task.id,
+            WorkflowTaskAction.action == WorkflowAction.RETURN,
+        ))
+        self.assertEqual(action.returned_to_sequence, legal_task.sequence)
+        self.assertEqual(action.position_code, "investment.duty.supply_risk_review")
 
 
 class WorkflowPublicationContinuationTest(unittest.TestCase):

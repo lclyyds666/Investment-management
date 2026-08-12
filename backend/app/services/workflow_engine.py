@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -732,3 +732,301 @@ def _expire_parent_workflow_state(
                 db.expire(instance)
             elif isinstance(instance, target_type_class) and instance.id == target_id:
                 db.expire(instance)
+
+
+def _task_assignment_is_effective(
+    task: WorkflowTask,
+    assignment: UserAssignment | None,
+    user: User,
+    on_date: date,
+) -> bool:
+    return (
+        assignment is not None
+        and assignment.user_id == user.id
+        and assignment.is_effective_on(on_date)
+        and assignment.position.code == task.required_position_code
+        and user.is_active
+        and assignment.organization.is_active
+        and assignment.position.is_active
+        and _assignment_has_required_scope(assignment)
+    )
+
+
+def _actor_has_other_workflow_role(
+    db: Session,
+    task: WorkflowTask,
+    user_id: int,
+) -> bool:
+    other_task = WorkflowTask.__table__.alias("other_workflow_task")
+    other_action = WorkflowTaskAction.__table__.alias("other_workflow_action")
+    return db.scalar(
+        select(exists().where(
+            other_task.c.instance_id == task.instance_id,
+            other_task.c.id != task.id,
+            or_(
+                other_task.c.designated_user_id == user_id,
+                exists().where(
+                    other_action.c.task_id == other_task.c.id,
+                    other_action.c.actor_id == user_id,
+                ),
+            ),
+        ))
+    )
+
+
+def _effective_task_assignment(
+    db: Session,
+    task: WorkflowTask,
+    user: User,
+    on_date: date,
+) -> UserAssignment | None:
+    if not user.is_active or task.status != WorkflowTaskStatus.ACTIVE:
+        return None
+    if task.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER:
+        assignment = db.scalar(
+            select(UserAssignment)
+            .where(UserAssignment.id == task.designated_assignment_id)
+            .options(
+                joinedload(UserAssignment.organization),
+                joinedload(UserAssignment.position),
+                joinedload(UserAssignment.external_detail),
+            )
+        )
+        if not _task_assignment_is_effective(task, assignment, user, on_date):
+            db.execute(
+                update(WorkflowTask)
+                .where(
+                    WorkflowTask.id == task.id,
+                    WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+                )
+                .values(status=WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+            )
+            db.expire(task)
+            return None
+        return assignment
+
+    if task.instance.submitted_by == user.id or _actor_has_other_workflow_role(db, task, user.id):
+        return None
+    assignments = _active_assignments(
+        db,
+        {task.required_position_code},
+        on_date,
+        {user.id},
+    )
+    return next(
+        (item for item in assignments if _assignment_has_required_scope(item)),
+        None,
+    )
+
+
+def task_is_actionable_by(
+    db: Session,
+    task: WorkflowTask,
+    user: User,
+    on_date: date | None = None,
+) -> bool:
+    return _effective_task_assignment(db, task, user, on_date or date.today()) is not None
+
+
+def refresh_invalid_designated_tasks(
+    db: Session,
+    on_date: date | None = None,
+) -> None:
+    effective_date = on_date or date.today()
+    tasks = list(db.scalars(
+        select(WorkflowTask)
+        .where(
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+            WorkflowTask.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER,
+        )
+        .options(
+            joinedload(WorkflowTask.designated_user),
+            joinedload(WorkflowTask.designated_assignment).joinedload(UserAssignment.organization),
+            joinedload(WorkflowTask.designated_assignment).joinedload(UserAssignment.position),
+            joinedload(WorkflowTask.designated_assignment).joinedload(UserAssignment.external_detail),
+        )
+    ))
+    for task in tasks:
+        if task.designated_user is None or not _task_assignment_is_effective(
+            task, task.designated_assignment, task.designated_user, effective_date
+        ):
+            db.execute(
+                update(WorkflowTask)
+                .where(
+                    WorkflowTask.id == task.id,
+                    WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+                )
+                .values(status=WorkflowTaskStatus.AWAITING_REASSIGNMENT)
+            )
+    db.flush()
+
+
+def my_active_tasks(
+    db: Session,
+    user: User,
+    target_type: WorkflowTargetType | None = None,
+) -> list[WorkflowTask]:
+    if not user.is_active:
+        return []
+    effective_date = date.today()
+    assignment_exists = exists(
+        select(UserAssignment.id)
+        .join(UserAssignment.organization)
+        .join(UserAssignment.position)
+        .where(
+            UserAssignment.user_id == user.id,
+            UserAssignment.status == AssignmentStatus.ACTIVE,
+            UserAssignment.valid_from <= effective_date,
+            (UserAssignment.valid_until.is_(None) | (UserAssignment.valid_until >= effective_date)),
+            Organization.is_active.is_(True),
+            Position.is_active.is_(True),
+            Position.code == WorkflowTask.required_position_code,
+        )
+    )
+    statement = (
+        select(WorkflowTask)
+        .join(WorkflowTask.instance)
+        .where(
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+            or_(
+                WorkflowTask.designated_user_id == user.id,
+                (
+                    WorkflowTask.assignee_mode == WorkflowAssigneeMode.SHARED_POSITION
+                )
+                & assignment_exists
+                & (WorkflowInstance.submitted_by != user.id),
+            ),
+        )
+        .options(joinedload(WorkflowTask.instance), joinedload(WorkflowTask.node))
+        .order_by(WorkflowInstance.submitted_at, WorkflowTask.sequence, WorkflowTask.id)
+    )
+    if target_type is not None:
+        statement = statement.where(WorkflowInstance.target_type == WorkflowTargetType(target_type))
+    tasks = list(db.scalars(statement))
+    return [
+        task for task in tasks
+        if task_is_actionable_by(db, task, user, effective_date)
+    ]
+
+
+def _workflow_target_for_instance(db: Session, instance: WorkflowInstance):
+    return _workflow_target(db, instance.target_type, instance.target_id)
+
+
+def _complete_task(
+    db: Session,
+    task_id: int,
+    actor_id: int,
+    action: WorkflowAction,
+    comment: str,
+    completed_at: datetime,
+) -> int:
+    task = db.scalar(
+        select(WorkflowTask)
+        .where(WorkflowTask.id == task_id)
+        .options(joinedload(WorkflowTask.instance), joinedload(WorkflowTask.node))
+        .with_for_update()
+    )
+    if task is None:
+        raise WorkflowValidationError("workflow_task_not_found", "The workflow task does not exist.")
+    if task.status != WorkflowTaskStatus.ACTIVE:
+        raise WorkflowValidationError("workflow_task_not_active", "Only active workflow tasks can be completed.")
+    if action not in (WorkflowAction.APPROVE, WorkflowAction.RETURN):
+        raise WorkflowValidationError("invalid_workflow_action", "Only approve and return are supported.")
+    if action == WorkflowAction.RETURN and not task.node.allow_reject:
+        raise WorkflowValidationError("workflow_return_not_allowed", "This workflow node cannot be returned.")
+    actor = db.get(User, actor_id)
+    assignment = _effective_task_assignment(db, task, actor, completed_at.date()) if actor else None
+    if assignment is None:
+        raise WorkflowValidationError("workflow_task_not_actionable", "The actor is not authorized for this task.")
+
+    instance = task.instance
+    task.status = WorkflowTaskStatus.APPROVED if action == WorkflowAction.APPROVE else WorkflowTaskStatus.RETURNED
+    task.completed_at = completed_at
+    returned_to_sequence = None
+    target = _workflow_target_for_instance(db, instance)
+    if action == WorkflowAction.RETURN:
+        previous_task = db.scalar(
+            select(WorkflowTask)
+            .where(
+                WorkflowTask.instance_id == instance.id,
+                WorkflowTask.sequence < task.sequence,
+            )
+            .order_by(WorkflowTask.sequence.desc())
+            .with_for_update()
+        )
+        if previous_task is None:
+            raise WorkflowValidationError("workflow_return_not_allowed", "The first workflow node cannot be returned.")
+        previous_task.status = WorkflowTaskStatus.ACTIVE
+        previous_task.activated_at = completed_at
+        previous_task.completed_at = None
+        instance.current_sequence = previous_task.sequence
+        returned_to_sequence = previous_task.sequence
+    else:
+        next_task = db.scalar(
+            select(WorkflowTask)
+            .where(
+                WorkflowTask.instance_id == instance.id,
+                WorkflowTask.sequence > task.sequence,
+            )
+            .order_by(WorkflowTask.sequence)
+            .with_for_update()
+        )
+        if next_task is None:
+            instance.status = WorkflowInstanceStatus.APPROVED
+            instance.completed_at = completed_at
+            target.status = ContractStatus.APPROVED
+        else:
+            next_task.status = WorkflowTaskStatus.ACTIVE
+            next_task.activated_at = completed_at
+            instance.current_sequence = next_task.sequence
+    target.current_step = instance.current_sequence
+    db.add(WorkflowTaskAction(
+        task_id=task.id,
+        action=action,
+        actor_id=actor.id,
+        actor_name=actor.full_name,
+        organization_code=assignment.organization.code,
+        organization_name=assignment.organization.name,
+        position_code=assignment.position.code,
+        position_name=assignment.position.name,
+        comment=comment,
+        signature_snapshot=actor.signature,
+        returned_to_sequence=returned_to_sequence,
+    ))
+    db.flush()
+    return instance.id
+
+
+def complete_task(
+    db: Session,
+    task_id: int,
+    actor: User,
+    action: WorkflowAction,
+    comment: str,
+) -> WorkflowInstance:
+    with db.no_autoflush:
+        actor_id = actor.id
+        connection = db.connection()
+    _ensure_sqlite_outer_transaction(connection)
+    workflow_session = Session(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    try:
+        instance_id = _complete_task(
+            workflow_session, task_id, actor_id, WorkflowAction(action), comment, datetime.now()
+        )
+        workflow_session.commit()
+    except Exception:
+        workflow_session.rollback()
+        raise
+    finally:
+        workflow_session.close()
+
+    instance = db.get(WorkflowInstance, instance_id)
+    _expire_parent_workflow_state(db, instance.target_type, instance.target_id)
+    with db.no_autoflush:
+        return db.get(WorkflowInstance, instance_id)
