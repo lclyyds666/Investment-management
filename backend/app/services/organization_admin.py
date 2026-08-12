@@ -308,8 +308,31 @@ def _assignment_snapshot(assignments: list[UserAssignment]) -> list[dict]:
             "valid_from": assignment.valid_from.isoformat(),
             "valid_until": assignment.valid_until.isoformat() if assignment.valid_until else None,
             "status": assignment.status.value,
+            "governance_scopes": [
+                {"scope_type": scope.scope_type, "scope_ref": scope.scope_ref}
+                for scope in sorted(
+                    assignment.governance_scopes,
+                    key=lambda scope: (scope.scope_type, scope.scope_ref),
+                )
+            ],
+            "external": (
+                {
+                    "provider_name": assignment.external_detail.provider_name,
+                    "service_scopes": sorted(assignment.external_detail.service_scopes),
+                }
+                if assignment.external_detail else None
+            ),
         }
-        for assignment in assignments
+        for assignment in sorted(
+            assignments,
+            key=lambda assignment: (
+                assignment.organization.code,
+                assignment.position.code,
+                assignment.valid_from.isoformat(),
+                assignment.valid_until.isoformat() if assignment.valid_until else "",
+                assignment.status.value,
+            ),
+        )
     ]
 
 
@@ -338,8 +361,13 @@ def replace_user_assignments(
         existing_assignments = db.scalars(
             select(UserAssignment)
             .where(UserAssignment.user_id == user.id)
-            .options(joinedload(UserAssignment.organization), joinedload(UserAssignment.position))
-        ).all()
+            .options(
+                joinedload(UserAssignment.organization),
+                joinedload(UserAssignment.position),
+                joinedload(UserAssignment.governance_scopes),
+                joinedload(UserAssignment.external_detail),
+            )
+        ).unique().all()
         before = _assignment_snapshot(existing_assignments)
         replacements: list[UserAssignment] = []
         for item in payload.assignments:

@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Callable, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -58,6 +58,13 @@ def _conflict_boundary(operation: Callable[[], Result]) -> Result:
                 "assignment_ids": error.assignment_ids,
             },
         ) from error
+
+
+def _required_reason(reason: str = Query(..., min_length=1)) -> str:
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="reason must not be blank")
+    return normalized_reason
 
 
 def _organization_summary(organization: Organization) -> dict:
@@ -206,50 +213,78 @@ def list_user_assignments(
 @router.post("")
 def create_organization_endpoint(
     payload: OrganizationWrite,
+    request: Request,
+    reason: str = Depends(_required_reason),
     current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _organization_summary(_conflict_boundary(lambda: create_organization(db, payload, actor=current_user)))
+    organization = _conflict_boundary(
+        lambda: create_organization(db, payload, actor=current_user, reason=reason)
+    )
+    request.state.explicit_authorization_audit = True
+    return _organization_summary(organization)
 
 
 @router.put("/{organization_id}")
 def update_organization_endpoint(
     organization_id: int,
     payload: OrganizationWrite,
+    request: Request,
+    reason: str = Depends(_required_reason),
     current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _organization_summary(
-        _conflict_boundary(lambda: update_organization(db, organization_id, payload, actor=current_user))
+    organization = _conflict_boundary(
+        lambda: update_organization(db, organization_id, payload, actor=current_user, reason=reason)
     )
+    request.state.explicit_authorization_audit = True
+    return _organization_summary(organization)
 
 
 @router.post("/positions")
 def create_position_endpoint(
     payload: PositionWrite,
+    request: Request,
+    reason: str = Depends(_required_reason),
     current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _position_summary(_conflict_boundary(lambda: create_position(db, payload, actor=current_user)))
+    position = _conflict_boundary(
+        lambda: create_position(db, payload, actor=current_user, reason=reason)
+    )
+    request.state.explicit_authorization_audit = True
+    return _position_summary(position)
 
 
 @router.put("/positions/{position_id}")
 def update_position_endpoint(
     position_id: int,
     payload: PositionWrite,
+    request: Request,
+    reason: str = Depends(_required_reason),
     current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    return _position_summary(_conflict_boundary(lambda: update_position(db, position_id, payload, actor=current_user)))
+    position = _conflict_boundary(
+        lambda: update_position(db, position_id, payload, actor=current_user, reason=reason)
+    )
+    request.state.explicit_authorization_audit = True
+    return _position_summary(position)
 
 
 @router.put("/positions/{position_id}/permissions")
 def update_position_permissions_endpoint(
     position_id: int,
     payload: list[PositionPermissionWrite],
+    request: Request,
+    reason: str = Depends(_required_reason),
     current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    links = _conflict_boundary(
+        lambda: replace_position_permissions(db, position_id, payload, actor=current_user, reason=reason)
+    )
+    request.state.explicit_authorization_audit = True
     return [
         {
             "id": link.id,
@@ -257,9 +292,7 @@ def update_position_permissions_endpoint(
             "data_scope": link.data_scope,
             "scope_ref": link.scope_ref,
         }
-        for link in _conflict_boundary(
-            lambda: replace_position_permissions(db, position_id, payload, actor=current_user)
-        )
+        for link in links
     ]
 
 
@@ -267,12 +300,16 @@ def update_position_permissions_endpoint(
 def update_user_assignments_endpoint(
     user_id: int,
     payload: UserAssignmentsReplace,
+    request: Request,
+    reason: str = Depends(_required_reason),
     current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    assignments = _conflict_boundary(
+        lambda: replace_user_assignments(db, user_id, payload, actor=current_user, reason=reason)
+    )
+    request.state.explicit_authorization_audit = True
     return [
         _assignment_summary(assignment)
-        for assignment in _conflict_boundary(
-            lambda: replace_user_assignments(db, user_id, payload, actor=current_user)
-        )
+        for assignment in assignments
     ]

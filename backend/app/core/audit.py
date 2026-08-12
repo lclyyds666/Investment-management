@@ -217,7 +217,11 @@ class AuditMiddleware(BaseHTTPMiddleware):
             last = path.rstrip("/").rsplit("/", 1)[-1]
             if last not in _GET_LOG_SUFFIX:
                 return
-        elif path.startswith(f"{_API_PREFIX}/organizations"):
+        elif (
+            path.startswith(f"{_API_PREFIX}/organizations")
+            and getattr(response, "status_code", 0) < 400
+            and getattr(request.state, "explicit_authorization_audit", False)
+        ):
             return
 
         # 解析操作者（从 Authorization Bearer 解 token → 查用户快照）

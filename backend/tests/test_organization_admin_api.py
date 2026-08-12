@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
@@ -11,7 +12,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.core.enums import DataScope, PositionCategory, Role
 from app.db.base import Base
-from app.models.organization import Organization, Position, UserAssignment
+from app.models.organization import ExternalAssignment, GovernanceScope, Organization, Position, UserAssignment
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.schemas.organization_admin import (
@@ -286,6 +287,62 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
         )
         self.assertEqual(row.position_code, "system.information_maintainer")
 
+    def test_assignment_audit_snapshot_preserves_sorted_scopes_and_terms(self):
+        admin = User(
+            username="snapshot-admin", full_name="Snapshot Admin", hashed_password="test",
+            role=Role.INFO_MAINTAINER, is_superuser=True,
+        )
+        external_organization = self.db.scalar(
+            select(Organization).where(Organization.code == "external.legal")
+        )
+        external_position = self.db.scalar(
+            select(Position).where(Position.code == "external.legal_counsel")
+        )
+        old_assignment = UserAssignment(
+            user_id=self.user.id, organization_id=external_organization.id,
+            position_id=external_position.id, valid_from=date(2026, 1, 1),
+            valid_until=date(2026, 6, 30),
+        )
+        self.db.add_all([admin, old_assignment])
+        self.db.flush()
+        self.db.add_all([
+            GovernanceScope(assignment_id=old_assignment.id, scope_type="department", scope_ref="legal"),
+            GovernanceScope(assignment_id=old_assignment.id, scope_type="company", scope_ref="supplymanagement"),
+            ExternalAssignment(
+                assignment_id=old_assignment.id, provider_name="Old Counsel",
+                service_scopes=["litigation", "contract_review"],
+            ),
+        ])
+        self.db.commit()
+        payload = UserAssignmentsReplace(assignments=[
+            AssignmentWrite(
+                organization_code="external.legal", position_code="external.legal_counsel",
+                valid_from=date(2026, 7, 1), valid_until=date(2026, 12, 31),
+                external=ExternalAssignmentWrite(
+                    provider_name="New Counsel", service_scopes=["due_diligence", "contract_review"],
+                ),
+            )
+        ])
+
+        replace_user_assignments(
+            self.db, actor=admin, target_user=self.user, payload=payload, reason="外聘续约",
+        )
+
+        row = self.db.scalar(select(AuditLog).where(AuditLog.action == "assignment_replace"))
+        self.assertEqual(row.before_json[0]["valid_until"], "2026-06-30")
+        self.assertEqual(row.before_json[0]["governance_scopes"], [
+            {"scope_type": "company", "scope_ref": "supplymanagement"},
+            {"scope_type": "department", "scope_ref": "legal"},
+        ])
+        self.assertEqual(row.before_json[0]["external"], {
+            "provider_name": "Old Counsel",
+            "service_scopes": ["contract_review", "litigation"],
+        })
+        self.assertEqual(row.after_json[0]["valid_from"], "2026-07-01")
+        self.assertEqual(row.after_json[0]["external"]["service_scopes"], [
+            "contract_review", "due_diligence",
+        ])
+
 
 class OrganizationAdminApiTest(unittest.TestCase):
     def setUp(self):
@@ -354,7 +411,7 @@ class OrganizationAdminApiTest(unittest.TestCase):
 
     def test_business_user_cannot_replace_assignments(self):
         response = self.client.put(
-            f"/api/v1/organizations/users/{self.worker.id}/assignments",
+            f"/api/v1/organizations/users/{self.worker.id}/assignments?reason=无权限操作",
             json={"assignments": []},
         )
         self.assertEqual(response.status_code, 403)
@@ -373,7 +430,7 @@ class OrganizationAdminApiTest(unittest.TestCase):
         self.current_user = self.admin
 
         response = self.client.put(
-            f"/api/v1/organizations/users/{self.worker.id}/assignments",
+            f"/api/v1/organizations/users/{self.worker.id}/assignments?reason=岗位调整",
             json={
                 "assignments": [
                     {
@@ -400,7 +457,7 @@ class OrganizationAdminApiTest(unittest.TestCase):
         )
 
         response = self.client.put(
-            f"/api/v1/organizations/{organization.id}",
+            f"/api/v1/organizations/{organization.id}?reason=组织调整",
             json={
                 "code": "fundmanagement",
                 "name": "Renamed Supply",
@@ -417,6 +474,58 @@ class OrganizationAdminApiTest(unittest.TestCase):
         persisted = self.db.get(Organization, organization.id)
         self.assertEqual(persisted.code, "supplymanagement")
         self.assertNotEqual(persisted.name, "Renamed Supply")
+
+    def test_successful_organization_write_uses_only_explicit_audit(self):
+        self.current_user = self.admin
+
+        with patch("app.core.audit.write_log") as write_log:
+            response = self.client.post(
+                "/api/v1/organizations?reason=%20新增组织%20",
+                json={
+                    "code": "audit-test", "name": "Audit Test", "organization_type": "department",
+                    "parent_code": "supplymanagement", "company_code": "supplymanagement",
+                    "sort_order": 99, "is_active": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(write_log.call_count, 0)
+        rows = self.db.scalars(select(AuditLog).where(AuditLog.action == "organization_create")).all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].reason, "新增组织")
+
+    def test_rejected_organization_write_keeps_failed_generic_audit(self):
+        self.current_user = self.admin
+
+        with patch("app.core.audit.write_log") as write_log:
+            response = self.client.put(
+                "/api/v1/organizations/999999?reason=组织调整",
+                json={
+                    "code": "audit-missing", "name": "Missing", "organization_type": "department",
+                    "parent_code": "supplymanagement", "company_code": "supplymanagement",
+                    "sort_order": 99, "is_active": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 409)
+        write_log.assert_called_once()
+        self.assertEqual(write_log.call_args.kwargs["status"], "fail")
+        self.assertEqual(write_log.call_args.kwargs["http_status"], 409)
+        self.assertIsNone(self.db.scalar(select(AuditLog).where(AuditLog.action == "organization_update")))
+
+    def test_authorization_writes_require_nonblank_reason(self):
+        self.current_user = self.admin
+
+        response = self.client.post(
+            "/api/v1/organizations?reason=%20%20%20",
+            json={
+                "code": "blank-reason", "name": "Blank Reason", "organization_type": "department",
+                "parent_code": "supplymanagement", "company_code": "supplymanagement",
+                "sort_order": 99, "is_active": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
 
     def test_user_update_rejects_company_roles_field(self):
         self.current_user = self.admin
