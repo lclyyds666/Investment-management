@@ -120,6 +120,12 @@
   --motion-fast: 160ms;
   --motion-base: 300ms;
   --page-max-width: 1680px;
+  --portal-content-max-width: 1560px;
+  --portal-assistant-height: 420px;
+  --portal-entry-min-height: 188px;
+  --ai-sidebar-width: 242px;
+  --ai-rule: rgba(37, 95, 115, 0.12);
+  --ai-rule-strong: rgba(37, 95, 115, 0.25);
 }
 
 html.dark {
@@ -202,4 +208,6 @@ html.dark {
   --metric-profit: #63b39c;
   --metric-duration: #e68a64;
   --metric-warning: #e8b968;
+  --ai-rule: rgba(120, 189, 209, 0.15);
+  --ai-rule-strong: rgba(120, 189, 209, 0.28);
 }

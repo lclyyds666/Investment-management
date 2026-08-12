@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     # 应用
-    PROJECT_NAME: str = "山东出版供应链管理有限公司业务平台"
+    PROJECT_NAME: str = "山东出版投资有限公司工作平台"
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
 
@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
     AI_TIMEOUT_SECONDS: float = 40.0
+    AI_CONVERSATION_RETENTION_DAYS: int = 180
+    AI_MAX_PROMPT_CHARS: int = 2000
+    AI_MAX_QUERY_MONTHS: int = 36
+    AI_REQUESTS_PER_MINUTE: int = 20
+    AI_MAX_CONCURRENT_PER_USER: int = 2
+    AI_GENERATION_LEASE_SECONDS: int = 300
+    AI_SHARED_STORE_REQUIRED: bool = False
 
     # 客户 AI 尽调：Web 搜索（默认博查 Bocha，国内可直连）。
     # 未配置 SEARCH_API_KEY 时自动跳过联网检索并在报告中标注（不影响其余段落）。

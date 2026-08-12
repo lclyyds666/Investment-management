@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { login as loginApi, getMe } from '@/api/auth'
+import { usePortalStore } from '@/store/portal'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('token') || '')
@@ -46,6 +47,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    usePortalStore().clearPortalContext()
     token.value = ''
     role.value = ''
     userInfo.value = null
@@ -57,7 +59,7 @@ export const useUserStore = defineStore('user', () => {
   function hasRole(roles) {
     if (!roles || roles.length === 0) return true
     if (isSuperuser.value) return true
-    return roles.includes(role.value)
+    return roles.includes(usePortalStore().companyRole('supplymanagement'))
   }
 
   return {

@@ -13,7 +13,7 @@ const router = useRouter()
 
 function onKey(e) {
   // Esc 退出全屏投放，返回工作台
-  if (e.key === 'Escape' && !document.fullscreenElement) router.push('/')
+  if (e.key === 'Escape' && !document.fullscreenElement) router.push({ name: 'PortalHome' })
 }
 
 onMounted(() => {

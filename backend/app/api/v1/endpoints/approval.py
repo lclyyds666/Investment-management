@@ -18,9 +18,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, require_company_resource, require_roles
 from app.core.config import settings
 from app.core.enums import (
+    CompanyCode,
+    ResourceCode,
     ApprovalAction,
     ContractStatus,
     ContractType,
@@ -47,11 +49,14 @@ from app.services import approval_print as print_svc
 from app.services import approval_proofread as proof_svc
 from app.services import customer_research as research_svc
 from app.services.num_cn import amount_to_cn
+from app.services.permissions import get_company_role
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _ATTACH_MAX_BYTES = 20 * 1024 * 1024  # ≤ 20MB
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_APPROVAL
+))])
 
 # 业务审批 查看：全部非法律顾问 + 超管（法律顾问不参与业务审批）
 _view_guard = require_roles(
@@ -83,14 +88,20 @@ def _to_out(form: ApprovalForm, creator_name: str = "") -> ApprovalFormOut:
     return out
 
 
-def _ensure_current_approver(form: ApprovalForm, user: User) -> Role:
+def _effective_supply_role(db: Session, user: User) -> Role | None:
+    return user.role if user.is_superuser else get_company_role(
+        db, user, CompanyCode.SUPPLY_MANAGEMENT
+    )
+
+
+def _ensure_current_approver(db: Session, form: ApprovalForm, user: User) -> Role:
     """校验审批单处于审批中且当前用户是本级审批人（超管放行）。"""
     if form.status != ContractStatus.PENDING:
         raise HTTPException(status_code=400, detail="该审批单当前不处于审批中，无法操作")
     expected = form_role_at_step(form.form_type, form.current_step)
     if expected is None:
         raise HTTPException(status_code=400, detail="审批流状态异常")
-    if not user.is_superuser and user.role != expected:
+    if not user.is_superuser and _effective_supply_role(db, user) != expected:
         raise HTTPException(
             status_code=403,
             detail=f"当前审批环节应由【{expected.label}】处理，您无权审批",
@@ -140,7 +151,7 @@ def list_forms(
 ):
     """业务经办仅见本人；其余角色（审批/监督方）见全部。"""
     stmt = select(ApprovalForm).order_by(ApprovalForm.id.desc())
-    if not current_user.is_superuser and current_user.role == Role.BUSINESS_HANDLER:
+    if not current_user.is_superuser and _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
         stmt = stmt.where(ApprovalForm.created_by == current_user.id)
     rows = db.scalars(stmt).all()
     names = _names_map(db, {f.created_by for f in rows})
@@ -159,7 +170,7 @@ def list_todo(
     ).all()
     todo = [
         f for f in rows
-        if current_user.is_superuser or form_role_at_step(f.form_type, f.current_step) == current_user.role
+        if current_user.is_superuser or form_role_at_step(f.form_type, f.current_step) == _effective_supply_role(db, current_user)
     ]
     names = _names_map(db, {f.created_by for f in todo})
     return Response.ok([_to_out(f, names.get(f.created_by, "")) for f in todo])
@@ -328,7 +339,7 @@ def approve_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    _ensure_current_approver(form, current_user)
+    _ensure_current_approver(db, form, current_user)
 
     step = form.current_step
     db.add(
@@ -336,7 +347,7 @@ def approve_form(
             form_id=form.id,
             approver_id=current_user.id,
             step=step,
-            approver_role=current_user.role.value,
+            approver_role=_effective_supply_role(db, current_user).value,
             action=ApprovalAction.APPROVE,
             comment=payload.comment or "",
             signature_snapshot=current_user.signature,  # 自动电子签章
@@ -363,14 +374,14 @@ def reject_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    _ensure_current_approver(form, current_user)
+    _ensure_current_approver(db, form, current_user)
 
     db.add(
         ApprovalFormAction(
             form_id=form.id,
             approver_id=current_user.id,
             step=form.current_step,
-            approver_role=current_user.role.value,
+            approver_role=_effective_supply_role(db, current_user).value,
             action=ApprovalAction.REJECT,
             comment=payload.comment,
             signature_snapshot=None,

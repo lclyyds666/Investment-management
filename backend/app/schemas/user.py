@@ -1,8 +1,28 @@
 """用户相关 Pydantic schema。"""
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.core.config import settings
-from app.core.enums import Role, role_label
+from app.core.enums import CompanyCode, Role, role_label
+
+
+class CompanyRoleAssignment(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    company_code: CompanyCode
+    role: Role
+
+
+def _validate_unique_companies(assignments: list[CompanyRoleAssignment] | None) -> None:
+    if assignments is None:
+        return
+    company_codes = [assignment.company_code for assignment in assignments]
+    if len(company_codes) != len(set(company_codes)):
+        raise ValueError("同一公司只能分配一个角色")
+
+
+def _validate_admin_identity(role: Role, is_superuser: bool) -> None:
+    if (role == Role.INFO_MAINTAINER) != is_superuser:
+        raise ValueError("信息维护与超级管理员必须是同一个角色和账号身份")
 
 
 class UserBase(BaseModel):
@@ -15,6 +35,13 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
     is_superuser: bool = False
+    company_roles: list[CompanyRoleAssignment] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_company_roles_and_identity(self):
+        _validate_unique_companies(self.company_roles)
+        _validate_admin_identity(self.role, self.is_superuser)
+        return self
 
 
 class UserUpdate(BaseModel):
@@ -25,6 +52,14 @@ class UserUpdate(BaseModel):
     department: str | None = None
     is_active: bool | None = None
     is_superuser: bool | None = None
+    company_roles: list[CompanyRoleAssignment] | None = None
+
+    @model_validator(mode="after")
+    def validate_company_roles_and_identity(self):
+        _validate_unique_companies(self.company_roles)
+        if self.role is not None and self.is_superuser is not None:
+            _validate_admin_identity(self.role, self.is_superuser)
+        return self
 
 
 class ActiveUpdate(BaseModel):
@@ -59,6 +94,7 @@ class UserOut(UserBase):
     id: int
     is_active: bool
     is_superuser: bool
+    company_roles: list[CompanyRoleAssignment] = Field(default_factory=list)
     signature: str | None = None
 
     @computed_field
@@ -84,6 +120,7 @@ class UserBrief(BaseModel):
     department: str = ""
     is_active: bool
     is_superuser: bool
+    company_roles: list[CompanyRoleAssignment] = Field(default_factory=list)
     # 参与 has_signature 计算，但不序列化到列表输出（避免返回大体积签名）
     signature: str | None = Field(default=None, exclude=True)
 

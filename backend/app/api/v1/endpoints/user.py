@@ -7,13 +7,14 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, require_superuser
 from app.core.config import settings
-from app.core.enums import Role
+from app.core.enums import CompanyCode, Role
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
+from app.models.portal import UserCompanyRole
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.user import (
@@ -117,10 +118,10 @@ def list_users(
     role: Role | None = None,
     is_active: bool | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(require_superuser),
 ):
     """按审批链角色排序展示人员，支持关键字（账号/姓名/部门）、角色、状态筛选。"""
-    stmt = select(User)
+    stmt = select(User).options(selectinload(User.company_roles))
     if keyword:
         like = f"%{keyword.strip()}%"
         stmt = stmt.where(
@@ -148,18 +149,26 @@ def create_user(
         raise HTTPException(status_code=400, detail="登录账号不能为空")
     if db.scalar(select(User).where(User.username == uname)):
         raise HTTPException(status_code=400, detail="登录账号已存在")
+    if payload.role == Role.INFO_MAINTAINER and _information_maintainer_exists(db):
+        raise HTTPException(status_code=400, detail="系统只能保留一个信息维护超级管理员账号")
+
+    legacy_role = _managed_legacy_role(
+        payload.role,
+        payload.is_superuser,
+        payload.company_roles,
+    )
     user = User(
         username=uname,
         full_name=payload.full_name,
-        role=payload.role,
+        role=legacy_role,
         department=payload.department,
         is_superuser=payload.is_superuser,
         is_active=True,
         hashed_password=hash_password(payload.password),
+        company_roles=_company_role_models(payload.company_roles),
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    _commit_and_refresh(db, user)
     return Response.ok(UserOut.model_validate(user), message="用户创建成功")
 
 
@@ -170,10 +179,43 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_superuser),
 ):
-    user = db.get(User, uid)
+    user = db.scalar(
+        select(User)
+        .options(selectinload(User.company_roles))
+        .where(User.id == uid)
+    )
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     data = payload.model_dump(exclude_unset=True)
+    assignments = payload.company_roles
+    effective_assignments = assignments if assignments is not None else user.company_roles
+    requested_role = data.get("role", user.role)
+    requested_superuser = data.get("is_superuser", user.is_superuser)
+
+    if user.role == Role.INFO_MAINTAINER or user.is_superuser:
+        if requested_role != Role.INFO_MAINTAINER or not requested_superuser:
+            raise HTTPException(
+                status_code=400,
+                detail="信息维护与超级管理员是同一个固定账号身份，不能拆分或取消",
+            )
+        legacy_role = Role.INFO_MAINTAINER
+    else:
+        if requested_role == Role.INFO_MAINTAINER or requested_superuser:
+            if requested_role != Role.INFO_MAINTAINER or not requested_superuser:
+                raise HTTPException(
+                    status_code=400,
+                    detail="信息维护与超级管理员必须是同一个角色和账号身份",
+                )
+            if _information_maintainer_exists(db, exclude_user_id=user.id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="系统只能保留一个信息维护超级管理员账号",
+                )
+        legacy_role = _managed_legacy_role(
+            requested_role,
+            requested_superuser,
+            effective_assignments,
+        )
     # 保护：不能取消自己的超管身份 / 停用自己，避免自锁
     if user.id == current_user.id:
         if data.get("is_superuser") is False:
@@ -185,9 +227,12 @@ def update_user(
         if _superuser_count(db) <= 1:
             raise HTTPException(status_code=400, detail="必须至少保留一个超级管理员")
     for field, value in data.items():
+        if field in {"company_roles", "role", "is_superuser"}:
+            continue
         setattr(user, field, value)
-    db.commit()
-    db.refresh(user)
+    user.role = legacy_role
+    user.is_superuser = requested_superuser
+    _commit_and_refresh(db, user, assignments)
     return Response.ok(UserOut.model_validate(user), message="用户已更新")
 
 
@@ -248,3 +293,73 @@ def delete_user(
 
 def _superuser_count(db: Session) -> int:
     return db.scalar(select(func.count()).select_from(User).where(User.is_superuser.is_(True))) or 0
+
+
+def _information_maintainer_exists(
+    db: Session,
+    exclude_user_id: int | None = None,
+) -> bool:
+    stmt = select(User.id).where(
+        or_(User.role == Role.INFO_MAINTAINER, User.is_superuser.is_(True))
+    )
+    if exclude_user_id is not None:
+        stmt = stmt.where(User.id != exclude_user_id)
+    return db.scalar(stmt.limit(1)) is not None
+
+
+def _managed_legacy_role(
+    requested_role: Role,
+    is_superuser: bool,
+    assignments,
+) -> Role:
+    if is_superuser:
+        if requested_role != Role.INFO_MAINTAINER:
+            raise HTTPException(
+                status_code=400,
+                detail="信息维护与超级管理员必须是同一个角色和账号身份",
+            )
+        return Role.INFO_MAINTAINER
+
+    if any(assignment.role == Role.INFO_MAINTAINER for assignment in assignments):
+        raise HTTPException(
+            status_code=400,
+            detail="信息维护是全局超级管理员身份，不能分配为普通用户的公司角色",
+        )
+
+    supply_role = next(
+        (
+            assignment.role
+            for assignment in assignments
+            if CompanyCode(assignment.company_code) == CompanyCode.SUPPLY_MANAGEMENT
+        ),
+        None,
+    )
+    if supply_role is None:
+        raise HTTPException(
+            status_code=400,
+            detail="非超级管理员必须配置供管公司角色",
+        )
+    return supply_role
+
+
+def _company_role_models(assignments) -> list[UserCompanyRole]:
+    return [
+        UserCompanyRole(
+            company_code=CompanyCode(assignment.company_code).value,
+            role=assignment.role,
+        )
+        for assignment in assignments
+    ]
+
+
+def _commit_and_refresh(db: Session, user: User, assignments=None) -> None:
+    try:
+        if assignments is not None:
+            user.company_roles.clear()
+            db.flush()
+            user.company_roles.extend(_company_role_models(assignments))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(user)

@@ -18,7 +18,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="系统共 8 个角色，角色决定可访问模块与所处审批链节点；超级管理员不受角色限制，可审批任意环节。"
+          title="普通用户按公司分别分配角色；供管公司角色同步兼容现有业务权限。信息维护与超级管理员是同一个固定账号身份。"
           class="mb"
         />
         <!-- 服务端筛选：改动即 reload()，参数随 fetch 闭包读取 -->
@@ -32,7 +32,7 @@
             @keyup.enter="reload"
             @clear="reload"
           />
-          <el-select v-model="filters.role" placeholder="角色" clearable style="width: 160px" @change="reload">
+          <el-select v-model="filters.role" placeholder="供管角色" clearable style="width: 160px" @change="reload">
             <el-option v-for="(label, val) in ROLE_LABELS" :key="val" :label="label" :value="val" />
           </el-select>
           <el-select v-model="filters.is_active" placeholder="状态" clearable style="width: 120px" @change="reload">
@@ -44,7 +44,28 @@
       </template>
 
       <template #role="{ row }">
-        <el-tag size="small">{{ row.role_label }}</el-tag>
+        <el-tag v-if="isInformationMaintainer(row)" type="success" size="small">
+          信息维护（超级管理员）
+        </el-tag>
+        <span v-else>普通用户</span>
+      </template>
+      <template #investmentRole="{ row }">
+        <el-tag v-if="companyRole(row, 'investment')" size="small" effect="plain">
+          {{ roleLabel(companyRole(row, 'investment')) }}
+        </el-tag>
+        <span v-else>—</span>
+      </template>
+      <template #supplyRole="{ row }">
+        <el-tag v-if="companyRole(row, 'supplymanagement')" size="small" effect="plain">
+          {{ roleLabel(companyRole(row, 'supplymanagement')) }}
+        </el-tag>
+        <span v-else>—</span>
+      </template>
+      <template #fundRole="{ row }">
+        <el-tag v-if="companyRole(row, 'fundmanagement')" size="small" effect="plain">
+          {{ roleLabel(companyRole(row, 'fundmanagement')) }}
+        </el-tag>
+        <span v-else>—</span>
       </template>
       <template #signature="{ row }">
         <el-tag :type="row.has_signature ? 'success' : 'info'" size="small" effect="plain">
@@ -75,7 +96,7 @@
     </ProTable>
 
     <!-- 新建 / 编辑弹窗 -->
-    <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? '编辑用户' : '新建用户'" width="480px">
+    <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? '编辑用户' : '新建用户'" width="620px">
       <el-form ref="formRef" :model="dialog.form" :rules="formRules" label-width="90px">
         <el-form-item label="登录账号" prop="username">
           <el-input v-model="dialog.form.username" :disabled="dialog.isEdit" placeholder="登录账号" />
@@ -86,17 +107,38 @@
         <el-form-item v-if="!dialog.isEdit" label="初始密码" prop="password">
           <el-input v-model="dialog.form.password" type="password" show-password placeholder="至少 6 位" />
         </el-form-item>
-        <el-form-item label="角色" prop="role">
-          <el-select v-model="dialog.form.role" placeholder="选择角色" style="width: 100%">
-            <el-option v-for="(label, val) in ROLE_LABELS" :key="val" :label="label" :value="val" />
+        <el-form-item
+          v-for="company in MANAGED_COMPANIES"
+          :key="company.code"
+          :label="`${company.label}角色`"
+          :prop="`company_roles.${company.code}`"
+          :rules="company.required && !isInformationMaintainerForm
+            ? [{ required: true, message: `请选择${company.label}角色`, trigger: 'change' }]
+            : []"
+        >
+          <el-select
+            v-model="dialog.form.company_roles[company.code]"
+            :placeholder="company.required ? '必选' : '未加入该公司'"
+            :clearable="!company.required"
+            :disabled="isInformationMaintainerForm"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="(label, val) in ASSIGNABLE_ROLE_LABELS"
+              :key="val"
+              :label="label"
+              :value="val"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="部门" prop="department">
           <el-input v-model="dialog.form.department" placeholder="所属部门" />
         </el-form-item>
         <el-form-item label="超级管理员">
-          <el-switch v-model="dialog.form.is_superuser" />
-          <span class="hint">超管不受角色权限限制，可审批任意环节</span>
+          <el-switch v-model="dialog.form.is_superuser" disabled />
+          <span class="hint">
+            {{ isInformationMaintainerForm ? '信息维护与超级管理员是同一个固定账号身份' : '系统仅保留现有信息维护超级管理员' }}
+          </span>
         </el-form-item>
         <el-form-item v-if="dialog.isEdit" label="账号状态">
           <el-switch v-model="dialog.form.is_active" active-text="启用" inactive-text="停用" />
@@ -114,9 +156,10 @@
 import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Edit, Delete, Search } from '@element-plus/icons-vue'
-import { ROLE_LABELS, ROLES } from '@/constants/business'
+import { ROLE_LABELS, ROLES, roleLabel } from '@/constants/business'
 import { useUserStore } from '@/store/user'
 import {
+  MANAGED_COMPANIES, companyRoleAssignments,
   listUsers, createUser, updateUser, setUserActive, resetUserPassword, deleteUser
 } from '@/api/user'
 import ProTable from '@/components/ProTable.vue'
@@ -125,6 +168,9 @@ const userStore = useUserStore()
 const isSuperuser = ref(userStore.isSuperuser)
 
 const filters = reactive({ keyword: '', role: null, is_active: null })
+const ASSIGNABLE_ROLE_LABELS = Object.fromEntries(
+  Object.entries(ROLE_LABELS).filter(([value]) => value !== ROLES.INFO_MAINTAINER)
+)
 
 const tableRef = ref()
 const reload = () => tableRef.value?.reload()
@@ -144,7 +190,10 @@ const columns = computed(() => {
     { type: 'index', label: '#', width: 56, align: 'center' },
     { prop: 'full_name', label: '姓名', width: 110 },
     { prop: 'username', label: '登录账号', width: 120 },
-    { label: '角色', minWidth: 140, slot: 'role' },
+    { label: '账号身份', minWidth: 180, slot: 'role' },
+    { label: '投资公司角色', minWidth: 150, slot: 'investmentRole' },
+    { label: '供管公司角色', minWidth: 150, slot: 'supplyRole' },
+    { label: '基金公司角色', minWidth: 150, slot: 'fundRole' },
     { prop: 'department', label: '部门', minWidth: 120 },
     { label: '电子签名', width: 100, align: 'center', slot: 'signature' },
     { label: '超管', width: 80, align: 'center', slot: 'superuser' },
@@ -164,12 +213,32 @@ const dialog = reactive({
   editId: null,
   form: {}
 })
+const isInformationMaintainerForm = computed(
+  () => dialog.form.role === ROLES.INFO_MAINTAINER && dialog.form.is_superuser
+)
 
 const formRules = {
   username: [{ required: true, message: '请输入登录账号', trigger: 'blur' }],
   full_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   password: [{ required: true, min: 6, message: '密码至少 6 位', trigger: 'blur' }],
-  role: [{ required: true, message: '请选择角色', trigger: 'change' }]
+}
+
+function companyRole(row, companyCode) {
+  if (isInformationMaintainer(row)) return ''
+  return row.company_roles?.find(item => item.company_code === companyCode)?.role || ''
+}
+
+function companyRoleMap(assignments = []) {
+  return Object.fromEntries(
+    MANAGED_COMPANIES.map(({ code }) => [
+      code,
+      assignments.find(item => item.company_code === code)?.role || null
+    ])
+  )
+}
+
+function isInformationMaintainer(row) {
+  return row.role === ROLES.INFO_MAINTAINER && row.is_superuser
 }
 
 function emptyForm() {
@@ -178,6 +247,9 @@ function emptyForm() {
     full_name: '',
     password: '',
     role: ROLES.BUSINESS_HANDLER,
+    company_roles: companyRoleMap([
+      { company_code: 'supplymanagement', role: ROLES.BUSINESS_HANDLER }
+    ]),
     department: '',
     is_superuser: false,
     is_active: true
@@ -199,6 +271,7 @@ function openEdit(row) {
     username: row.username,
     full_name: row.full_name,
     role: row.role,
+    company_roles: companyRoleMap(isInformationMaintainer(row) ? [] : row.company_roles),
     department: row.department,
     is_superuser: row.is_superuser,
     is_active: row.is_active
@@ -212,22 +285,24 @@ async function onSave() {
   dialog.saving = true
   try {
     if (dialog.isEdit) {
-      await updateUser(dialog.editId, {
+      const payload = {
         full_name: dialog.form.full_name,
-        role: dialog.form.role,
         department: dialog.form.department,
-        is_superuser: dialog.form.is_superuser,
         is_active: dialog.form.is_active
-      })
+      }
+      if (!isInformationMaintainerForm.value) {
+        payload.company_roles = companyRoleAssignments(dialog.form.company_roles)
+      }
+      await updateUser(dialog.editId, payload)
       ElMessage.success('修改成功')
     } else {
       await createUser({
         username: dialog.form.username,
         full_name: dialog.form.full_name,
         password: dialog.form.password,
-        role: dialog.form.role,
         department: dialog.form.department,
-        is_superuser: dialog.form.is_superuser
+        is_superuser: false,
+        company_roles: companyRoleAssignments(dialog.form.company_roles)
       })
       ElMessage.success('创建成功')
     }

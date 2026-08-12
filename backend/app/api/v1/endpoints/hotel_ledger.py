@@ -19,9 +19,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, require_company_resource, require_roles
 from app.core.config import settings
-from app.core.enums import Role
+from app.core.enums import CompanyCode, ResourceCode, Role
 from app.db.session import get_db
 from app.models.hotel_ledger import HotelLedger
 from app.models.user import User
@@ -37,8 +37,11 @@ from app.schemas.hotel_ledger import (
     ParseResult,
 )
 from app.services import hotel_ledger as hl_svc
+from app.services.scenic_config import get_effective_config
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SCENIC_ANALYTICS
+))])
 
 _XLSX_EXT = {".xlsx", ".xls"}
 _MAX_BYTES = 30 * 1024 * 1024
@@ -97,6 +100,10 @@ def _recover_daily_json(row: HotelLedger) -> str:
         info = hl_svc.parse_hotel_file(
             source_path.read_bytes(),
             row.detail_name or row.source_file or stored,
+            scenic_id=row.scenic_id,
+            rate_hexiao=row.rate_hexiao,
+            rate_settle=row.rate_settle,
+            commission_rate=row.commission_rate,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"恢复逐日明细失败：{exc}") from exc
@@ -356,6 +363,7 @@ async def parse_file(
     _: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
+    config = get_effective_config(db, sid)
     if len(files) != 1:
         raise HTTPException(status_code=400, detail="每次仅能上传 1 个对账明细文件（1 文件=1 期，内含多平台）")
     f = files[0]
@@ -378,7 +386,15 @@ async def parse_file(
 
     try:
         async with _PARSE_SEMAPHORE:
-            info = await run_in_threadpool(hl_svc.parse_hotel_file, content, fname)
+            info = await run_in_threadpool(
+                hl_svc.parse_hotel_file,
+                content,
+                fname,
+                scenic_id=sid,
+                rate_hexiao=config.ticket_rate_hexiao,
+                rate_settle=config.ticket_rate_settle,
+                commission_rate=config.ticket_commission_rate,
+            )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"解析失败：{exc}")
     finally:
@@ -428,6 +444,7 @@ def save_ledger(
     current_user: User = Depends(_edit_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
+    config = get_effective_config(db, sid)
     if payload.mode == "replace":
         db.execute(sa_delete(HotelLedger).where(HotelLedger.scenic_id == sid))
         base_no = 0
@@ -438,14 +455,21 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
+        rate_hexiao = r.rate_hexiao if r.rate_hexiao is not None else config.ticket_rate_hexiao
+        rate_settle = r.rate_settle if r.rate_settle is not None else config.ticket_rate_settle
+        commission_rate = (
+            r.commission_rate
+            if r.commission_rate is not None
+            else config.ticket_commission_rate
+        )
         # 逐日重算：有逐日明细则按天累加，否则回退期级公式
         calc = hl_svc.recompute_from_json(
-            r.platform, r.daily_json, r.rate_hexiao, r.rate_settle,
+            r.platform, r.daily_json, rate_hexiao, rate_settle,
             r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
-            r.commission_rate, sid,
+            commission_rate, sid,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
-            r.room_nights, r.rate_hexiao, r.fee_per_night, r.fee_algo, r.rate_settle,
+            r.room_nights, rate_hexiao, r.fee_per_night, r.fee_algo, rate_settle,
             scenic_id=sid,
         )
         hexiao_val = calc["hexiao_amount"]
@@ -469,13 +493,13 @@ def save_ledger(
             room_nights=r.room_nights or 0,
             base_received=r.base_received or Decimal("0"),
             supplier_commission=calc["supplier_commission"],
-            commission_rate=r.commission_rate,
+            commission_rate=commission_rate,
             settle_base=calc["settle_base"],
-            rate_hexiao=r.rate_hexiao,
+            rate_hexiao=rate_hexiao,
             hexiao_amount=hexiao_val,
             fee_algo=r.fee_algo or 1,
             fee_per_night=r.fee_per_night,
-            rate_settle=r.rate_settle,
+            rate_settle=rate_settle,
             service_fee=fee_val,
             jinying_amount=jinying_val,
             daily_json=r.daily_json or "",

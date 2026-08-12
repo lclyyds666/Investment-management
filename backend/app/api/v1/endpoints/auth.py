@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
 from app.core import audit
@@ -78,7 +78,11 @@ def login(
             )
 
     # 3) 账号密码校验
-    user = db.scalar(select(User).where(User.username == username))
+    user = db.scalar(
+        select(User)
+        .options(selectinload(User.company_roles))
+        .where(User.username == username)
+    )
     if not user or not verify_password(form_data.password, user.hashed_password):
         count = login_guard.record_failure(username)
         left = max(0, settings.LOGIN_MAX_FAILURES - count)

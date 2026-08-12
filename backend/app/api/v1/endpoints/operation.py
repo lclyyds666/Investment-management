@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
-from app.core.enums import ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, Role
+from app.api.deps import require_company_resource, require_roles
+from app.core.enums import CompanyCode, ContractStatus, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, ResourceCode, Role
 
 # 经营数据查看：全部非法律顾问 + 超管（这些接口 首页战略总览/大屏 也在用，故不能再排除法务风控）
 _view_guard = require_roles(
@@ -35,12 +35,19 @@ from app.services import financial as financial_svc
 
 router = APIRouter()
 
+_dashboard_resource_guard = require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_DASHBOARD
+)
+_operation_resource_guard = require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_OPERATION
+)
+
 
 @router.get(
     "/dashboard",
     response_model=Response[DashboardData],
     summary="经营数据看板聚合",
-    dependencies=[Depends(_view_guard)],
+    dependencies=[Depends(_dashboard_resource_guard), Depends(_view_guard)],
 )
 def dashboard(
     year: int = Query(2026, description="统计年份"),
@@ -95,7 +102,7 @@ def dashboard(
     "",
     response_model=Response[list[OperationDataOut]],
     summary="经营数据明细列表",
-    dependencies=[Depends(_view_guard)],
+    dependencies=[Depends(_operation_resource_guard), Depends(_view_guard)],
 )
 def list_operation(
     year: int = Query(2026),
@@ -113,7 +120,7 @@ def list_operation(
     "",
     response_model=Response[OperationDataOut],
     summary="录入经营数据(公司负责人)",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES))],
+    dependencies=[Depends(_operation_resource_guard), Depends(require_roles(*DIRECTOR_ROLES))],
 )
 def create_operation(
     payload: OperationDataCreate,
@@ -133,7 +140,7 @@ def create_operation(
     "/ai-diagnose",
     response_model=Response[dict],
     summary="AI 智能大脑：业务/财务风险诊断与资金投资建议",
-    dependencies=[Depends(_view_guard)],
+    dependencies=[Depends(_operation_resource_guard), Depends(_view_guard)],
 )
 def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
     """聚合真实经营/发票/合同数据，作为 Context 交由 AI 智能体（DeepSeek）产出风险预警与
@@ -172,7 +179,7 @@ def ai_diagnose(year: int = Query(2026), db: Session = Depends(get_db)):
     "/financial",
     response_model=Response[FinancialDashboard],
     summary="经营核心指标与台账服务费图表",
-    dependencies=[Depends(_view_guard)],
+    dependencies=[Depends(_dashboard_resource_guard), Depends(_view_guard)],
 )
 def financial_dashboard(db: Session = Depends(get_db)):
     """返回台账净投入、销售额、毛利润、占用时长及逐期服务费，供经营页与大屏共用。"""
@@ -183,7 +190,7 @@ def financial_dashboard(db: Session = Depends(get_db)):
     "/projects/geo",
     response_model=Response[dict],
     summary="大屏地图点位（项目→城市，数据驱动）",
-    dependencies=[Depends(_view_guard)],
+    dependencies=[Depends(_dashboard_resource_guard), Depends(_view_guard)],
 )
 def projects_geo(
     hub: str = Query("山东省", description="中枢省(飞线汇聚点)"),

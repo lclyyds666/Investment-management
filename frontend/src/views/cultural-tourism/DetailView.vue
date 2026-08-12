@@ -183,7 +183,7 @@ const platformGroups = computed(() => {
 })
 
 function goBack() {
-  router.push('/cultural-tourism')
+  router.push({ name: 'CulturalTourism' })
 }
 </script>
 

@@ -1,57 +1,77 @@
 import { ElMessage } from 'element-plus'
 import router from './router'
+import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
-import { ROLES, LEGAL_COUNSEL_PATHS } from '@/constants/business'
+import { COMPANY_CODES, LEGAL_COUNSEL_PATHS, ROLES } from '@/constants/business'
 
-const TITLE = import.meta.env.VITE_APP_TITLE || '业务平台'
+const TITLE = import.meta.env.VITE_APP_TITLE || '山东出版投资有限公司工作平台'
+const SUPPLY_DASHBOARD_PATH = '/supplymanagement/dashboard'
+const SUPPLY_CONTRACT_PATH = '/supplymanagement/contract'
 
-router.beforeEach(async (to) => {
+export const portalGuard = async (to) => {
   document.title = to.meta?.title ? `${to.meta.title} - ${TITLE}` : TITLE
 
   const userStore = useUserStore()
+  const portalStore = usePortalStore()
 
-  // 公共页面（登录、404）直接放行
   if (to.meta?.public) {
-    // 已登录用户访问登录页则回首页
     if (to.path === '/login' && userStore.isLogin) return { path: '/' }
     return true
   }
 
-  // 未登录 → 跳登录页并带上回跳地址
   if (!userStore.isLogin) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 
-  // 已登录但还没有用户信息（如刷新页面）→ 拉取一次
   if (!userStore.userInfo) {
     try {
       await userStore.fetchUser()
-    } catch (e) {
+    } catch (error) {
       userStore.logout()
       return { path: '/login', query: { redirect: to.fullPath } }
     }
   }
 
-  // 仅超级管理员页面：非超管即便直访 URL 也拦回首页
-  if (to.meta?.requiresSuperuser && !userStore.isSuperuser) {
-    ElMessage.error('该页面仅超级管理员可访问')
-    return { path: '/dashboard' }
+  try {
+    await portalStore.loadPortalContext()
+  } catch (error) {
+    userStore.logout()
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
 
-  // 法律顾问：仅可访问「合同管理 / 审批中心 / 个人设置」，其余直访 URL 一律拦回合同管理
-  if (!userStore.isSuperuser && userStore.role === ROLES.LEGAL_COUNSEL) {
-    if (!LEGAL_COUNSEL_PATHS.includes(to.path)) {
-      return { path: '/contract' }
-    }
-    return true
+  if (to.meta?.company && !portalStore.hasCompany(to.meta.company)) {
+    ElMessage.error('无权访问该公司应用')
+    return { path: '/' }
   }
 
-  // 角色拦截
-  const roles = to.meta?.roles
-  if (roles && roles.length && !userStore.hasRole(roles)) {
+  const isSupplyRoute = to.meta?.company === COMPANY_CODES.SUPPLY_MANAGEMENT
+  if (
+    isSupplyRoute &&
+    !portalStore.isSuperuser &&
+    portalStore.companyRole(COMPANY_CODES.SUPPLY_MANAGEMENT) === ROLES.LEGAL_COUNSEL &&
+    !LEGAL_COUNSEL_PATHS.includes(to.path)
+  ) {
+    return { path: SUPPLY_CONTRACT_PATH }
+  }
+
+  if (to.meta?.resource && !portalStore.hasResource(to.meta.resource)) {
     ElMessage.error('权限不足，无法访问该页面')
-    return { path: '/dashboard' }
+    return { path: SUPPLY_DASHBOARD_PATH }
+  }
+
+  const roles = to.meta?.roles
+  const companyRole = to.meta?.company ? portalStore.companyRole(to.meta.company) : ''
+  if (roles?.length && !portalStore.isSuperuser && !roles.includes(companyRole)) {
+    ElMessage.error('权限不足，无法访问该页面')
+    return { path: SUPPLY_DASHBOARD_PATH }
+  }
+
+  if (to.meta?.requiresSuperuser && !portalStore.isSuperuser) {
+    ElMessage.error('该页面仅超级管理员可访问')
+    return { path: SUPPLY_DASHBOARD_PATH }
   }
 
   return true
-})
+}
+
+router.beforeEach(portalGuard)

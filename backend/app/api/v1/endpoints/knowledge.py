@@ -11,9 +11,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, require_company_resource, require_roles
 from app.core.config import settings
-from app.core.enums import Role
+from app.core.enums import CompanyCode, ResourceCode, Role
 from app.db.session import get_db
 from app.models.knowledge import KnowledgeDoc
 from app.models.user import User
@@ -21,7 +21,9 @@ from app.schemas.common import Response
 from app.schemas.knowledge import KnowledgeDocOut
 from app.services import customer_research as research_svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CONTRACT
+))])
 
 _KB_CATEGORIES = ("公司合同法", "集团企业制度", "法律规范", "其他")
 

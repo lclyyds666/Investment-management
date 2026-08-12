@@ -19,7 +19,7 @@ SYSTEM_COMMISSION_RATE = Decimal("0.06")
 SCENIC_SEEDS = (
     ("quancheng-ouleb", "泉城欧乐堡", 10, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
     ("quanzhou-ouleb", "泉州欧乐堡", 20, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
-    ("fuzhou-ouleb", "福州欧乐堡", 30, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
+    ("fuzhou-ouleb", "福州欧乐堡", 30, SYSTEM_TICKET_PRODUCT, "0.91", "0.95", "0.08", None),
     ("zunyi-zoo", "遵义动物园", 40, "遵义动物园", "0.84", "0.87", "0", "0"),
     ("nanyang-wildlife", "南阳森林野生动物世界", 50, "南阳森林野生动物世界", "0.80", "0.85", "0", "0"),
     ("guanquelou", "鹳雀楼", 60, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),

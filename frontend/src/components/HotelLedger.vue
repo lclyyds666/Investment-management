@@ -175,7 +175,7 @@
           <el-input-number v-model="editForm.base_received" :min="0" :precision="2" :step="1000" controls-position="right" style="width:100%" @update:model-value="markReceivedEdited" />
           <div class="edit-hint">算法自动算出（美团/携程为平台结算毛额），可人工修改；改后核销/结算/待核销随之重算</div>
         </el-form-item>
-        <!-- 服务商佣金算法仅对抖音生效：佣金率可动态调整(默认6%) -->
+        <!-- 服务商佣金算法仅对抖音生效：佣金率可动态调整 -->
         <el-form-item v-if="editRow.platform === '抖音'" label="服务商佣金率">
           <el-input-number v-model="editForm.commissionRatePct" :min="0" :max="100" :precision="2" :step="0.5" controls-position="right" style="width:100%" @update:model-value="onCommissionRateInput" @change="onCommissionRateChange" /><span class="pct-suffix">%</span>
           <div class="edit-hint">仅抖音生效。改佣金率后立即按后端逐日算法刷新佣金及关联金额，点击保存后写入数据库</div>
@@ -252,6 +252,7 @@ import {
   uploadHotelConfirm, approveHotelConfirm, deleteHotelConfirm, fetchHotelConfirmBlob
 } from '@/api/hotelLedger'
 import { downloadBlob } from '@/utils/file'
+import { createHotelDraftRows, createHotelSaveRows } from '@/utils/hotelLedgerDraft'
 import { getScenicById } from '@/constants/scenic'
 import { ROLES } from '@/constants/business'
 import { useUserStore } from '@/store/user'
@@ -267,9 +268,7 @@ const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES
 const canUploadConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
 const canApproveConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
 
-const DEFAULT_RATE_HEXIAO = 0.9
 const DEFAULT_FEE_PER_NIGHT = 44
-const DEFAULT_RATE_SETTLE = 0.94   // 算法2 结算费率默认（结算金额=结算基数×结算费率）
 const DEFAULT_HOTEL_NAME = '郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店'
 
 const loading = ref(false)
@@ -288,8 +287,10 @@ function settleBase(row) {
   const comm = row.platform === '抖音' ? (Number(row.supplier_commission) || 0) : 0
   return round2((Number(row.base_received) || 0) - comm)
 }
-function calcHexiao(row) { return round2(settleBase(row) * DEFAULT_RATE_HEXIAO) }
-function calcFee(row) { return round2((Number(row.room_nights) || 0) * DEFAULT_FEE_PER_NIGHT) }
+function calcHexiao(row) { return round2(settleBase(row) * numberOr(row.rate_hexiao)) }
+function calcFee(row) {
+  return round2((Number(row.room_nights) || 0) * numberOr(row.fee_per_night, DEFAULT_FEE_PER_NIGHT))
+}
 // 佣金未改 → 展示后端「按日期粒度」精准默认核销；改了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
   return Math.abs((Number(row.supplier_commission) || 0) - (Number(row.def_commission) || 0)) < 0.005
@@ -443,36 +444,7 @@ async function onFileChange(file) {
   try {
     const res = await parseHotelFile(props.scenicId, raw)
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
-    draftRows.value = (res.platforms || []).map((p) => ({
-      platform: p.platform,
-      hotel_name: DEFAULT_HOTEL_NAME,
-      check_date_text: p.check_date_text,
-      period_text: p.period_text,
-      period_start: p.period_start,
-      period_end: p.period_end,
-      room_nights: p.room_nights,
-      base_received: p.base_received,
-      supplier_commission: Number(p.suggested_commission) || 0,
-      // 后端「按日期粒度」算出的精准默认值
-      def_commission: Number(p.suggested_commission) || 0,
-      def_hexiao: Number(p.def_hexiao) || 0,
-      def_service_fee: Number(p.def_service_fee) || 0,
-      def_jinying: Number(p.def_jinying) || 0,
-      // 逐日明细透传持久化（编辑改费率/佣金/算法时后端按天重算）
-      daily_json: p.daily_json || '',
-      // 允许按分校准结算金额；后端保持算法1服务费不变并反算景区核销
-      jinying_amount: Number(p.def_jinying) || 0,
-      jinyingEdited: false,
-      payment_amount: 0,
-      payment_date: null,
-      repay_date: null,
-      repay_amount: null,
-      order_count: p.order_count,
-      positive_count: Number(p.positive_count) || 0,
-      source_file: res.source_file,
-      detail_stored: res.detail_stored,
-      detail_name: res.detail_name
-    }))
+    draftRows.value = createHotelDraftRows(res, DEFAULT_HOTEL_NAME, DEFAULT_FEE_PER_NIGHT)
     ElMessage.success(`解析完成：本期 ${draftRows.value.length} 个平台`)
   } catch {
     ElMessage.error('解析失败，请检查文件内容')
@@ -483,26 +455,7 @@ async function onFileChange(file) {
 
 async function onSave() {
   if (!draftRows.value.length) return
-  const rows = draftRows.value.map((r) => ({
-    platform: r.platform, hotel_name: r.hotel_name,
-    check_date_text: r.check_date_text, period_text: r.period_text,
-    period_start: r.period_start, period_end: r.period_end,
-    room_nights: r.room_nights, base_received: r.base_received,
-    supplier_commission: r.supplier_commission || 0,
-    rate_hexiao: DEFAULT_RATE_HEXIAO, fee_per_night: DEFAULT_FEE_PER_NIGHT,
-    daily_json: r.daily_json,
-    // 仅手工校准时上传，后端按算法1反算核销并写入完整快照
-    jinying_amount: r.jinyingEdited ? r.jinying_amount : null,
-    def_commission: r.def_commission,
-    def_hexiao: r.def_hexiao,
-    def_service_fee: r.def_service_fee,
-    def_jinying: r.def_jinying,
-    payment_amount: r.payment_amount || 0,
-    payment_date: r.payment_date,
-    repay_date: r.repay_date, repay_amount: r.repay_amount,
-    order_count: r.order_count, positive_count: r.positive_count, source_file: r.source_file,
-    detail_stored: r.detail_stored, detail_name: r.detail_name
-  }))
+  const rows = createHotelSaveRows(draftRows.value)
   saving.value = true
   try {
     const res = await saveHotelLedger(props.scenicId, rows, 'append')
@@ -524,8 +477,8 @@ const editForm = reactive({
   hotel_name: '',
   base_received: 0, receivedEdited: false,       // 服务商到账/平台毛额(可人工改)
   supplier_commission: 0, room_nights: 0,
-  commissionRatePct: 6, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
-  ratePctHexiao: 90, fee_algo: 1, fee_per_night: 44, ratePctSettle: 94,
+  commissionRatePct: 0, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
+  ratePctHexiao: 0, fee_algo: 1, fee_per_night: 44, ratePctSettle: 0,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false,
   payment_amount: 0, payment_date: null, repay_date: null, repay_amount: null,
@@ -597,13 +550,13 @@ function openEdit(row) {
   editForm.base_received = Number(row.base_received) || 0
   editForm.receivedEdited = false
   editForm.supplier_commission = Number(row.supplier_commission) || 0
-  editForm.commissionRatePct = round2(numberOr(row.commission_rate, 0.06) * 100)
+  editForm.commissionRatePct = round2(numberOr(row.commission_rate) * 100)
   editForm.commissionEdited = false
   editForm.room_nights = Number(row.room_nights) || 0
-  editForm.ratePctHexiao = round2(numberOr(row.rate_hexiao, DEFAULT_RATE_HEXIAO) * 100)
+  editForm.ratePctHexiao = round2(numberOr(row.rate_hexiao) * 100)
   editForm.fee_algo = Number(row.fee_algo) || 1
   editForm.fee_per_night = numberOr(row.fee_per_night, DEFAULT_FEE_PER_NIGHT)
-  editForm.ratePctSettle = round2(numberOr(row.rate_settle, DEFAULT_RATE_SETTLE) * 100)
+  editForm.ratePctSettle = round2(numberOr(row.rate_settle) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
   editForm.hexiaoEdited = false
   editForm.jinying_amount = Number(row.jinying_amount) || 0

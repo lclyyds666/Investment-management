@@ -6,10 +6,11 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.enums import Role
+from app.core.enums import CompanyCode, ResourceCode, Role
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
+from app.services.permissions import get_company_role, has_resource
 
 # tokenUrl 用于 Swagger 的 Authorize 按钮
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login")
@@ -45,14 +46,45 @@ def require_roles(*roles: Role):
     """
     allowed: Iterable[Role] = roles
 
-    def checker(current_user: User = Depends(get_current_user)) -> User:
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
         if current_user.is_superuser:
             return current_user
-        if current_user.role not in allowed:
+        company_role = get_company_role(db, current_user, CompanyCode.SUPPLY_MANAGEMENT)
+        if company_role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="权限不足，无法访问该资源",
             )
+        return current_user
+
+    return checker
+
+
+def require_company_resource(company: CompanyCode, resource: ResourceCode):
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not has_resource(db, current_user, company, resource):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        return current_user
+
+    return checker
+
+
+def require_any_company_resource(company: CompanyCode, *resources: ResourceCode):
+    if not resources:
+        raise ValueError("at least one resource is required")
+
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if not any(has_resource(db, current_user, company, resource) for resource in resources):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return current_user
 
     return checker

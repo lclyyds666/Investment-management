@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from app.core.config import settings
+from app.services.deepseek_chat import deepseek_client_options
 
 logger = logging.getLogger("app.ai_agent")
 
@@ -84,11 +85,7 @@ def _build_user_prompt(m: dict[str, Any]) -> str:
 def _diagnose_by_llm(metrics: dict[str, Any]) -> dict[str, Any]:
     from openai import OpenAI
 
-    client = OpenAI(
-        api_key=settings.DEEPSEEK_API_KEY,
-        base_url=settings.DEEPSEEK_BASE_URL,
-        timeout=settings.AI_TIMEOUT_SECONDS,
-    )
+    client = OpenAI(**deepseek_client_options())
     resp = client.chat.completions.create(
         model=settings.DEEPSEEK_MODEL,
         messages=[

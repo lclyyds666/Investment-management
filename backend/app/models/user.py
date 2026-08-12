@@ -1,7 +1,7 @@
 """用户模型（含组织架构与电子签名资产）。"""
 from sqlalchemy import Boolean, Enum as SAEnum, String, Text
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import Role
 from app.db.base import Base
@@ -13,6 +13,10 @@ SignatureText = Text().with_variant(MEDIUMTEXT, "mysql")
 
 class User(Base):
     __tablename__ = "sys_user"
+
+    company_roles: Mapped[list["UserCompanyRole"]] = relationship(
+        "UserCompanyRole", back_populates="user", cascade="all, delete-orphan"
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
     username: Mapped[str] = mapped_column(

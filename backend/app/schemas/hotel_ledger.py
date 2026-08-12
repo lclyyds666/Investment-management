@@ -15,6 +15,9 @@ class ParsedPlatform(BaseModel):
     positive_count: int = 0                        # 结算/实收为正数的订单数(核销率分子)
     base_received: Decimal = Decimal("0")          # 抖音=服务商到账;美团/携程=平台结算毛额
     suggested_commission: Decimal = Decimal("0")   # 抖音佣金建议值(可改);其他=0
+    commission_rate: Decimal                         # 本次解析采用的景区配置快照
+    rate_hexiao: Decimal
+    rate_settle: Decimal
     # 按日期粒度逐日计算后累加的精准默认值
     def_hexiao: Decimal = Decimal("0")
     def_service_fee: Decimal = Decimal("0")
@@ -45,11 +48,11 @@ class HotelSaveRow(BaseModel):
     room_nights: int = 0
     base_received: Decimal = Decimal("0")
     supplier_commission: Decimal = Decimal("0")
-    commission_rate: Decimal = Field(default=Decimal("0.06"))  # 服务商佣金率(仅抖音,默认0.06)
-    rate_hexiao: Decimal = Field(default=Decimal("0.90"))
+    commission_rate: Optional[Decimal] = None       # 缺省时由保存接口读取景区配置
+    rate_hexiao: Optional[Decimal] = None
     fee_per_night: Decimal = Field(default=Decimal("44.00"))
     fee_algo: int = 1                                # 服务费算法(1=间夜×每间夜服务费;2=结算−核销)
-    rate_settle: Decimal = Field(default=Decimal("0.94"))  # 结算费率(算法2)
+    rate_settle: Optional[Decimal] = None           # 缺省时由保存接口读取景区配置
     jinying_amount: Optional[Decimal] = None        # 结算金额：可手工校准；算法1据此反算核销，算法2据此计算服务费
     payment_date: Optional[date] = None             # 付款日期(手工,每期共享)
     # 按日期粒度算出的精准默认值（透传，未改佣金/费率时直接采用）

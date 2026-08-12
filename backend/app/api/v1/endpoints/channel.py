@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_roles
-from app.core.enums import DIRECTOR_ROLES
+from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.core.enums import CompanyCode, DIRECTOR_ROLES, ResourceCode
 from app.db.session import get_db
 from app.models.channel import Channel, ChannelData
 from app.models.user import User
@@ -14,7 +14,9 @@ from app.schemas.channel import (
 from app.schemas.common import Response
 from app.services.channel_etl import sync_channel_to_operation
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_company_resource(
+    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_OPERATION
+))])
 
 
 @router.get("", response_model=Response[list[ChannelOut]], summary="渠道平台列表")

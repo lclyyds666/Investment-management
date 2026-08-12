@@ -2,6 +2,24 @@
 from enum import Enum
 
 
+class CompanyCode(str, Enum):
+    INVESTMENT = "investment"
+    SUPPLY_MANAGEMENT = "supplymanagement"
+    FUND_MANAGEMENT = "fundmanagement"
+
+
+class ResourceCode(str, Enum):
+    PORTAL = "portal"
+    SUPPLY_DASHBOARD = "supply.dashboard"
+    SUPPLY_OPERATION = "supply.operation"
+    SCENIC_ANALYTICS = "supply.scenic.analytics"
+    SUPPLY_FINANCE = "supply.finance"
+    SUPPLY_CONTRACT = "supply.contract"
+    SUPPLY_APPROVAL = "supply.approval"
+    SUPPLY_CUSTOMER = "supply.customer"
+    SUPPLY_ADMIN = "supply.admin"
+
+
 class Role(str, Enum):
     """系统角色。
 
