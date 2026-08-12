@@ -7,12 +7,13 @@ export function buildOrganizationTree(rows = []) {
   flatten(rows)
   const byId = new Map(flatRows.filter(row => row.id != null).map(row => [String(row.id), row]))
   const byCode = new Map(flatRows.filter(row => row.code).map(row => [row.code, row]))
+  const resolveParent = row => row.parent_id != null
+    ? byId.get(String(row.parent_id))
+    : (row.parent_code ? byCode.get(row.parent_code) : null)
   const roots = []
   for (const row of flatRows) {
-    const parent = row.parent_id != null
-      ? byId.get(String(row.parent_id))
-      : (row.parent_code ? byCode.get(row.parent_code) : null)
-    if (!parent || parent === row || createsCycle(row, parent, byId)) roots.push(row)
+    const parent = resolveParent(row)
+    if (!parent || createsCycle(row, parent, resolveParent)) roots.push(row)
     else parent.children.push(row)
   }
   const sortNodes = nodes => nodes
@@ -21,15 +22,13 @@ export function buildOrganizationTree(rows = []) {
   return sortNodes(roots)
 }
 
-function createsCycle(row, parent, byId) {
-  const rowId = row.id == null ? null : String(row.id)
+function createsCycle(row, parent, resolveParent) {
   const visited = new Set()
   let cursor = parent
   while (cursor) {
-    const cursorId = cursor.id == null ? null : String(cursor.id)
-    if (cursorId === rowId || visited.has(cursorId)) return true
-    visited.add(cursorId)
-    cursor = cursor.parent_id == null ? null : byId.get(String(cursor.parent_id))
+    if (cursor === row || visited.has(cursor)) return true
+    visited.add(cursor)
+    cursor = resolveParent(cursor)
   }
   return false
 }

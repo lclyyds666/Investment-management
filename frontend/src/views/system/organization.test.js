@@ -31,6 +31,22 @@ describe('organization hierarchy and form rules', () => {
     ])
     expect(result.map(item => item.code)).toEqual(['cycle-b', 'cycle-a', 'missing'])
   })
+  it('keeps parent_code cycles as unique stable roots', () => {
+    const result = buildOrganizationTree([
+      { id: 1, code: 'fallback-a', parent_code: 'fallback-b', sort_order: 2 },
+      { id: 2, code: 'fallback-b', parent_code: 'fallback-a', sort_order: 1 }
+    ])
+    expect(result.map(item => item.code)).toEqual(['fallback-b', 'fallback-a'])
+    expect(result.flatMap(item => [item.code, ...item.children.map(child => child.code)])).toEqual(['fallback-b', 'fallback-a'])
+  })
+  it('keeps mixed parent_id and parent_code cycles as unique stable roots', () => {
+    const result = buildOrganizationTree([
+      { id: 1, code: 'mixed-a', parent_code: 'mixed-b', sort_order: 2 },
+      { id: 2, code: 'mixed-b', parent_id: 1, sort_order: 1 }
+    ])
+    expect(result.map(item => item.code)).toEqual(['mixed-b', 'mixed-a'])
+    expect(result.flatMap(item => [item.code, ...item.children.map(child => child.code)])).toEqual(['mixed-b', 'mixed-a'])
+  })
   it('normalizes stale company parents and submits the reasoned payload', async () => {
     tree.value = buildOrganizationTree([{ id: 1, parent_id: null, code: 'supply', name: '供管', organization_type: 'company', sort_order: 1 }])
     saveOrganization.mockResolvedValue({ id: 4 })
