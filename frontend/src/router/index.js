@@ -59,13 +59,13 @@ const routes = [
       {
         path: 'directory',
         name: 'SystemDirectory',
-        component: () => import('@/views/portal/ConstructionView.vue'),
+        component: () => import('@/views/system/directory.vue'),
         meta: { permission: 'organization.directory.view', title: '组织通讯录', icon: 'OfficeBuilding' }
       },
       {
         path: 'organization',
         name: 'SystemOrganization',
-        component: () => import('@/views/portal/ConstructionView.vue'),
+        component: () => import('@/views/system/organization.vue'),
         meta: { requiresSuperuser: true, title: '组织管理', icon: 'OfficeBuilding' }
       },
       {

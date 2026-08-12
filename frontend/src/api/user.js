@@ -1,17 +1,5 @@
 import request from './request'
 
-export const MANAGED_COMPANIES = [
-  { code: 'investment', label: '投资公司', required: false },
-  { code: 'supplymanagement', label: '供管公司', required: true },
-  { code: 'fundmanagement', label: '基金公司', required: false }
-]
-
-export function companyRoleAssignments(roleByCompany) {
-  return MANAGED_COMPANIES
-    .filter(({ code }) => roleByCompany[code])
-    .map(({ code }) => ({ company_code: code, role: roleByCompany[code] }))
-}
-
 /** 当前用户资料（含签名） */
 export function getMe() {
   return request.get('/users/me')
@@ -32,7 +20,7 @@ export function changeMyUsername(newUsername, password) {
   return request.put('/users/me/username', { new_username: newUsername, password })
 }
 
-/** 用户列表 / 组织架构（role 筛选兼容供管公司旧角色） */
+/** 用户列表 / 组织架构 */
 export function listUsers(params = {}) {
   return request.get('/users', { params })
 }
