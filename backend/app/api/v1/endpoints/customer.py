@@ -4,8 +4,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
-from app.core.enums import CompanyCode, ResourceCode, Role
+from app.api.deps import require_permission
+from app.core.enums import CompanyCode
 from app.core.masking import mask_phone
 from app.db.session import get_db
 from app.models.customer import Customer
@@ -14,18 +14,15 @@ from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.customer import CustomerCreate, CustomerOut, CustomerUpdate
 from app.services import customer_research as research_svc
+from app.services.assignment_permissions import PermissionContext
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CUSTOMER
-))])
+router = APIRouter()
 
-# 可维护客户档案(新建/编辑/删除/资料上传删除/生成尽调)的角色：业务经办 + 信息维护(超管)
-WRITE_ROLES = (Role.BUSINESS_HANDLER,)
-# 客户准入资料 查看/下载 角色：除财务复核、法律顾问外 + 超管
-MATERIAL_VIEW_ROLES = (
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR,
-    Role.FINANCE_HANDLER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-)
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.customer.view", _supply_context)
+_create_guard = require_permission("supply.customer.create", _supply_context)
+_update_guard = require_permission("supply.customer.update", _supply_context)
+_delete_guard = require_permission("supply.customer.delete", _supply_context)
 
 
 def _dump_files(payload_dict: dict) -> dict:
@@ -38,7 +35,7 @@ def _dump_files(payload_dict: dict) -> dict:
 
 
 @router.get("", response_model=Response[list[CustomerOut]], summary="客户列表")
-def list_customers(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_customers(db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     """列表默认对联系电话脱敏（138****5678），明文仅在详情页按需返回。
 
     material_count 取自 biz_customer_material（编辑上传即入此表，查看/AI 同源），
@@ -61,7 +58,7 @@ def list_customers(db: Session = Depends(get_db), _: User = Depends(get_current_
 
 
 @router.get("/{cid}", response_model=Response[CustomerOut], summary="客户详情")
-def get_customer(cid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_customer(cid: int, db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     c = db.get(Customer, cid)
     if not c:
         raise HTTPException(status_code=404, detail="客户不存在")
@@ -70,7 +67,7 @@ def get_customer(cid: int, db: Session = Depends(get_db), _: User = Depends(get_
 
 @router.post(
     "", response_model=Response[CustomerOut], summary="新建客户",
-    dependencies=[Depends(require_roles(*WRITE_ROLES))],
+    dependencies=[Depends(_create_guard)],
 )
 def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)):
     if db.scalar(select(Customer).where(Customer.customer_code == payload.customer_code)):
@@ -84,7 +81,7 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)):
 
 @router.put(
     "/{cid}", response_model=Response[CustomerOut], summary="修改客户",
-    dependencies=[Depends(require_roles(*WRITE_ROLES))],
+    dependencies=[Depends(_update_guard)],
 )
 def update_customer(cid: int, payload: CustomerUpdate, db: Session = Depends(get_db)):
     c = db.get(Customer, cid)
@@ -99,7 +96,7 @@ def update_customer(cid: int, payload: CustomerUpdate, db: Session = Depends(get
 
 @router.delete(
     "/{cid}", response_model=Response[dict], summary="删除客户",
-    dependencies=[Depends(require_roles(*WRITE_ROLES))],
+    dependencies=[Depends(_delete_guard)],
 )
 def delete_customer(cid: int, db: Session = Depends(get_db)):
     c = db.get(Customer, cid)
@@ -144,7 +141,7 @@ def _research_out(r: CustomerResearch) -> dict:
 
 
 @router.get("/{cid}/materials", response_model=Response[list[dict]], summary="客户准入资料列表(除财务复核/法律顾问)")
-def list_materials(cid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*MATERIAL_VIEW_ROLES))):
+def list_materials(cid: int, db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     rows = db.scalars(
         select(CustomerMaterial).where(CustomerMaterial.customer_id == cid).order_by(CustomerMaterial.id.desc())
     ).all()
@@ -156,7 +153,7 @@ async def upload_materials(
     cid: int,
     files: list[UploadFile] = File(..., description="准入资料，可多选 .pdf / .docx / .xlsx"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(*WRITE_ROLES)),
+    current_user: User = Depends(_update_guard),
 ):
     """批量上传即解析：逐个提取文本 + 正则抽取关键信息；原始文件另存磁盘。
 
@@ -227,7 +224,7 @@ async def upload_materials(
 
 @router.get("/{cid}/materials/{mid}/download", summary="下载准入资料原件(除财务复核/法律顾问)")
 def download_material(
-    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*MATERIAL_VIEW_ROLES))
+    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(_view_guard)
 ):
     m = db.get(CustomerMaterial, mid)
     if not m or m.customer_id != cid:
@@ -240,7 +237,7 @@ def download_material(
 
 @router.delete("/{cid}/materials/{mid}", response_model=Response[dict], summary="删除准入资料(业务经办/超管)")
 def delete_material(
-    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*WRITE_ROLES))
+    cid: int, mid: int, db: Session = Depends(get_db), _: User = Depends(_delete_guard)
 ):
     m = db.get(CustomerMaterial, mid)
     if not m or m.customer_id != cid:
@@ -257,7 +254,7 @@ def delete_material(
 
 
 @router.get("/{cid}/research", response_model=Response[dict | None], summary="获取最近一次尽调报告(除财务复核/法律顾问)")
-def get_research(cid: int, db: Session = Depends(get_db), _: User = Depends(require_roles(*MATERIAL_VIEW_ROLES))):
+def get_research(cid: int, db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     r = db.scalar(
         select(CustomerResearch).where(CustomerResearch.customer_id == cid).order_by(CustomerResearch.id.desc())
     )
@@ -265,7 +262,7 @@ def get_research(cid: int, db: Session = Depends(get_db), _: User = Depends(requ
 
 
 @router.post("/{cid}/research", response_model=Response[dict], summary="生成 AI 尽职调查报告(业务经办/超管)")
-def generate_research(cid: int, db: Session = Depends(get_db), current_user: User = Depends(require_roles(*WRITE_ROLES))):
+def generate_research(cid: int, db: Session = Depends(get_db), current_user: User = Depends(_update_guard)):
     """融合内部准入资料 + 博查外部资讯，经 DeepSeek 综合出四段式尽调报告并标注来源。
 
     耗时可能 20-60s（解析已在上传时完成，此处为搜索 + 大模型综合）。

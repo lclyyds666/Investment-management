@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
-from app.core.enums import CompanyCode, DIRECTOR_ROLES, ResourceCode
+from app.api.deps import require_permission
+from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.channel import Channel, ChannelData
 from app.models.user import User
@@ -13,21 +13,24 @@ from app.schemas.channel import (
 )
 from app.schemas.common import Response
 from app.services.channel_etl import sync_channel_to_operation
+from app.services.assignment_permissions import PermissionContext
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_OPERATION
-))])
+router = APIRouter()
+
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.channel.view", _supply_context)
+_configure_guard = require_permission("supply.channel.configure", _supply_context)
 
 
 @router.get("", response_model=Response[list[ChannelOut]], summary="渠道平台列表")
-def list_channels(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_channels(db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     rows = db.scalars(select(Channel).order_by(Channel.sort_order, Channel.id)).all()
     return Response.ok([ChannelOut.model_validate(r) for r in rows])
 
 
 @router.post(
     "", response_model=Response[ChannelOut], summary="新增渠道平台",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES))],
+    dependencies=[Depends(_configure_guard)],
 )
 def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)):
     ch = Channel(**payload.model_dump())
@@ -39,7 +42,7 @@ def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)):
 
 @router.put(
     "/{cid}", response_model=Response[ChannelOut], summary="修改渠道平台",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES))],
+    dependencies=[Depends(_configure_guard)],
 )
 def update_channel(cid: int, payload: ChannelUpdate, db: Session = Depends(get_db)):
     ch = db.get(Channel, cid)
@@ -54,7 +57,7 @@ def update_channel(cid: int, payload: ChannelUpdate, db: Session = Depends(get_d
 
 @router.delete(
     "/{cid}", response_model=Response[dict], summary="删除渠道平台",
-    dependencies=[Depends(require_roles(*DIRECTOR_ROLES))],
+    dependencies=[Depends(_configure_guard)],
 )
 def delete_channel(cid: int, db: Session = Depends(get_db)):
     ch = db.get(Channel, cid)
@@ -66,7 +69,7 @@ def delete_channel(cid: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{cid}/data", response_model=Response[ChannelDataOut], summary="渠道回传数据")
-def get_channel_data(cid: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_channel_data(cid: int, db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     ch = db.get(Channel, cid)
     if not ch:
         raise HTTPException(status_code=404, detail="渠道不存在")
@@ -81,7 +84,7 @@ def import_channel_data(
     cid: int,
     payload: ChannelDataIn,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_configure_guard),
 ):
     """导入外部导出的表格数据（列 + 行 + 列映射），覆盖式保存；若配置了映射，
     则按映射把数据汇入经营数据表（biz_operation_data），联动首页与大屏图表。"""

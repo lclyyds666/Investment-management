@@ -12,7 +12,7 @@
 流程：
 - 业务经办创建草稿并「提交审批」：自动完成第 0 级（附加本人电子签名），
   合同进入 pending，current_step=1（供管公司负责人），进入待审批。
-- 后续每一级：仅当前 current_step 对应角色（或超管）可「通过」，
+- 后续每一级：仅具备动作权限且匹配 current_step 对应岗位的用户可「通过」，
   通过时自动附加本人电子签名快照，随后 current_step+1；走完末级即 approved。
 - 任一级可「驳回」（原因必填），合同置为 rejected，全程审批记录留存作审计。
 """
@@ -26,14 +26,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.api.deps import get_current_user, require_permission
 from app.core.config import settings
 from app.core.enums import (
     APPROVAL_CHAIN,
     ApprovalAction,
     ContractStatus,
     CompanyCode,
-    ResourceCode,
     Role,
     is_final_step,
     role_at_step,
@@ -48,14 +47,30 @@ from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 from app.services import contract_review as review_svc
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
-from app.services.permissions import get_company_role
+from app.services.assignment_permissions import PermissionContext, has_permission, has_position
 
 _OPINION_ROLES = {r for r, _ in legal_doc_svc.OPINION_ROLES}
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CONTRACT
-))])
+router = APIRouter()
+
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.contract.view", _supply_context)
+_create_guard = require_permission("supply.contract.create", _supply_context)
+_update_guard = require_permission("supply.contract.update", _supply_context)
+_delete_guard = require_permission("supply.contract.delete", _supply_context)
+_submit_guard = require_permission("supply.contract.submit", _supply_context)
+_approve_guard = require_permission("supply.contract.approve", _supply_context)
+_return_guard = require_permission("supply.contract.return", _supply_context)
+_export_guard = require_permission("supply.contract.export", _supply_context)
+
+_ROLE_POSITIONS = {
+    Role.BUSINESS_HANDLER: "supply.business_handler",
+    Role.SCM_DIRECTOR: "supply.company_leader",
+    Role.LEGAL_COUNSEL: "external.legal_counsel",
+    Role.RISK_AUDITOR: "investment.duty.supply_risk_review",
+    Role.INVEST_DIRECTOR: "governance.supply_leader",
+}
 
 # 合同附件允许的扩展名（与前端 accept 对齐）
 _ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
@@ -86,19 +101,20 @@ def _to_out(contract: Contract, creator_name: str = "") -> ContractOut:
 
 
 def _effective_supply_role(db: Session, user: User) -> Role | None:
-    return user.role if user.is_superuser else get_company_role(
-        db, user, CompanyCode.SUPPLY_MANAGEMENT
+    return next(
+        (role for role, code in _ROLE_POSITIONS.items() if has_position(db, user.id, code)),
+        None,
     )
 
 
 def _ensure_current_approver(db: Session, contract: Contract, user: User) -> Role:
-    """校验合同处于审批中且当前用户是本级审批人（超管放行）。返回本级期望角色。"""
+    """校验合同处于审批中且当前用户是本级审批人。返回本级期望角色。"""
     if contract.status != ContractStatus.PENDING:
         raise HTTPException(status_code=400, detail="该合同当前不处于审批中，无法操作")
     expected = role_at_step(contract.current_step)
     if expected is None:
         raise HTTPException(status_code=400, detail="审批流状态异常")
-    if not user.is_superuser and _effective_supply_role(db, user) != expected:
+    if _effective_supply_role(db, user) != expected:
         raise HTTPException(
             status_code=403,
             detail=f"当前审批环节应由【{expected.label}】处理，您无权审批",
@@ -109,21 +125,21 @@ def _ensure_current_approver(db: Session, contract: Contract, user: User) -> Rol
 # --------------------------------------------------------------------------- #
 # 查询
 # --------------------------------------------------------------------------- #
-@router.get("", response_model=Response[list[ContractOut]], summary="合同列表")
+@router.get("", response_model=Response[list[ContractOut]], summary="合同列表", dependencies=[Depends(_view_guard)])
 def list_contracts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """业务经办仅见本人合同；其余角色（复核/审核/负责人）作为审批与监督方见全部。"""
     stmt = select(Contract).order_by(Contract.id.desc())
-    if not current_user.is_superuser and _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
+    if _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
         stmt = stmt.where(Contract.created_by == current_user.id)
     rows = db.scalars(stmt).all()
     names = _names_map(db, {c.created_by for c in rows})
     return Response.ok([_to_out(c, names.get(c.created_by, "")) for c in rows])
 
 
-@router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同")
+@router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同", dependencies=[Depends(_view_guard)])
 def list_todo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -136,13 +152,13 @@ def list_todo(
     ).all()
     todo = [
         c for c in rows
-        if current_user.is_superuser or role_at_step(c.current_step) == _effective_supply_role(db, current_user)
+        if role_at_step(c.current_step) == _effective_supply_role(db, current_user)
     ]
     names = _names_map(db, {c.created_by for c in todo})
     return Response.ok([_to_out(c, names.get(c.created_by, "")) for c in todo])
 
 
-@router.get("/{contract_id}", response_model=Response[ContractOut], summary="合同详情")
+@router.get("/{contract_id}", response_model=Response[ContractOut], summary="合同详情", dependencies=[Depends(_view_guard)])
 def get_contract(
     contract_id: int,
     db: Session = Depends(get_db),
@@ -157,6 +173,7 @@ def get_contract(
     "/{contract_id}/approvals",
     response_model=Response[list[ApprovalOut]],
     summary="合同审批流转记录（审计日志）",
+    dependencies=[Depends(_view_guard)],
 )
 def list_approvals(
     contract_id: int,
@@ -185,7 +202,7 @@ def list_approvals(
     "",
     response_model=Response[ContractOut],
     summary="新建合同(业务经办)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_create_guard)],
 )
 def create_contract(
     payload: ContractCreate,
@@ -210,7 +227,7 @@ def create_contract(
     "/{contract_id}",
     response_model=Response[ContractOut],
     summary="修改合同(业务经办，仅草稿/驳回态)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_update_guard)],
 )
 def update_contract(
     contract_id: int,
@@ -219,7 +236,7 @@ def update_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能修改本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="当前状态不可修改")
@@ -233,8 +250,7 @@ def update_contract(
 @router.delete(
     "/{contract_id}",
     response_model=Response[dict],
-    summary="删除合同(草稿/驳回态由业务经办删除；已通过合同仅超级管理员可删)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    summary="删除合同(仅本人草稿/驳回态；已审批记录不可删除)",
 )
 def delete_contract(
     contract_id: int,
@@ -243,16 +259,13 @@ def delete_contract(
 ):
     contract = _get_contract_or_404(db, contract_id)
 
-    # 精细化管控：已通过(已审核)合同仅超级管理员可删除，其余角色一律拒绝
     if contract.status == ContractStatus.APPROVED:
-        if not current_user.is_superuser:
-            raise HTTPException(status_code=403, detail="权限不足：仅超级管理员可删除已审核合同")
-        db.delete(contract)
-        db.commit()
-        return Response.ok({"id": contract_id})
+        raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
+    if not has_permission(db, current_user, "supply.contract.delete", _supply_context()):
+        raise HTTPException(status_code=403, detail="权限不足")
 
-    # 其余状态：仅本人创建(超管不限)、且仅草稿/被驳回可删；审批中(pending)不可删
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    # 其余状态：仅本人创建且仅草稿/被驳回可删；审批中(pending)不可删
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能删除本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="仅草稿或被驳回的合同可删除")
@@ -268,7 +281,7 @@ def delete_contract(
     "/{contract_id}/submit",
     response_model=Response[ContractOut],
     summary="提交审批(业务经办)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_submit_guard)],
 )
 def submit_contract(
     contract_id: int,
@@ -276,7 +289,7 @@ def submit_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能提交本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="仅草稿或被驳回的合同可提交")
@@ -304,6 +317,7 @@ def submit_contract(
     "/{contract_id}/approve",
     response_model=Response[ContractOut],
     summary="逐级审批通过（当前环节角色）",
+    dependencies=[Depends(_approve_guard)],
 )
 def approve_contract(
     contract_id: int,
@@ -339,6 +353,7 @@ def approve_contract(
     "/{contract_id}/reject",
     response_model=Response[ContractOut],
     summary="驳回（原因必填，当前环节角色）",
+    dependencies=[Depends(_return_guard)],
 )
 def reject_contract(
     contract_id: int,
@@ -377,7 +392,7 @@ def _attachment_dir(contract_id: int) -> Path:
     "/{contract_id}/attachment",
     response_model=Response[ContractOut],
     summary="上传合同附件(业务经办，覆盖式单附件)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_update_guard)],
 )
 async def upload_attachment(
     contract_id: int,
@@ -386,7 +401,7 @@ async def upload_attachment(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能为本人创建的合同上传附件")
     fname = file.filename or "附件"
     ext = Path(fname).suffix.lower()
@@ -418,10 +433,7 @@ async def upload_attachment(
 
 # 合同附件/法律文书 下载角色：业务经办/业务复核/法务风控/财务经办/供管负责人/投资总经理/法律顾问 + 超管
 # (仅财务复核不可下载)
-_contract_dl_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
-    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR, Role.LEGAL_COUNSEL,
-)
+_contract_dl_guard = _export_guard
 
 
 @router.get("/{contract_id}/attachment", summary="下载合同附件原件(除财务复核)")
@@ -521,7 +533,7 @@ def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
 def ai_review_contract(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_view_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
     contract_text, has_attachment = _contract_text_for_review(contract)

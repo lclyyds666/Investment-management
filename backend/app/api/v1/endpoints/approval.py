@@ -18,11 +18,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.api.deps import get_current_user, require_permission
 from app.core.config import settings
 from app.core.enums import (
     CompanyCode,
-    ResourceCode,
     ApprovalAction,
     ContractStatus,
     ContractType,
@@ -49,20 +48,32 @@ from app.services import approval_print as print_svc
 from app.services import approval_proofread as proof_svc
 from app.services import customer_research as research_svc
 from app.services.num_cn import amount_to_cn
-from app.services.permissions import get_company_role
+from app.services.assignment_permissions import PermissionContext, has_permission, has_position
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _ATTACH_MAX_BYTES = 20 * 1024 * 1024  # ≤ 20MB
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_APPROVAL
-))])
+router = APIRouter()
 
-# 业务审批 查看：全部非法律顾问 + 超管（法律顾问不参与业务审批）
-_view_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
-    Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-)
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.approval.view", _supply_context)
+_create_guard = require_permission("supply.approval.create", _supply_context)
+_update_guard = require_permission("supply.approval.update", _supply_context)
+_delete_guard = require_permission("supply.approval.delete", _supply_context)
+_submit_guard = require_permission("supply.approval.submit", _supply_context)
+_approve_guard = require_permission("supply.approval.approve", _supply_context)
+_return_guard = require_permission("supply.approval.return", _supply_context)
+_export_guard = require_permission("supply.approval.export", _supply_context)
+
+_ROLE_POSITIONS = {
+    Role.BUSINESS_HANDLER: "supply.business_handler",
+    Role.BUSINESS_REVIEWER: "supply.business_reviewer",
+    Role.FINANCE_HANDLER: "supply.finance_handler",
+    Role.SCM_DIRECTOR: "supply.company_leader",
+    Role.RISK_AUDITOR: "investment.duty.supply_risk_review",
+    Role.FINANCE_REVIEWER: "investment.duty.supply_finance_review",
+    Role.INVEST_DIRECTOR: "governance.supply_leader",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -89,19 +100,20 @@ def _to_out(form: ApprovalForm, creator_name: str = "") -> ApprovalFormOut:
 
 
 def _effective_supply_role(db: Session, user: User) -> Role | None:
-    return user.role if user.is_superuser else get_company_role(
-        db, user, CompanyCode.SUPPLY_MANAGEMENT
+    return next(
+        (role for role, code in _ROLE_POSITIONS.items() if has_position(db, user.id, code)),
+        None,
     )
 
 
 def _ensure_current_approver(db: Session, form: ApprovalForm, user: User) -> Role:
-    """校验审批单处于审批中且当前用户是本级审批人（超管放行）。"""
+    """校验审批单处于审批中且当前用户是本级审批人。"""
     if form.status != ContractStatus.PENDING:
         raise HTTPException(status_code=400, detail="该审批单当前不处于审批中，无法操作")
     expected = form_role_at_step(form.form_type, form.current_step)
     if expected is None:
         raise HTTPException(status_code=400, detail="审批流状态异常")
-    if not user.is_superuser and _effective_supply_role(db, user) != expected:
+    if _effective_supply_role(db, user) != expected:
         raise HTTPException(
             status_code=403,
             detail=f"当前审批环节应由【{expected.label}】处理，您无权审批",
@@ -151,7 +163,7 @@ def list_forms(
 ):
     """业务经办仅见本人；其余角色（审批/监督方）见全部。"""
     stmt = select(ApprovalForm).order_by(ApprovalForm.id.desc())
-    if not current_user.is_superuser and _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
+    if _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
         stmt = stmt.where(ApprovalForm.created_by == current_user.id)
     rows = db.scalars(stmt).all()
     names = _names_map(db, {f.created_by for f in rows})
@@ -170,7 +182,7 @@ def list_todo(
     ).all()
     todo = [
         f for f in rows
-        if current_user.is_superuser or form_role_at_step(f.form_type, f.current_step) == _effective_supply_role(db, current_user)
+        if form_role_at_step(f.form_type, f.current_step) == _effective_supply_role(db, current_user)
     ]
     names = _names_map(db, {f.created_by for f in todo})
     return Response.ok([_to_out(f, names.get(f.created_by, "")) for f in todo])
@@ -220,7 +232,7 @@ def list_actions(
     "",
     response_model=Response[ApprovalFormOut],
     summary="新建审批单(业务经办)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_create_guard)],
 )
 def create_form(
     payload: ApprovalFormCreate,
@@ -244,7 +256,7 @@ def create_form(
     "/{form_id}",
     response_model=Response[ApprovalFormOut],
     summary="修改审批单(业务经办，仅草稿/驳回态)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_update_guard)],
 )
 def update_form(
     form_id: int,
@@ -253,7 +265,7 @@ def update_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    if not current_user.is_superuser and form.created_by != current_user.id:
+    if form.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能修改本人创建的审批单")
     if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="当前状态不可修改")
@@ -266,8 +278,7 @@ def update_form(
 @router.delete(
     "/{form_id}",
     response_model=Response[dict],
-    summary="删除审批单(草稿/驳回态由本人删；已通过仅超管可删)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    summary="删除审批单(仅本人草稿/驳回态；已审批记录不可删除)",
 )
 def delete_form(
     form_id: int,
@@ -275,13 +286,14 @@ def delete_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    if form.status == ContractStatus.APPROVED and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="权限不足：仅超级管理员可删除已通过审批单")
-    if form.status != ContractStatus.APPROVED:
-        if not current_user.is_superuser and form.created_by != current_user.id:
-            raise HTTPException(status_code=403, detail="只能删除本人创建的审批单")
-        if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
-            raise HTTPException(status_code=400, detail="仅草稿或被驳回的审批单可删除")
+    if form.status == ContractStatus.APPROVED:
+        raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
+    if not has_permission(db, current_user, "supply.approval.delete", _supply_context()):
+        raise HTTPException(status_code=403, detail="权限不足")
+    if form.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="只能删除本人创建的审批单")
+    if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
+        raise HTTPException(status_code=400, detail="仅草稿或被驳回的审批单可删除")
     db.delete(form)
     db.commit()
     return Response.ok({"id": form_id}, message="审批单已删除")
@@ -294,7 +306,7 @@ def delete_form(
     "/{form_id}/submit",
     response_model=Response[ApprovalFormOut],
     summary="提交审批(业务经办)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_submit_guard)],
 )
 def submit_form(
     form_id: int,
@@ -302,7 +314,7 @@ def submit_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    if not current_user.is_superuser and form.created_by != current_user.id:
+    if form.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能提交本人创建的审批单")
     if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="仅草稿或被驳回的审批单可提交")
@@ -331,6 +343,7 @@ def submit_form(
     "/{form_id}/approve",
     response_model=Response[ApprovalFormOut],
     summary="逐级审批通过（当前环节角色）",
+    dependencies=[Depends(_approve_guard)],
 )
 def approve_form(
     form_id: int,
@@ -366,6 +379,7 @@ def approve_form(
     "/{form_id}/reject",
     response_model=Response[ApprovalFormOut],
     summary="驳回（原因必填，当前环节角色）",
+    dependencies=[Depends(_return_guard)],
 )
 def reject_form(
     form_id: int,
@@ -400,7 +414,7 @@ def reject_form(
     "/{form_id}/attachment",
     response_model=Response[ApprovalFormOut],
     summary="上传合同附件(业务经办，PDF，覆盖式)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_update_guard)],
 )
 async def upload_attachment(
     form_id: int,
@@ -409,7 +423,7 @@ async def upload_attachment(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    if not current_user.is_superuser and form.created_by != current_user.id:
+    if form.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能为本人创建的审批单上传附件")
     fname = file.filename or "附件"
     ext = Path(fname).suffix.lower()
@@ -439,10 +453,7 @@ async def upload_attachment(
 
 
 # 业务审批单附件/打印 下载角色：全部非法律顾问 + 超管
-_approval_dl_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
-    Role.FINANCE_REVIEWER, Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-)
+_approval_dl_guard = _export_guard
 
 
 @router.get("/{form_id}/attachment", summary="下载审批单合同附件原件(非法律顾问)")
@@ -521,7 +532,7 @@ def print_form(
 def proofread_form(
     form_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_view_guard),
 ):
     form = _get_form_or_404(db, form_id)
 

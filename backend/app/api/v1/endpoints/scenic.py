@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
-from app.core.enums import CompanyCode, ResourceCode, Role
+from app.api.deps import require_permission
+from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.scenic import ScenicLedger
 from app.models.scenic_config import ScenicConfig
@@ -24,18 +24,15 @@ from app.schemas.scenic import ScenicLedgerOut, ScenicLedgerRow, ScenicUploadRes
 from app.schemas.scenic_config import ScenicConfigOut, ScenicConfigUpdate
 from app.services import scenic_config as scenic_config_svc
 from app.services.scenic_analytics import ScenicAnalyticsService
+from app.services.assignment_permissions import PermissionContext
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SCENIC_ANALYTICS
-))])
+router = APIRouter()
 
-# 渠道业务(文旅) 查看角色：业务经办/业务复核/财务经办/供管负责人/投资总经理 + 超管
-_view_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
-    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-)
-# 台账变更(上传/清空)：业务经办 + 超管
-_edit_guard = require_roles(Role.BUSINESS_HANDLER)
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.scenic.view", _supply_context)
+_create_guard = require_permission("supply.scenic.create", _supply_context)
+_update_guard = require_permission("supply.scenic.update", _supply_context)
+_delete_guard = require_permission("supply.scenic.delete", _supply_context)
 
 _XLSX_EXT = {".xlsx", ".xls"}
 _MAX_BYTES = 20 * 1024 * 1024  # ≤ 20MB
@@ -148,7 +145,7 @@ def update_config(
     scenic_id: str,
     payload: ScenicConfigUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_edit_guard),
+    current_user: User = Depends(_update_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.get(ScenicConfig, sid)
@@ -210,7 +207,7 @@ async def upload_ledger(
     scenic_id: str,
     file: UploadFile = File(..., description="核销数据 Excel(.xlsx/.xls)，≤20MB"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(_edit_guard),
+    current_user: User = Depends(_create_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     fname = file.filename or "台账.xlsx"
@@ -257,7 +254,7 @@ async def upload_ledger(
 def clear_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
+    _: User = Depends(_delete_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     # 数据隔离：只删该景区，绝不波及其他景区

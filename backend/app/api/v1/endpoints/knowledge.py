@@ -11,19 +11,22 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.api.deps import require_permission
 from app.core.config import settings
-from app.core.enums import CompanyCode, ResourceCode, Role
+from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.knowledge import KnowledgeDoc
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.knowledge import KnowledgeDocOut
 from app.services import customer_research as research_svc
+from app.services.assignment_permissions import PermissionContext
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CONTRACT
-))])
+router = APIRouter()
+
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.contract.view", _supply_context)
+_update_guard = require_permission("supply.contract.update", _supply_context)
 
 _KB_CATEGORIES = ("公司合同法", "集团企业制度", "法律规范", "其他")
 
@@ -33,7 +36,7 @@ def _kb_dir() -> Path:
 
 
 @router.get("", response_model=Response[list[KnowledgeDocOut]], summary="法规知识库列表")
-def list_docs(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_docs(db: Session = Depends(get_db), _: User = Depends(_view_guard)):
     rows = db.scalars(select(KnowledgeDoc).order_by(KnowledgeDoc.id.desc())).all()
     return Response.ok([KnowledgeDocOut.model_validate(r) for r in rows])
 
@@ -44,7 +47,7 @@ async def upload_doc(
     title: str = Form(""),
     category: str = Form("法律规范"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(Role.BUSINESS_HANDLER)),
+    current_user: User = Depends(_update_guard),
 ):
     fname = file.filename or "未命名"
     content = await file.read()
@@ -81,7 +84,7 @@ async def upload_doc(
 
 
 @router.delete("/{doc_id}", response_model=Response[dict], summary="删除法规文件(业务经办/超管)")
-def delete_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(require_roles(Role.BUSINESS_HANDLER))):
+def delete_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(_update_guard)):
     doc = db.get(KnowledgeDoc, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -98,10 +101,7 @@ def delete_doc(doc_id: int, db: Session = Depends(get_db), _: User = Depends(req
 
 
 # 法规文件下载角色：同合同附件（业务经办/业务复核/法务风控/财务经办/供管/总经理/法律顾问 + 超管）
-_kb_dl_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
-    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR, Role.LEGAL_COUNSEL,
-)
+_kb_dl_guard = _view_guard
 
 
 @router.get("/{doc_id}/download", summary="下载法规文件原件(除财务复核)")

@@ -13,14 +13,25 @@ from app.api.deps import require_company_resource, require_roles
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.main import create_app
+from app.api.v1.endpoints.approval import list_todo as list_approval_todo
+from app.api.v1.endpoints.approval_stats import pending_count
+from app.api.v1.endpoints.contract import list_todo as list_contract_todo
 from app.api.v1.endpoints.user import create_user, update_user
-from app.core.enums import AssignmentStatus, CompanyCode, ResourceCode, Role
+from app.core.enums import (
+    AssignmentStatus, CompanyCode, ContractStatus, DataScope, PermissionAction,
+    PositionCategory, ResourceCode, Role,
+)
 from app.db.base import Base
-from app.models.organization import Organization, Position, UserAssignment
+from app.models.organization import (
+    Organization, Permission, Position, PositionPermission, UserAssignment,
+)
 from app.models.portal import UserCompanyRole
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
+from app.models.customer import Customer
+from app.models.invoice import Invoice
 from app.models.operation import OperationData
+from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
 from app.schemas.user import CompanyRoleAssignment, UserCreate, UserOut, UserUpdate
 from app.services.organization_catalog import seed_authorization_catalog
@@ -288,6 +299,155 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         response = self.client.get("/api/v1/approval/pending-count")
 
         self.assertEqual(response.status_code, 403)
+
+    def _set_permission(self, permission_code: str):
+        self.db.query(UserAssignment).filter(UserAssignment.user_id == self.current_user.id).delete()
+        position = self.db.scalar(
+            select(Position).where(Position.code == f"test.{permission_code}")
+        )
+        if position is None:
+            position = Position(
+                code=f"test.{permission_code}",
+                name=permission_code,
+                category=PositionCategory.BUSINESS,
+            )
+            self.db.add(position)
+            self.db.flush()
+            self.db.add(PositionPermission(
+                position_id=position.id,
+                permission_id=self.db.scalar(
+                    select(Permission.id).where(Permission.code == permission_code)
+                ),
+                data_scope=DataScope.COMPANY,
+                scope_ref=CompanyCode.SUPPLY_MANAGEMENT.value,
+            ))
+        self.db.add(UserAssignment(
+            user_id=self.current_user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == "supplymanagement")
+            ),
+            position_id=position.id,
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        self.db.commit()
+
+    def _add_current_user(self):
+        user = User(
+            id=7,
+            username="endpoint-user",
+            full_name="Endpoint User",
+            hashed_password="test",
+            role=Role.UNASSIGNED,
+            is_superuser=False,
+        )
+        self.db.add(user)
+        self.db.commit()
+        self.current_user = user
+
+    def test_mutation_endpoints_require_the_exact_permission_code(self):
+        self._add_current_user()
+        self.db.add_all([
+            Contract(id=1, contract_no="C-1", title="Contract", created_by=7, status=ContractStatus.DRAFT),
+            Customer(id=1, customer_code="CUS-1", name="Customer"),
+            Invoice(id=1, invoice_title="Invoice"),
+            TicketLedger(id=1, scenic_id="demo", row_no=1, confirm_stored="confirm.pdf"),
+        ])
+        self.db.commit()
+        cases = (
+            ("POST", "/api/v1/contracts", "supply.contract.create", {"contract_no": "C-2", "title": "New"}),
+            ("POST", "/api/v1/contracts/1/submit", "supply.contract.submit", None),
+            ("PUT", "/api/v1/customers/1", "supply.customer.update", {"name": "Updated"}),
+            ("POST", "/api/v1/scenic-spots/demo/ticket-ledger", "supply.scenic.create", {"rows": []}),
+            ("POST", "/api/v1/scenic-spots/demo/ticket-ledger/1/confirm/approve", "supply.scenic.review", None),
+            ("PUT", "/api/v1/invoices/1", "supply.finance.update", {"invoice_title": "Updated"}),
+            ("POST", "/api/v1/channels", "supply.channel.configure", {"name": "Channel"}),
+        )
+
+        for method, path, permission_code, payload in cases:
+            with self.subTest(path=path, permission=permission_code):
+                self._set_permission(permission_code)
+                response = self.client.request(method, path, json=payload)
+                self.assertNotEqual(response.status_code, 403, response.text)
+
+                view_code = permission_code.rsplit(".", 1)[0] + ".view"
+                self._set_permission(view_code)
+                denied = self.client.request(method, path, json=payload)
+                self.assertEqual(denied.status_code, 403, denied.text)
+
+    def test_scenic_delete_is_independent_from_scenic_update(self):
+        self._add_current_user()
+        self._set_permission("supply.scenic.update")
+        denied = self.client.delete("/api/v1/scenic-spots/demo/ledger")
+        self.assertEqual(denied.status_code, 403)
+
+        self._set_permission("supply.scenic.delete")
+        allowed = self.client.delete("/api/v1/scenic-spots/demo/ledger")
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_approved_business_records_are_immutable_for_delete(self):
+        self._add_current_user()
+        contract = Contract(
+            id=1, contract_no="APPROVED", title="Approved", created_by=7,
+            status=ContractStatus.APPROVED,
+        )
+        form = ApprovalForm(id=1, form_type="business", created_by=7, status=ContractStatus.APPROVED)
+        self.db.add_all([contract, form])
+        self.db.commit()
+
+        for path, permission_code in (
+            ("/api/v1/contracts/1", "supply.contract.delete"),
+            ("/api/v1/approval-forms/1", "supply.approval.delete"),
+        ):
+            with self.subTest(path=path):
+                self._set_permission(permission_code)
+                response = self.client.delete(path)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["detail"], "已审批业务记录不可删除")
+
+    def test_superuser_without_business_assignment_has_zero_pending_tasks(self):
+        user = User(
+            id=7,
+            username="admin-no-business-role",
+            full_name="Admin",
+            hashed_password="test",
+            role=Role.INFO_MAINTAINER,
+            is_superuser=True,
+        )
+        self.db.add_all([
+            user,
+            Contract(
+                id=1, contract_no="PENDING", title="Pending", created_by=7,
+                status=ContractStatus.PENDING, current_step=1,
+            ),
+            ApprovalForm(
+                id=1, form_type="business", created_by=7,
+                status=ContractStatus.PENDING, current_step=1,
+            ),
+        ])
+        self.db.commit()
+
+        self.assertEqual(list_contract_todo(self.db, user).data, [])
+        self.assertEqual(list_approval_todo(self.db, user).data, [])
+        self.assertEqual(pending_count(self.db, user).data["total"], 0)
+
+    def test_remaining_read_endpoints_require_module_view_permission(self):
+        self._add_current_user()
+        cases = (
+            ("POST", "/api/v1/contracts/999/ai-review", "supply.contract.view"),
+            ("POST", "/api/v1/approval-forms/999/proofread", "supply.approval.view"),
+            ("GET", "/api/v1/approval/pending-count", "supply.approval.view"),
+        )
+
+        for method, path, permission_code in cases:
+            with self.subTest(path=path, permission=permission_code):
+                self._set_permission("supply.dashboard.view")
+                denied = self.client.request(method, path)
+                self.assertEqual(denied.status_code, 403, denied.text)
+
+                self._set_permission(permission_code)
+                allowed = self.client.request(method, path)
+                self.assertNotEqual(allowed.status_code, 403, allowed.text)
 
 
 class UserCompanyRoleSchemaTest(unittest.TestCase):
