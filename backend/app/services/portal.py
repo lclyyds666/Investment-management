@@ -1,24 +1,52 @@
 """统一门户应用注册表与当前用户权限快照。"""
 from sqlalchemy.orm import Session
 
-from app.core.enums import CompanyCode, ResourceCode
+from app.core.enums import CompanyCode, DataScope
 from app.models.user import User
-from app.schemas.portal import PortalApplicationOut, PortalPermissionSnapshot
-from app.services.permissions import allowed_resources, get_company_role
+from app.schemas.portal import (
+    AssignmentSnapshotOut,
+    PermissionGrantOut,
+    PortalApplicationOut,
+    PortalPermissionSnapshot,
+)
+from app.services.assignment_permissions import active_assignments, permission_grants
+from app.services.legacy_assignment_migration import LEGACY_TARGETS
+from app.services.permissions import RESOURCE_VIEW_PERMISSIONS
 
 APPLICATIONS = (
-    ("investment", "山东出版投资有限公司", "/investment", "construction"),
-    ("supplymanagement", "山东出版供应链管理有限公司", "/supplymanagement", "online"),
-    ("fundmanagement", "山东出版股权基金管理有限公司", "/fundmanagement", "construction"),
+    (
+        "investment",
+        "山东出版投资有限公司",
+        "/investment",
+        "construction",
+        "investment.portal.enter",
+    ),
+    (
+        "supplymanagement",
+        "山东出版供应链管理有限公司",
+        "/supplymanagement",
+        "online",
+        "supply.portal.enter",
+    ),
+    (
+        "fundmanagement",
+        "山东出版股权基金管理有限公司",
+        "/fundmanagement",
+        "construction",
+        "fund.portal.enter",
+    ),
 )
 
 
 def applications_for_user(db: Session, user: User) -> list[PortalApplicationOut]:
+    platform_permissions = {
+        grant.code
+        for grant in permission_grants(db, user.id)
+        if grant.data_scope == DataScope.PLATFORM
+    }
     applications = []
-    for code, company_name, route, status in APPLICATIONS:
-        accessible = user.is_superuser or (
-            get_company_role(db, user, CompanyCode(code)) is not None
-        )
+    for code, company_name, route, status, enter_permission in APPLICATIONS:
+        accessible = enter_permission in platform_permissions
         applications.append(
             PortalApplicationOut(
                 code=code,
@@ -32,21 +60,86 @@ def applications_for_user(db: Session, user: User) -> list[PortalApplicationOut]
     return applications
 
 
+def _legacy_company_roles(assignments) -> dict[str, str]:
+    roles_by_company: dict[str, set[str]] = {}
+    targets_by_position = {}
+    for role, target in LEGACY_TARGETS.items():
+        targets_by_position.setdefault(target.position_code, []).append((role, target))
+
+    for assignment in assignments:
+        legacy_targets = targets_by_position.get(assignment.position.code, [])
+        if len(legacy_targets) != 1:
+            continue
+        role, _ = legacy_targets[0]
+        roles_by_company.setdefault(CompanyCode.SUPPLY_MANAGEMENT.value, set()).add(
+            role.value
+        )
+
+    return {
+        company_code: next(iter(roles))
+        for company_code, roles in roles_by_company.items()
+        if len(roles) == 1
+    }
+
+
 def permission_snapshot_for_user(
     db: Session, user: User
 ) -> PortalPermissionSnapshot:
-    company_roles = {}
-    for company in CompanyCode:
-        role = get_company_role(db, user, company)
-        if role is not None:
-            company_roles[company.value] = role.value
+    if user.is_superuser:
+        return PortalPermissionSnapshot(
+            is_superuser=True,
+            assignments=[],
+            permissions=[],
+            resources=[],
+        )
 
-    resources = sorted(
-        resource.value if isinstance(resource, ResourceCode) else str(resource)
-        for resource in allowed_resources(db, user, CompanyCode.SUPPLY_MANAGEMENT)
+    assignments = sorted(
+        active_assignments(db, user.id),
+        key=lambda assignment: (
+            assignment.organization.sort_order,
+            assignment.position.code,
+            assignment.id,
+        ),
     )
+    grants = sorted(
+        {
+            (grant.code, grant.data_scope.value, grant.scope_ref)
+            for grant in permission_grants(db, user.id)
+        }
+    )
+    view_resources = {
+        permission_code: resource.value
+        for resource, permission_code in RESOURCE_VIEW_PERMISSIONS.items()
+    }
+
     return PortalPermissionSnapshot(
-        is_superuser=user.is_superuser,
-        company_roles=company_roles,
-        resources=resources,
+        is_superuser=False,
+        assignments=[
+            AssignmentSnapshotOut(
+                assignment_id=assignment.id,
+                organization_code=assignment.organization.code,
+                organization_name=assignment.organization.name,
+                position_code=assignment.position.code,
+                position_name=assignment.position.name,
+                valid_from=assignment.valid_from,
+                valid_until=assignment.valid_until,
+            )
+            for assignment in assignments
+        ],
+        permissions=[
+            PermissionGrantOut(
+                code=code,
+                data_scope=data_scope,
+                scope_ref=scope_ref,
+            )
+            for code, data_scope, scope_ref in grants
+        ],
+        resources=sorted(
+            {
+                view_resources[code]
+                for code, _, _ in grants
+                if code in view_resources
+            }
+        ),
+        company_roles=_legacy_company_roles(assignments),
     )
