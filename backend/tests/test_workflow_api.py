@@ -446,7 +446,9 @@ class ContractWorkflowApiTest(unittest.TestCase):
         self.legal = self.add_user("contract-legal", "Contract Legal")
         self.risk = self.add_user("contract-risk", "Contract Risk")
         self.governance = self.add_user("contract-governance", "Contract Governance")
+        self.other_handler = self.add_user("contract-other-handler", "Other Handler")
         self.assign(self.handler, "supplymanagement", "supply.business_handler")
+        self.assign(self.other_handler, "supplymanagement", "supply.business_handler")
         self.assign(self.leader, "supplymanagement", "supply.company_leader")
         legal_assignment = self.assign(self.legal, "external.legal", "external.legal_counsel")
         self.db.add(ExternalAssignment(
@@ -565,6 +567,108 @@ class ContractWorkflowApiTest(unittest.TestCase):
             f"/api/v1/workflows/instances/{self.contract.workflow_instance_id}/timeline"
         ).json()["data"]
         self.assertEqual(timeline[-1]["action"], "return")
+
+    def test_return_to_handler_resubmits_same_instance_without_designations(self):
+        first = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        instance_id = first.json()["data"]["workflow_instance_id"]
+        self.current_user = self.leader
+        returned = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/reject",
+            json={"comment": "请修改合同"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        self.current_user = self.handler
+        updated = self.client.put(
+            f"/api/v1/contracts/{self.contract.id}",
+            json={"remark": "已按意见修改"},
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+
+        resumed = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={},
+        )
+
+        self.assertEqual(resumed.status_code, 200, resumed.text)
+        self.assertEqual(resumed.json()["data"]["workflow_instance_id"], instance_id)
+        self.assertEqual(
+            resumed.json()["data"]["active_task"]["position_code"],
+            "supply.company_leader",
+        )
+        actions = list(self.db.scalars(
+            select(WorkflowTaskAction)
+            .join(WorkflowTaskAction.task)
+            .where(WorkflowTask.instance_id == instance_id)
+            .order_by(WorkflowTaskAction.id)
+        ))
+        self.assertEqual(
+            [action.action for action in actions],
+            [WorkflowAction.SUBMIT, WorkflowAction.RETURN, WorkflowAction.SUBMIT],
+        )
+        approvals = list(self.db.scalars(
+            select(Approval)
+            .where(Approval.contract_id == self.contract.id)
+            .order_by(Approval.id)
+        ))
+        self.assertEqual([item.action.value for item in approvals], ["approve", "reject", "approve"])
+        self.assertEqual(self.db.query(WorkflowTask).filter(
+            WorkflowTask.instance_id == instance_id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        ).one().sequence, 1)
+
+    def test_resubmit_rejects_non_submitter_and_non_handler_active_task(self):
+        first = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.current_user = self.other_handler
+        non_submitter = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={},
+        )
+        self.assertEqual(non_submitter.status_code, 403)
+        self.current_user = self.handler
+        wrong_active_task = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={},
+        )
+        self.assertEqual(wrong_active_task.status_code, 422)
+
+    def test_contract_reassignment_stays_timeline_only(self):
+        second_leader = self.add_user("second-contract-leader", "Second Contract Leader")
+        self.assign(second_leader, "supplymanagement", "supply.company_leader")
+        self.db.commit()
+        first = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        task_id = first.json()["data"]["active_task"]["id"]
+        approvals_before = self.db.query(Approval).count()
+        admin = self.add_user("contract-admin", "Contract Admin")
+        admin.is_superuser = True
+        self.db.commit()
+        self.current_user = admin
+
+        response = self.client.post(
+            f"/api/v1/workflows/tasks/{task_id}/reassign",
+            json={"user_id": second_leader.id, "reason": "负责人调整"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.db.query(Approval).count(), approvals_before)
+        reassignment = self.db.scalar(select(WorkflowTaskAction).where(
+            WorkflowTaskAction.task_id == task_id,
+            WorkflowTaskAction.action == WorkflowAction.REASSIGN,
+        ))
+        self.assertIsNotNone(reassignment)
+        self.assertIsNone(self.db.scalar(select(Approval).where(
+            Approval.workflow_task_action_id == reassignment.id,
+        )))
 
     def test_legacy_reject_wrapper_requires_nonblank_reason(self):
         submitted = self.client.post(

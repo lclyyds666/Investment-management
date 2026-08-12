@@ -76,13 +76,20 @@ WORKFLOW_CODE_BY_TARGET = {
 }
 
 
-def _project_contract_action(
+def project_contract_action(
     db: Session,
     instance: WorkflowInstance,
     task: WorkflowTask,
     action: WorkflowTaskAction,
 ) -> None:
     if instance.target_type != WorkflowTargetType.CONTRACT:
+        return
+    legacy_action = {
+        WorkflowAction.SUBMIT: ApprovalAction.APPROVE,
+        WorkflowAction.APPROVE: ApprovalAction.APPROVE,
+        WorkflowAction.RETURN: ApprovalAction.REJECT,
+    }.get(action.action)
+    if legacy_action is None:
         return
     if db.scalar(select(exists().where(Approval.workflow_task_action_id == action.id))):
         return
@@ -91,11 +98,7 @@ def _project_contract_action(
         approver_id=action.actor_id,
         step=task.sequence,
         approver_role=action.position_code[:32],
-        action=(
-            ApprovalAction.REJECT
-            if action.action == WorkflowAction.RETURN
-            else ApprovalAction.APPROVE
-        ),
+        action=legacy_action,
         comment=(
             "提交审批（业务经办）"
             if action.action == WorkflowAction.SUBMIT and not action.comment
@@ -705,7 +708,7 @@ def _start_workflow(
     )
     db.add(submit_action)
     db.flush()
-    _project_contract_action(db, instance, submit_task, submit_action)
+    project_contract_action(db, instance, submit_task, submit_action)
     target.status = ContractStatus.PENDING
     target.current_step = next_node.sequence
     target.workflow_instance_id = instance.id
@@ -1242,7 +1245,7 @@ def _complete_task(
     )
     db.add(task_action)
     db.flush()
-    _project_contract_action(db, instance, task, task_action)
+    project_contract_action(db, instance, task, task_action)
     db.flush()
     return instance.id
 

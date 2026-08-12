@@ -354,20 +354,30 @@ def delete_contract(
 )
 def submit_contract(
     contract_id: int,
-    payload: WorkflowStartRequest,
+    payload: WorkflowStartRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
     if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能提交本人创建的合同")
+    if contract.workflow_instance_id is not None:
+        instance = db.get(WorkflowInstance, contract.workflow_instance_id)
+        task = _active_task_for_contract(db, contract)
+        if instance is None or instance.submitted_by != current_user.id:
+            raise HTTPException(status_code=403, detail="只能由原提交人重新提交合同")
+        if task is None or not task.node.auto_complete_on_submit:
+            raise HTTPException(status_code=422, detail="合同当前不处于业务经办重提环节")
+        return Response.ok(_complete_current_task(
+            db, contract, current_user, WorkflowAction.SUBMIT, "重新提交审批"
+        ))
     try:
         start_workflow(
             db,
             WorkflowTargetType.CONTRACT,
             contract.id,
             current_user,
-            payload.designated_users,
+            payload.designated_users if payload is not None else {},
         )
         db.commit()
     except WorkflowValidationError as error:

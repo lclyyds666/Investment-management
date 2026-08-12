@@ -28,6 +28,7 @@ from app.services.workflow_engine import (
     complete_task,
     eligible_designated_users,
     my_active_tasks,
+    project_contract_action,
 )
 
 
@@ -361,7 +362,7 @@ def reassign(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "workflow_task_reassignment_conflict", "message": "The task changed before reassignment."},
         )
-    db.add(WorkflowTaskAction(
+    reassignment_action = WorkflowTaskAction(
         task_id=task.id,
         action=WorkflowAction.REASSIGN,
         actor_id=current_user.id,
@@ -377,7 +378,10 @@ def reassign(
         new_assignee_id=assignment.user_id,
         new_assignee_name=assignment.user.full_name,
         reason=reason,
-    ))
+    )
+    db.add(reassignment_action)
+    db.flush()
+    project_contract_action(db, task.instance, task, reassignment_action)
     db.commit()
     db.refresh(task)
     return Response.ok({

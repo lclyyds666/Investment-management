@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.enums import WorkflowAction
 
@@ -16,7 +16,7 @@ class WorkflowCandidate(BaseModel):
 
 
 class WorkflowStartRequest(BaseModel):
-    designated_users: dict[str, int]
+    designated_users: dict[str, int] = Field(default_factory=dict)
 
 
 class WorkflowTimelineAction(BaseModel):
