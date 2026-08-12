@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from app.core.enums import AssignmentStatus, DataScope, Role
@@ -311,6 +311,26 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         self.db.commit()
         return user
 
+    def authorization_state(self) -> dict[str, tuple[tuple[object, ...], ...]]:
+        models = (
+            Organization,
+            Position,
+            Permission,
+            PositionPermission,
+            UserAssignment,
+            GovernanceScope,
+            ExternalAssignment,
+        )
+        return {
+            model.__tablename__: tuple(
+                tuple(row)
+                for row in self.db.execute(
+                    select(*model.__table__.columns).order_by(model.id)
+                )
+            )
+            for model in models
+        }
+
     def test_repeat_migration_creates_no_duplicate_assignments(self):
         user = self.add_user("handler", Role.BUSINESS_HANDLER)
 
@@ -328,26 +348,11 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
 
     def test_dry_run_does_not_persist_assignments(self):
         user = self.add_user("preview", Role.BUSINESS_HANDLER)
-        authorization_models = (
-            Organization,
-            Position,
-            Permission,
-            PositionPermission,
-            UserAssignment,
-            GovernanceScope,
-            ExternalAssignment,
-        )
-        before = {
-            model.__tablename__: self.db.scalar(select(func.count(model.id)))
-            for model in authorization_models
-        }
+        before = self.authorization_state()
 
         report = migrate_legacy_assignments(self.db, dry_run=True)
 
-        after = {
-            model.__tablename__: self.db.scalar(select(func.count(model.id)))
-            for model in authorization_models
-        }
+        after = self.authorization_state()
         assignments = self.db.scalars(
             select(UserAssignment).where(UserAssignment.user_id == user.id)
         ).all()
