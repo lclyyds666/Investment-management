@@ -90,3 +90,25 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | 合同 | POST `/contracts/{id}/submit` | 提交审批 | staff |
 | 合同 | POST `/contracts/{id}/approve` | 审批(通过/驳回) | leader |
 | 经营 | GET `/operation/dashboard` | 看板聚合数据 | staff/leader |
+
+## Unified Organization Permission Migration
+
+Run the following production sequence from the `backend` directory. Review
+`migration-preview.json` before applying the migration.
+
+```powershell
+mysql -u USER -p DATABASE < migrations/20260813_unified_organization_permissions.sql
+python -m app.db.init_db
+python scripts/migrate_company_roles_to_assignments.py --report migration-preview.json
+python scripts/migrate_company_roles_to_assignments.py --apply --report migration-applied.json
+python -m unittest tests.test_assignment_permissions tests.test_company_permissions tests.test_portal_api -v
+```
+
+The migration command exits with code `2` when its report contains unresolved
+rows that require operator review. Resolve those rows, rerun the preview, and
+then apply only after the report is acceptable.
+
+The legacy role tables and their rows remain untouched by this process. The
+rollback boundary is the new permission feature routing: disable that routing
+and continue reading the untouched legacy role rows while the migration is
+investigated or reversed operationally.

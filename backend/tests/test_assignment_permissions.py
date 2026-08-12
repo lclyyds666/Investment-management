@@ -1,13 +1,14 @@
 import unittest
 from datetime import date
 
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.enums import AssignmentStatus, DataScope, Role
 from app.db.base import Base
 from app.models.organization import (
     ExternalAssignment,
+    GovernanceScope,
     Organization,
     Permission,
     Position,
@@ -320,19 +321,38 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
             select(UserAssignment).where(UserAssignment.user_id == user.id)
         ).all()
         self.assertEqual(first.created, 1)
+        self.assertEqual(second.created, 0)
         self.assertEqual(second.existing, 1)
         self.assertEqual(second.existing_rows[0].username, "handler")
         self.assertEqual(len(assignments), 1)
 
     def test_dry_run_does_not_persist_assignments(self):
         user = self.add_user("preview", Role.BUSINESS_HANDLER)
+        authorization_models = (
+            Organization,
+            Position,
+            Permission,
+            PositionPermission,
+            UserAssignment,
+            GovernanceScope,
+            ExternalAssignment,
+        )
+        before = {
+            model.__tablename__: self.db.scalar(select(func.count(model.id)))
+            for model in authorization_models
+        }
 
         report = migrate_legacy_assignments(self.db, dry_run=True)
 
+        after = {
+            model.__tablename__: self.db.scalar(select(func.count(model.id)))
+            for model in authorization_models
+        }
         assignments = self.db.scalars(
             select(UserAssignment).where(UserAssignment.user_id == user.id)
         ).all()
         self.assertEqual(report.created, 1)
+        self.assertEqual(after, before)
         self.assertEqual(assignments, [])
 
     def test_dry_run_preserves_caller_pending_changes(self):
@@ -417,9 +437,7 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
 
         report = migrate_legacy_assignments(self.db, dry_run=False)
 
-        assignments = self.db.scalars(
-            select(UserAssignment).where(UserAssignment.user_id == handler.id)
-        ).all()
+        assignments = self.db.scalars(select(UserAssignment)).all()
         self.assertEqual(assignments, [])
         self.assertEqual(len(report.unresolved), 1)
         self.assertIn("position", report.unresolved[0].reason)
@@ -436,6 +454,19 @@ class LegacyAssignmentMigrationTest(unittest.TestCase):
         self.assertEqual(report.unresolved, [])
         self.assertEqual(assignments, [])
         self.assertEqual(report.skipped_unassigned_rows[0].username, "unassigned")
+
+    def test_information_maintainer_creates_no_business_assignment(self):
+        user = self.add_user("maintainer", Role.INFO_MAINTAINER)
+
+        report = migrate_legacy_assignments(self.db, dry_run=False)
+
+        assignments = self.db.scalars(
+            select(UserAssignment).where(UserAssignment.user_id == user.id)
+        ).all()
+        self.assertEqual(report.created, 0)
+        self.assertEqual(assignments, [])
+        self.assertEqual(len(report.unresolved), 1)
+        self.assertIn("No normalized position mapping", report.unresolved[0].reason)
 
     def test_superuser_receives_no_business_assignment(self):
         user = self.add_user("admin", Role.BUSINESS_HANDLER, is_superuser=True)
