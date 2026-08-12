@@ -125,18 +125,16 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getScenicConfigs, updateScenicConfig } from '@/api/scenic'
-import { ROLES } from '@/constants/business'
-import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
+import { canUsePermission } from '@/utils/businessAuthorization'
 
-const userStore = useUserStore()
+const portalStore = usePortalStore()
 const visible = ref(false)
 const loading = ref(false)
 const savingId = ref('')
 const rows = ref([])
 
-const canEdit = computed(() => (
-  userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER
-))
+const canEdit = computed(() => canUsePermission(portalStore, 'supply.scenic.update'))
 
 function rateToPercent(value) {
   return Math.round((Number(value) || 0) * 10000) / 100

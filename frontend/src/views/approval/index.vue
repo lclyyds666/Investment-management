@@ -13,7 +13,7 @@
         <div class="toolbar-right">
           <!-- 新建审批：悬停展开下拉，选择审批单类型 -->
           <el-dropdown
-            v-if="isBusinessHandler"
+            v-if="canCreate"
             class="new-approval-dropdown"
             trigger="hover"
             @command="openCreate"
@@ -70,24 +70,16 @@
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
               <el-button size="small" class="btn-ai" :icon="MagicStick" @click="openProofread(row)">AI 合同校对</el-button>
-              <template v-if="row.attachment_name">
+              <template v-if="row.attachment_name && canExport">
                 <el-button size="small" type="primary" plain :icon="View" @click="previewFormAttachment(row)">预览附件</el-button>
                 <el-button size="small" type="primary" plain :icon="Download" @click="downloadFormAttachment(row)">下载附件</el-button>
               </template>
-              <el-button size="small" :icon="Printer" @click="onPrint(row)">打印导出</el-button>
-              <template v-if="isBusinessHandler && ['draft', 'rejected'].includes(row.status)">
-                <el-button size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-                <el-button size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
-                <el-button size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
-              </template>
-              <template v-if="canApprove(row)">
-                <el-button size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
-                <el-button size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
-              </template>
-              <el-button
-                v-if="row.status === 'approved' && isSuperuser"
-                size="small" type="danger" :icon="Delete" @click="onDelete(row)"
-              >删除</el-button>
+              <el-button v-if="canExport" size="small" :icon="Printer" @click="onPrint(row)">打印导出</el-button>
+              <el-button v-if="canUpdate && ['draft', 'rejected'].includes(row.status)" size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
+              <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
+              <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
+              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
             </div>
           </template>
         </el-table-column>
@@ -223,7 +215,7 @@
         <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无校对结果" />
       </div>
       <template #footer>
-        <template v-if="aiCurrent && aiCurrent.attachment_name">
+        <template v-if="aiCurrent && aiCurrent.attachment_name && canExport">
           <el-button :icon="View" @click="previewFormAttachment(aiCurrent)">预览附件</el-button>
           <el-button :icon="Download" @click="downloadFormAttachment(aiCurrent)">下载附件</el-button>
         </template>
@@ -253,7 +245,7 @@
             <el-descriptions-item label="备注" :span="2">{{ detail.remark || '—' }}</el-descriptions-item>
           </template>
           <el-descriptions-item label="合同附件" :span="2">
-            <template v-if="detail.attachment_name">
+            <template v-if="detail.attachment_name && canExport">
               <span class="att-name">{{ detail.attachment_name }}</span>
               <el-button size="small" link type="primary" :icon="View" @click="previewFormAttachment(detail)">预览</el-button>
               <el-button size="small" link type="primary" :icon="Download" @click="downloadFormAttachment(detail)">下载</el-button>
@@ -293,9 +285,10 @@ import {
   MagicStick, CopyDocument, Money, Document, Printer
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
-import { ROLES, STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
+import { STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
+import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import {
@@ -305,16 +298,20 @@ import {
 } from '@/api/approval'
 import { listCustomers } from '@/api/customer'
 
-const userStore = useUserStore()
+const portalStore = usePortalStore()
 const badgeStore = useApprovalBadgeStore()
-const isSuperuser = computed(() => userStore.isSuperuser)
-const isBusinessHandler = computed(
-  () => userStore.role === ROLES.BUSINESS_HANDLER || userStore.isSuperuser
-)
+const canCreate = computed(() => canUsePermission(portalStore, 'supply.approval.create'))
+const canUpdate = computed(() => canUsePermission(portalStore, 'supply.approval.update'))
+const canDelete = computed(() => canUsePermission(portalStore, 'supply.approval.delete'))
+const canSubmit = computed(() => canUsePermission(portalStore, 'supply.approval.submit'))
+const canExport = computed(() => canUsePermission(portalStore, 'supply.approval.export'))
 
 function canApprove(row) {
-  if (row.status !== 'pending') return false
-  return userStore.isSuperuser || row.current_role === userStore.role
+  return canActOnWorkflow(portalStore, row, 'supply.approval.approve')
+}
+
+function canReturn(row) {
+  return canActOnWorkflow(portalStore, row, 'supply.approval.return')
 }
 
 const loading = ref(false)

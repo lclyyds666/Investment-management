@@ -11,11 +11,11 @@
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <div class="toolbar-right">
-          <el-button v-if="isBusinessHandler" type="primary" :icon="Plus" @click="openCreate">
+          <el-button v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">
             新建合同
           </el-button>
           <el-button :icon="Tickets" @click="openLedger">生成合同台账</el-button>
-          <el-button v-if="isSuperuser" :icon="Collection" @click="openKb">法规知识库</el-button>
+          <el-button v-if="canViewKnowledge" :icon="Collection" @click="openKb">法规知识库</el-button>
           <el-button :icon="Refresh" @click="load">刷新</el-button>
         </div>
       </div>
@@ -38,26 +38,15 @@
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
               <el-button size="small" class="btn-ai" :icon="MagicStick" @click="openAiReview(row)">AI 审查</el-button>
-              <template v-if="row.attachment_name">
+              <template v-if="row.attachment_name && canExport">
                 <el-button size="small" type="primary" plain :icon="View" @click="previewContractAttachment(row)">预览附件</el-button>
                 <el-button size="small" type="primary" plain :icon="Download" @click="downloadContractAttachment(row)">下载附件</el-button>
               </template>
-              <template v-if="isBusinessHandler && ['draft', 'rejected'].includes(row.status)">
-                <el-button size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-                <el-button size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
-                <el-button size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
-              </template>
-              <template v-if="canApprove(row)">
-                <el-button size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
-                <el-button size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
-              </template>
-              <!-- 精细化管控：已通过合同仅超级管理员可删除（非超管此按钮不渲染） -->
-              <el-button
-                v-if="canDeleteApproved(row)"
-                size="small" type="danger" :icon="Delete" @click="onDelete(row)"
-              >
-                删除
-              </el-button>
+              <el-button v-if="canUpdate && ['draft', 'rejected'].includes(row.status)" size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
+              <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
+              <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
+              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
             </div>
           </template>
         </el-table-column>
@@ -250,7 +239,7 @@
         <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无审查结果" />
       </div>
       <template #footer>
-        <template v-if="aiCurrent && aiCurrent.attachment_name">
+        <template v-if="aiCurrent && aiCurrent.attachment_name && canExport">
           <el-button :icon="View" @click="previewContractAttachment(aiCurrent)">预览附件</el-button>
           <el-button :icon="Download" @click="downloadContractAttachment(aiCurrent)">下载附件</el-button>
         </template>
@@ -266,7 +255,7 @@
         type="info" :closable="false" show-icon class="mb"
         title="上传公司合同法 / 集团企业制度 / 法律规范等文件（PDF/Word/Excel），AI 审查合同时会自动引用作为分析依据。"
       />
-      <div class="kb-toolbar">
+      <div v-if="canManageKnowledge" class="kb-toolbar">
         <el-select v-model="kbCategory" size="small" style="width: 160px">
           <el-option v-for="k in KB_CATEGORIES" :key="k" :label="k" :value="k" />
         </el-select>
@@ -275,14 +264,14 @@
         >
           <el-button size="small" type="primary" :icon="UploadFilled" :loading="kbUploading">上传法规文件</el-button>
         </el-upload>
-        <span class="muted small">支持 PDF / Word / Excel；仅超级管理员可上传/删除</span>
+        <span class="muted small">支持 PDF / Word / Excel</span>
       </div>
       <el-table :data="kbList" border size="small" max-height="50vh">
         <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
         <el-table-column prop="category" label="分类" width="120" align="center" />
         <el-table-column prop="file_type" label="类型" width="70" align="center" />
         <el-table-column prop="char_count" label="字数" width="80" align="right" />
-        <el-table-column label="操作" width="80" align="center">
+        <el-table-column v-if="canManageKnowledge" label="操作" width="80" align="center">
           <template #default="{ row }">
             <el-button size="small" link type="danger" @click="onKbDelete(row)">删除</el-button>
           </template>
@@ -301,9 +290,10 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download, MagicStick, Collection, CopyDocument } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
-import { ROLES, STATUS_META } from '@/constants/business'
+import { STATUS_META } from '@/constants/business'
+import { canActOnWorkflow, canUsePermission } from '@/utils/businessAuthorization'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
 import {
@@ -316,22 +306,22 @@ import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge
 
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 
-const userStore = useUserStore()
+const portalStore = usePortalStore()
 const badgeStore = useApprovalBadgeStore()
-const isSuperuser = computed(() => userStore.isSuperuser)
-const isBusinessHandler = computed(
-  () => userStore.role === ROLES.BUSINESS_HANDLER || userStore.isSuperuser
-)
+const canCreate = computed(() => canUsePermission(portalStore, 'supply.contract.create'))
+const canUpdate = computed(() => canUsePermission(portalStore, 'supply.contract.update'))
+const canDelete = computed(() => canUsePermission(portalStore, 'supply.contract.delete'))
+const canSubmit = computed(() => canUsePermission(portalStore, 'supply.contract.submit'))
+const canExport = computed(() => canUsePermission(portalStore, 'supply.contract.export'))
+const canViewKnowledge = computed(() => canUsePermission(portalStore, 'supply.contract.view'))
+const canManageKnowledge = computed(() => canUsePermission(portalStore, 'supply.contract.update'))
 
-// 合同(法律)审批：仅当合同处于审批中、且当前环节角色恰为本人(或超管)时，可通过/驳回
 function canApprove(row) {
-  if (row.status !== 'pending') return false
-  return userStore.isSuperuser || row.current_role === userStore.role
+  return canActOnWorkflow(portalStore, row, 'supply.contract.approve')
 }
 
-// 精细化管控：已通过(已审核)合同仅超级管理员可删除；其余用户不显示删除按钮
-function canDeleteApproved(row) {
-  return row.status === 'approved' && userStore.isSuperuser
+function canReturn(row) {
+  return canActOnWorkflow(portalStore, row, 'supply.contract.return')
 }
 
 const loading = ref(false)
