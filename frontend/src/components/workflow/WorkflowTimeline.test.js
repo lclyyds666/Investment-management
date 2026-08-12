@@ -30,6 +30,7 @@ describe('WorkflowTimeline', () => {
     expect(text).toContain('岗位调整')
     expect(text).toContain('改派 · 系统管理员')
     expect(text).toContain('信息维护者')
+    expect(text).toContain('2026-08-12 09:00:00')
     expect(text).toContain('已通过')
   })
 

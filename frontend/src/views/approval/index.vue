@@ -250,6 +250,7 @@
 
     <!-- 详情：字段 + 流转时间轴 -->
     <el-dialog v-model="detailVisible" title="审批单详情" width="680px" top="6vh">
+      <div v-loading="detailLoading" class="detail-body">
       <template v-if="detail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="单据类型">{{ detail.form_type_label }}</el-descriptions-item>
@@ -278,34 +279,39 @@
         </el-descriptions>
 
         <div class="timeline-title">岗位责任轨道</div>
-        <el-alert
-          v-if="timelineError"
-          type="error"
-          :closable="false"
-          title="流程记录加载失败，可重试"
-          class="timeline-error"
-        >
-          <template #default><el-button link type="primary" @click="loadDetailTimeline">重试</el-button></template>
-        </el-alert>
-        <WorkflowTimeline v-if="detail.workflow_version >= 2" :tasks="workflowTasks" />
-        <el-timeline v-else-if="actions.length">
-          <el-timeline-item
-            v-for="a in actions" :key="a.id"
-            :type="a.action === 'approve' ? 'success' : 'danger'"
-            :timestamp="String(a.created_at).slice(0, 19).replace('T', ' ')"
+        <div v-loading="timelineLoading" class="timeline-panel">
+          <el-alert
+            v-if="timelineError"
+            type="error"
+            :closable="false"
+            title="流程记录加载失败，可重试"
+            class="timeline-error"
           >
-            <div class="tl-row">
-              <b>{{ a.role_label }}</b> · {{ a.approver_name }}
-              <el-tag size="small" :type="a.action === 'approve' ? 'success' : 'danger'" effect="plain">
-                {{ a.action === 'approve' ? '通过' : '退回' }}
-              </el-tag>
-            </div>
-            <div v-if="a.comment" class="tl-comment">{{ a.comment }}</div>
-            <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="tl-sig" alt="签名" />
-          </el-timeline-item>
-        </el-timeline>
-        <el-empty v-else :image-size="48" description="尚无流转记录（未提交）" />
+            <template #default><el-button link type="primary" @click="loadDetailTimeline">重试加载</el-button></template>
+          </el-alert>
+          <template v-else>
+            <WorkflowTimeline v-if="detail.workflow_version >= 2" :tasks="workflowTasks" />
+            <el-timeline v-else-if="actions.length">
+              <el-timeline-item
+                v-for="a in actions" :key="a.id"
+                :type="a.action === 'approve' ? 'success' : 'danger'"
+                :timestamp="String(a.created_at).slice(0, 19).replace('T', ' ')"
+              >
+                <div class="tl-row">
+                  <b>{{ a.role_label }}</b> · {{ a.approver_name }}
+                  <el-tag size="small" :type="a.action === 'approve' ? 'success' : 'danger'" effect="plain">
+                    {{ a.action === 'approve' ? '通过' : '退回' }}
+                  </el-tag>
+                </div>
+                <div v-if="a.comment" class="tl-comment">{{ a.comment }}</div>
+                <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="tl-sig" alt="签名" />
+              </el-timeline-item>
+            </el-timeline>
+            <el-empty v-else :image-size="48" description="尚无流转记录（未提交）" />
+          </template>
+        </div>
       </template>
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -631,22 +637,30 @@ const detailVisible = ref(false)
 const detail = ref(null)
 const actions = ref([])
 const workflowTasks = ref([])
+const detailLoading = ref(false)
+const timelineLoading = ref(false)
 const timelineError = ref(false)
 async function openDetail(row) {
-  detail.value = row
+  detail.value = null
   actions.value = []
   workflowTasks.value = []
+  detailLoading.value = true
+  timelineLoading.value = false
   timelineError.value = false
   detailVisible.value = true
   try {
-    const d = await getForm(row.id)
-    detail.value = d
-    await loadDetailTimeline()
-  } catch { /* 基本详情由全局错误提示 */ }
+    detail.value = await getForm(row.id)
+  } finally {
+    detailLoading.value = false
+  }
+  await loadDetailTimeline()
 }
 
 async function loadDetailTimeline() {
   if (!detail.value) return
+  actions.value = []
+  workflowTasks.value = []
+  timelineLoading.value = true
   timelineError.value = false
   try {
     if (detail.value.workflow_version >= 2) {
@@ -656,6 +670,8 @@ async function loadDetailTimeline() {
     }
   } catch {
     timelineError.value = true
+  } finally {
+    timelineLoading.value = false
   }
 }
 
@@ -743,6 +759,8 @@ loadCustomers()
 .md-body :deep(table) { border-collapse: collapse; width: 100%; }
 .md-body :deep(th), .md-body :deep(td) { border: 1px solid var(--el-border-color); padding: 6px 8px; }
 .timeline-title { font-weight: 600; margin: 18px 0 10px; color: var(--el-color-primary); }
+.detail-body { min-height: 120px; }
+.timeline-panel { min-height: 72px; }
 .timeline-error { margin-bottom: 12px; }
 .tl-row { display: flex; align-items: center; gap: 8px; }
 .tl-comment { color: var(--el-text-color-regular); font-size: 13px; margin-top: 2px; }

@@ -104,6 +104,7 @@ describe('approval form designated submit', () => {
 describe('approval active-task actions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    workflowApi.getWorkflowTimeline.mockReset()
     approvalApi.listForms.mockResolvedValue([])
   })
 
@@ -135,9 +136,33 @@ describe('approval active-task actions', () => {
     await flushPromises()
     await wrapper.vm.openDetail({ id: 10 })
     expect(wrapper.vm.detail.id).toBe(10)
+    expect(wrapper.vm.detailLoading).toBe(false)
+    expect(wrapper.vm.timelineLoading).toBe(false)
     expect(wrapper.vm.timelineError).toBe(true)
+    const timelinePanel = wrapper.find('.timeline-panel')
+    expect(timelinePanel.findComponent({ name: 'WorkflowTimeline' }).exists()).toBe(false)
+    expect(timelinePanel.findComponent({ name: 'ElEmpty' }).exists()).toBe(false)
     await wrapper.vm.loadDetailTimeline()
     expect(workflowApi.getWorkflowTimeline).toHaveBeenCalledTimes(2)
     expect(wrapper.vm.timelineError).toBe(false)
+  })
+
+  it('clears stale workflow rows while timeline retry remains local', async () => {
+    let rejectTimeline
+    approvalApi.getForm.mockResolvedValue({ id: 11, workflow_instance_id: 110, workflow_version: 2 })
+    workflowApi.getWorkflowTimeline.mockResolvedValueOnce([{ id: 1 }])
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectTimeline = reject }))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.vm.openDetail({ id: 11 })
+
+    const retry = wrapper.vm.loadDetailTimeline()
+    expect(wrapper.vm.detailLoading).toBe(false)
+    expect(wrapper.vm.timelineLoading).toBe(true)
+    expect(wrapper.vm.workflowTasks).toEqual([])
+    rejectTimeline(new Error('denied'))
+    await retry
+    expect(wrapper.vm.timelineLoading).toBe(false)
+    expect(wrapper.vm.timelineError).toBe(true)
   })
 })

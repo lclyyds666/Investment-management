@@ -6,7 +6,8 @@
     direction="rtl"
     @update:model-value="(v) => $emit('update:modelValue', v)"
   >
-    <div v-loading="loading" v-if="contract">
+    <div v-loading="detailLoading" class="detail-body">
+      <template v-if="contract">
       <div class="drawer-toolbar">
         <el-tag :type="STATUS_META[contract.status]?.type">
           {{ contract.status_label }}
@@ -56,38 +57,43 @@
       </el-descriptions>
 
       <h4 class="section-title"><el-icon><Guide /></el-icon> 岗位责任轨道</h4>
-      <el-alert
-        v-if="timelineError"
-        type="error"
-        :closable="false"
-        title="流程记录加载失败，可重试"
-        class="timeline-error"
-      >
-        <template #default><el-button link type="primary" @click="loadTimeline">重试</el-button></template>
-      </el-alert>
-      <WorkflowTimeline v-if="contract.workflow_version >= 2" :tasks="workflowTasks" />
-      <el-timeline v-else class="flow-timeline">
-        <el-timeline-item
-          v-for="a in approvals"
-          :key="a.id"
-          :type="a.action === 'reject' ? 'danger' : 'success'"
-          :timestamp="fmt(a.created_at)"
-          size="large"
+      <div v-loading="timelineLoading" class="timeline-panel">
+        <el-alert
+          v-if="timelineError"
+          type="error"
+          :closable="false"
+          title="流程记录加载失败，可重试"
+          class="timeline-error"
         >
-          <div class="flow-node">
-            <div class="flow-node-main">
-              <span class="flow-role">{{ a.role_label }}</span>
-              <el-tag :type="a.action === 'reject' ? 'danger' : 'success'" size="small" effect="plain">
-                {{ a.action === 'reject' ? '退回' : '通过' }}
-              </el-tag>
-              <span class="flow-approver">{{ a.approver_name }}</span>
-            </div>
-            <div class="flow-comment" v-if="a.comment">{{ a.comment }}</div>
-            <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="flow-sig" alt="签名" />
-          </div>
-        </el-timeline-item>
-        <el-empty v-if="!approvals.length" :image-size="60" description="暂无审批流转记录" />
-      </el-timeline>
+          <template #default><el-button link type="primary" @click="loadTimeline">重试加载</el-button></template>
+        </el-alert>
+        <template v-else>
+          <WorkflowTimeline v-if="contract.workflow_version >= 2" :tasks="workflowTasks" />
+          <el-timeline v-else class="flow-timeline">
+            <el-timeline-item
+              v-for="a in approvals"
+              :key="a.id"
+              :type="a.action === 'reject' ? 'danger' : 'success'"
+              :timestamp="fmt(a.created_at)"
+              size="large"
+            >
+              <div class="flow-node">
+                <div class="flow-node-main">
+                  <span class="flow-role">{{ a.role_label }}</span>
+                  <el-tag :type="a.action === 'reject' ? 'danger' : 'success'" size="small" effect="plain">
+                    {{ a.action === 'reject' ? '退回' : '通过' }}
+                  </el-tag>
+                  <span class="flow-approver">{{ a.approver_name }}</span>
+                </div>
+                <div class="flow-comment" v-if="a.comment">{{ a.comment }}</div>
+                <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="flow-sig" alt="签名" />
+              </div>
+            </el-timeline-item>
+            <el-empty v-if="!approvals.length" :image-size="60" description="暂无审批流转记录" />
+          </el-timeline>
+        </template>
+      </div>
+      </template>
     </div>
   </el-drawer>
 </template>
@@ -110,10 +116,11 @@ const props = defineProps({
 defineEmits(['update:modelValue'])
 defineExpose({ reload: load })
 
-const loading = ref(false)
+const detailLoading = ref(false)
 const contract = ref(null)
 const approvals = ref([])
 const workflowTasks = ref([])
+const timelineLoading = ref(false)
 const timelineError = ref(false)
 const docLoading = ref(false)
 
@@ -150,22 +157,25 @@ function fmtDate(t) {
 
 async function load() {
   if (!props.contractId) return
-  loading.value = true
+  detailLoading.value = true
   contract.value = null
   approvals.value = []
   workflowTasks.value = []
+  timelineLoading.value = false
   timelineError.value = false
   try {
-    const c = await getContract(props.contractId)
-    contract.value = c
-    await loadTimeline()
+    contract.value = await getContract(props.contractId)
   } finally {
-    loading.value = false
+    detailLoading.value = false
   }
+  await loadTimeline()
 }
 
 async function loadTimeline() {
   if (!contract.value) return
+  approvals.value = []
+  workflowTasks.value = []
+  timelineLoading.value = true
   timelineError.value = false
   try {
     if (contract.value.workflow_version >= 2) {
@@ -175,6 +185,8 @@ async function loadTimeline() {
     }
   } catch {
     timelineError.value = true
+  } finally {
+    timelineLoading.value = false
   }
 }
 
@@ -229,6 +241,8 @@ watch(
 .flow-timeline {
   padding-left: 4px;
 }
+.detail-body { min-height: 120px; }
+.timeline-panel { min-height: 72px; }
 .timeline-error { margin-bottom: 12px; }
 .flow-node-main {
   display: flex;
