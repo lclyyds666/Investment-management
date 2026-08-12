@@ -1022,7 +1022,11 @@ def _load_task_conflict(db: Session, task_id: int) -> WorkflowTaskConflict:
         .where(WorkflowTaskAction.task_id == task_id)
         .order_by(WorkflowTaskAction.id.desc())
     )
-    if task is None or action is None:
+    if (
+        task is None
+        or task.status == WorkflowTaskStatus.ACTIVE
+        or action is None
+    ):
         raise WorkflowValidationError(
             "workflow_task_not_active",
             "Only active workflow tasks can be completed.",
@@ -1039,12 +1043,15 @@ def _load_task_conflict_after_rollback(
     connection,
     task_id: int,
 ) -> WorkflowTaskConflict:
-    if connection.dialect.name == "sqlite":
-        with db.no_autoflush:
-            task = db.get(WorkflowTask, task_id)
-            if task is not None:
-                db.expire(task)
+    with db.no_autoflush:
+        task = db.get(WorkflowTask, task_id)
+        if task is not None:
+            db.expire(task)
+        try:
             return _load_task_conflict(db, task_id)
+        except WorkflowValidationError:
+            if connection.dialect.name == "sqlite":
+                raise
     with Session(bind=connection.engine, autoflush=False) as conflict_session:
         return _load_task_conflict(conflict_session, task_id)
 
@@ -1233,7 +1240,7 @@ def complete_task(
     if conflict:
         raise _load_task_conflict_after_rollback(db, connection, task_id)
 
-    instance = db.get(WorkflowInstance, instance_id)
-    _expire_parent_workflow_state(db, instance.target_type, instance.target_id)
     with db.no_autoflush:
+        instance = db.get(WorkflowInstance, instance_id)
+        _expire_parent_workflow_state(db, instance.target_type, instance.target_id)
         return db.get(WorkflowInstance, instance_id)

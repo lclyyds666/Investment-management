@@ -3,6 +3,7 @@ import tempfile
 import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, func, select
@@ -40,6 +41,7 @@ from app.services.workflow_catalog import WORKFLOW_CATALOG
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
+    _load_task_conflict_after_rollback,
     complete_task,
     eligible_designated_users,
     ensure_workflow_version_mutable,
@@ -899,6 +901,77 @@ class WorkflowAuthorizationTest(unittest.TestCase):
             select(User).where(User.username == "pending-completion-conflict")
         ))
 
+    def test_non_sqlite_conflict_prefers_uncommitted_same_transaction_winner(self):
+        task_id = self.designated_task.id
+        complete_task(
+            self.db,
+            task_id,
+            self.leader,
+            WorkflowAction.APPROVE,
+            "uncommitted winner",
+        )
+        isolated_engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(isolated_engine)
+        non_sqlite_connection = SimpleNamespace(
+            dialect=SimpleNamespace(name="mysql"),
+            engine=isolated_engine,
+        )
+        try:
+            conflict = _load_task_conflict_after_rollback(
+                self.db,
+                non_sqlite_connection,
+                task_id,
+            )
+        finally:
+            isolated_engine.dispose()
+
+        self.assertEqual(conflict.actor_name, self.leader.full_name)
+        self.assertEqual(conflict.action, WorkflowAction.APPROVE.value)
+        self.assertIsInstance(conflict.completed_at, datetime)
+        self.db.rollback()
+
+    def test_success_does_not_autoflush_parent_and_rolls_back_with_caller(self):
+        task_id = self.designated_task.id
+        instance_id = self.instance.id
+        self.db.expunge(self.instance)
+        pending = User(
+            username="pending-completion-success",
+            full_name="Pending Completion Success",
+            hashed_password="test",
+        )
+        self.db.add(pending)
+
+        complete_task(
+            self.db,
+            task_id,
+            self.leader,
+            WorkflowAction.APPROVE,
+            "caller owns transaction",
+        )
+
+        self.assertIn(pending, self.db.new)
+        self.assertIsNone(pending.id)
+        self.db.expunge(pending)
+        self.db.rollback()
+        with Session(self.engine) as verification:
+            task = verification.get(WorkflowTask, task_id)
+            next_task = verification.scalar(select(WorkflowTask).where(
+                WorkflowTask.instance_id == instance_id,
+                WorkflowTask.sequence == 2,
+            ))
+            self.assertEqual(task.status, WorkflowTaskStatus.ACTIVE)
+            self.assertEqual(task.version, 0)
+            self.assertIsNone(task.completed_at)
+            self.assertEqual(next_task.status, WorkflowTaskStatus.PENDING)
+            self.assertEqual(verification.scalar(
+                select(func.count())
+                .select_from(WorkflowTaskAction)
+                .where(
+                    WorkflowTaskAction.task_id == task_id,
+                    WorkflowTaskAction.action == WorkflowAction.APPROVE,
+                )
+            ), 0)
+
 
 class WorkflowConcurrencyTest(unittest.TestCase):
     add_user = WorkflowStartTest.add_user
@@ -954,6 +1027,8 @@ class WorkflowConcurrencyTest(unittest.TestCase):
             self.designated_users(),
         )
         self.db.commit()
+        self.instance_id = instance.id
+        self.contract_id = contract.id
         leader_task = self.db.scalar(select(WorkflowTask).where(
             WorkflowTask.instance_id == instance.id,
             WorkflowTask.sequence == 1,
@@ -970,6 +1045,11 @@ class WorkflowConcurrencyTest(unittest.TestCase):
             WorkflowTask.instance_id == instance.id,
             WorkflowTask.sequence == 3,
         ))
+        self.next_task_id = self.db.scalar(select(WorkflowTask.id).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 4,
+        ))
+        self.next_task_version = self.db.get(WorkflowTask, self.next_task_id).version
         self.actor_ids = (self.reviewer_a.id, self.reviewer_b.id)
         self.db.close()
 
@@ -1025,6 +1105,15 @@ class WorkflowConcurrencyTest(unittest.TestCase):
                 )
             )
             self.assertEqual(count, 1)
+            next_task = session.get(WorkflowTask, self.next_task_id)
+            instance = session.get(WorkflowInstance, self.instance_id)
+            contract = session.get(Contract, self.contract_id)
+            self.assertEqual(next_task.status, WorkflowTaskStatus.ACTIVE)
+            self.assertEqual(next_task.version, self.next_task_version + 1)
+            self.assertEqual(instance.status, WorkflowInstanceStatus.ACTIVE)
+            self.assertEqual(instance.current_sequence, next_task.sequence)
+            self.assertEqual(contract.status, ContractStatus.PENDING)
+            self.assertEqual(contract.current_step, next_task.sequence)
 
 
 class WorkflowPublicationContinuationTest(unittest.TestCase):
