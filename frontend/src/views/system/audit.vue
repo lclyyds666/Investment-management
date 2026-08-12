@@ -51,6 +51,7 @@
             <div class="who">
               <span class="who-name">{{ row.full_name || '—' }}</span>
               <span class="who-acct">{{ row.username }}<span v-if="row.role"> · {{ roleLabel(row.role) }}</span></span>
+              <span v-if="isAuthorizationAudit(row)" class="who-position">{{ row.position_name || row.position_code || '岗位快照缺失' }}</span>
             </div>
           </template>
         </el-table-column>
@@ -62,7 +63,19 @@
             <el-tag size="small" :type="actionType(row.action)" effect="plain">{{ actionLabel(row.action) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="目标" min-width="130" prop="target_desc" show-overflow-tooltip />
+        <el-table-column label="目标" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }"><span v-if="isAuthorizationAudit(row)">目标用户：{{ row.target_desc || '—' }}</span><span v-else>{{ row.target_desc }}</span></template>
+        </el-table-column>
+        <el-table-column label="授权变更" min-width="300">
+          <template #default="{ row }">
+            <div v-if="isAuthorizationAudit(row)" class="authorization-change" data-testid="authorization-audit-detail">
+              <div>原因：{{ row.reason || '—' }}</div>
+              <div class="change-tags"><span>变更前</span><el-tag v-for="item in assignmentTags(row.before_json)" :key="`before-${item}`" size="small" effect="plain">{{ item }}</el-tag><em v-if="!assignmentTags(row.before_json).length">无</em></div>
+              <div class="change-tags"><span>变更后</span><el-tag v-for="item in assignmentTags(row.after_json)" :key="`after-${item}`" size="small" type="success" effect="plain">{{ item }}</el-tag><em v-if="!assignmentTags(row.after_json).length">无</em></div>
+            </div>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="方法+路径" min-width="240" show-overflow-tooltip>
           <template #default="{ row }"><span class="mono">{{ row.method }} {{ row.path }}</span></template>
         </el-table-column>
@@ -119,6 +132,8 @@ function actionType(a) {
   if (['update', 'submit', 'reset_password', 'toggle_active'].includes(a)) return 'warning'
   return 'info'
 }
+function isAuthorizationAudit(row) { return row?.module === 'organization_authorization' || ['assignment_replace', 'assignment_terminate', 'position_permissions_replace', 'position_update', 'organization_create', 'organization_update'].includes(row?.action) }
+function assignmentTags(snapshot) { const rows = Array.isArray(snapshot) ? snapshot : (snapshot ? [snapshot] : []); return rows.map(item => { const organization = item.organization_name || item.organization_code || item.organization?.name || item.organization?.code || ''; const position = item.position_name || item.position_code || item.position?.name || item.position?.code || ''; return [organization, position].filter(Boolean).join(' / ') || '授权配置' }) }
 
 function buildParams() {
   return {
@@ -182,6 +197,11 @@ onMounted(async () => {
 .who { display: flex; flex-direction: column; line-height: 1.3; }
 .who-name { font-weight: 600; }
 .who-acct { font-size: 12px; color: var(--el-text-color-secondary); }
+.who-position { font-size: 12px; color: var(--brand-vermilion); }
+.authorization-change { display: grid; gap: 5px; font-size: 12px; }
+.change-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.change-tags > span { min-width: 42px; color: var(--el-text-color-secondary); }
+.change-tags em { color: var(--el-text-color-placeholder); font-style: normal; }
 .mono { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
 .pager { margin-top: 12px; display: flex; justify-content: flex-end; }
 </style>

@@ -66,6 +66,11 @@ describe('portal permission guard', () => {
     expect(hasCompany).not.toHaveBeenCalled()
   })
 
+  it.each(['/system/audit', '/system/ai-conversations'])('denies non-superuser navigation to %s', async (path) => {
+    authenticatedContext()
+    await expect(portalGuard(route(path, { requiresSuperuser: true }))).resolves.toEqual({ path: '/supplymanagement/dashboard' })
+  })
+
   it('enforces metadata permissions before application access', async () => {
     const { portalStore } = authenticatedContext({
       applications: [{ code: 'supplymanagement', accessible: true }]
