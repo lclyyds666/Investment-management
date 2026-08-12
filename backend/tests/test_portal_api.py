@@ -26,6 +26,9 @@ class PortalRegistryTest(unittest.TestCase):
         self.add_assignment(
             self.user, "supplymanagement", "governance.supply_leader"
         )
+        self.add_assignment(
+            self.admin, "investment", "investment.executive.general_manager"
+        )
 
     def tearDown(self):
         self.db.close()
@@ -74,7 +77,7 @@ class PortalRegistryTest(unittest.TestCase):
         )
         self.assertEqual([item.accessible for item in apps], [True, False, False])
 
-    def test_superuser_does_not_receive_implicit_business_applications(self):
+    def test_superuser_with_platform_assignment_has_no_business_applications(self):
         apps = applications_for_user(self.db, self.admin)
 
         self.assertEqual([item.accessible for item in apps], [False, False, False])

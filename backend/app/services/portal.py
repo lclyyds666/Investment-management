@@ -39,11 +39,13 @@ APPLICATIONS = (
 
 
 def applications_for_user(db: Session, user: User) -> list[PortalApplicationOut]:
-    platform_permissions = {
-        grant.code
-        for grant in permission_grants(db, user.id)
-        if grant.data_scope == DataScope.PLATFORM
-    }
+    platform_permissions = set()
+    if not user.is_superuser:
+        platform_permissions = {
+            grant.code
+            for grant in permission_grants(db, user.id)
+            if grant.data_scope == DataScope.PLATFORM
+        }
     applications = []
     for code, company_name, route, status, enter_permission in APPLICATIONS:
         accessible = enter_permission in platform_permissions
