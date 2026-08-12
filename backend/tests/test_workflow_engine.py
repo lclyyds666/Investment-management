@@ -735,6 +735,16 @@ class WorkflowAuthorizationTest(unittest.TestCase):
             WorkflowTaskStatus.AWAITING_REASSIGNMENT,
         )
 
+    def test_inactive_non_designated_requester_refreshes_invalid_designated_task(self):
+        self.leader.assignments[0].valid_until = date.today() - timedelta(days=1)
+        self.leader_b.is_active = False
+        self.db.commit()
+        self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.leader_b))
+        self.assertEqual(
+            self.db.get(WorkflowTask, self.designated_task.id).status,
+            WorkflowTaskStatus.AWAITING_REASSIGNMENT,
+        )
+
     def test_inbox_returns_only_actionable_active_tasks(self):
         self.shared_task.status = WorkflowTaskStatus.ACTIVE
         self.db.commit()

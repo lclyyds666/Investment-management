@@ -833,16 +833,21 @@ def _effective_task_assignment(
     user: User,
     on_date: date,
 ) -> UserAssignment | None:
-    if not user.is_active or task.status != WorkflowTaskStatus.ACTIVE:
-        return None
-    if _actor_has_other_workflow_role(db, task, user.id):
+    if task.status != WorkflowTaskStatus.ACTIVE:
         return None
     if task.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER:
         assignment = _mark_invalid_designated_task(db, task, on_date)
-        if assignment is None or user.id != task.designated_user_id:
+        if (
+            assignment is None
+            or not user.is_active
+            or user.id != task.designated_user_id
+            or _actor_has_other_workflow_role(db, task, user.id)
+        ):
             return None
         return assignment if _task_assignment_is_effective(task, assignment, user, on_date) else None
 
+    if not user.is_active or _actor_has_other_workflow_role(db, task, user.id):
+        return None
     if task.instance.submitted_by == user.id:
         return None
     assignments = _active_assignments(
