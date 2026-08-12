@@ -76,6 +76,24 @@ def _supply_grants(position_code: str, permission_codes: set[str] | frozenset[st
 
 
 POSITION_GRANTS = (
+    *(
+        {
+            "position_code": position_code,
+            "permission_code": "supply.portal.enter",
+            "data_scope": "platform",
+            "scope_ref": "supplymanagement",
+        }
+        for position_code in (
+            "supply.business_handler",
+            "supply.business_reviewer",
+            "supply.finance_handler",
+            "supply.company_leader",
+            "governance.supply_leader",
+            "investment.duty.supply_risk_review",
+            "investment.duty.supply_finance_review",
+            "external.legal_counsel",
+        )
+    ),
     *_supply_grants("supply.business_handler", SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | {
         "supply.scenic.create", "supply.scenic.update", "supply.scenic.delete",
         "supply.contract.create", "supply.contract.update", "supply.contract.delete", "supply.contract.submit",

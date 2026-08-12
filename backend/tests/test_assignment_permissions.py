@@ -102,6 +102,47 @@ class AuthorizationCatalogTest(unittest.TestCase):
         }
         self.assertEqual(delete_grantees, {"supply.business_handler"})
 
+    def test_supply_portal_enter_has_the_exact_platform_grant_topology(self):
+        expected_positions = {
+            "supply.business_handler",
+            "supply.business_reviewer",
+            "supply.finance_handler",
+            "supply.company_leader",
+            "governance.supply_leader",
+            "investment.duty.supply_risk_review",
+            "investment.duty.supply_finance_review",
+            "external.legal_counsel",
+        }
+        portal_grants = [
+            item
+            for item in POSITION_GRANTS
+            if item["permission_code"] == "supply.portal.enter"
+        ]
+
+        self.assertEqual(len(portal_grants), len(expected_positions))
+        self.assertEqual(
+            {
+                (item["position_code"], item["data_scope"], item["scope_ref"])
+                for item in portal_grants
+            },
+            {
+                (position_code, "platform", "supplymanagement")
+                for position_code in expected_positions
+            },
+        )
+        self.assertEqual(
+            {
+                (item["permission_code"], item["data_scope"], item["scope_ref"])
+                for item in POSITION_GRANTS
+                if item["position_code"] == "external.legal_counsel"
+                and item["permission_code"] != "supply.portal.enter"
+            },
+            {
+                ("supply.contract.view", "assigned", ""),
+                ("supply.contract.review", "assigned", ""),
+            },
+        )
+
     def test_legacy_roles_map_to_confirmed_positions(self):
         self.assertEqual(
             legacy_target(Role.INVEST_DIRECTOR).position_code,
@@ -277,12 +318,29 @@ class AssignmentPermissionServiceTest(unittest.TestCase):
             PermissionContext(owner_id=self.multi_role_user.id),
         ))
 
-    def test_superuser_has_no_implicit_business_permission(self):
+    def test_superuser_with_business_assignment_is_denied_by_authorization_adapters(self):
+        self.add_assignment(
+            self.admin,
+            "supplymanagement",
+            "supply.business_handler",
+        )
+
+        self.assertEqual(
+            [assignment.position.code for assignment in active_assignments(self.db, self.admin.id)],
+            ["supply.business_handler"],
+        )
+        self.assertIn(
+            "supply.contract.submit",
+            {grant.code for grant in permission_grants(self.db, self.admin.id)},
+        )
+        self.assertFalse(
+            has_position(self.db, self.admin.id, "supply.business_handler")
+        )
         self.assertFalse(
             has_permission(
                 self.db,
                 self.admin,
-                "supply.contract.approve",
+                "supply.contract.submit",
                 PermissionContext(company_code="supplymanagement"),
             )
         )

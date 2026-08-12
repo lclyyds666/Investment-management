@@ -13,6 +13,17 @@ from app.services.portal import applications_for_user, permission_snapshot_for_u
 
 
 class PortalRegistryTest(unittest.TestCase):
+    SUPPLY_PORTAL_ASSIGNMENTS = (
+        ("supplymanagement", "supply.business_handler"),
+        ("supplymanagement", "supply.business_reviewer"),
+        ("supplymanagement", "supply.finance_handler"),
+        ("supplymanagement", "supply.company_leader"),
+        ("supplymanagement", "governance.supply_leader"),
+        ("investment.legal_risk", "investment.duty.supply_risk_review"),
+        ("investment.asset_finance", "investment.duty.supply_finance_review"),
+        ("external.legal", "external.legal_counsel"),
+    )
+
     def setUp(self):
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(self.engine)
@@ -75,7 +86,33 @@ class PortalRegistryTest(unittest.TestCase):
             [item.status for item in apps],
             ["construction", "online", "construction"],
         )
-        self.assertEqual([item.accessible for item in apps], [True, False, False])
+        self.assertEqual([item.accessible for item in apps], [True, True, False])
+
+    def test_every_intended_position_can_enter_the_supply_application(self):
+        for index, (organization_code, position_code) in enumerate(
+            self.SUPPLY_PORTAL_ASSIGNMENTS
+        ):
+            with self.subTest(position_code=position_code):
+                user = self.add_user(f"supply-portal-{index}")
+                self.add_assignment(user, organization_code, position_code)
+
+                supply_app = applications_for_user(self.db, user)[1]
+
+                self.assertTrue(supply_app.accessible)
+                self.assertIsNone(supply_app.denial_reason)
+
+    def test_investment_hierarchy_does_not_grant_supply_portal_access(self):
+        user = self.add_user("investment-only")
+        self.add_assignment(
+            user,
+            "investment",
+            "investment.executive.general_manager",
+        )
+
+        supply_app = applications_for_user(self.db, user)[1]
+
+        self.assertFalse(supply_app.accessible)
+        self.assertEqual(supply_app.denial_reason, "暂时无访问权限")
 
     def test_superuser_with_platform_assignment_has_no_business_applications(self):
         apps = applications_for_user(self.db, self.admin)
@@ -116,6 +153,9 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
         )
         self.add_assignment(
             self.legacy_user, "supplymanagement", "governance.supply_leader"
+        )
+        self.add_assignment(
+            self.admin, "supplymanagement", "supply.business_handler"
         )
 
     def tearDown(self):

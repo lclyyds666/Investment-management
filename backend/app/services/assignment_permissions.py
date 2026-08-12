@@ -85,6 +85,9 @@ def permission_grants(
 def has_position(
     db: Session, user_id: int, position_code: str, on_date: date | None = None
 ) -> bool:
+    user = db.get(User, user_id)
+    if user is None or user.is_superuser:
+        return False
     return any(
         assignment.position.code == position_code
         for assignment in active_assignments(db, user_id, on_date)
@@ -115,6 +118,8 @@ def has_permission(
     permission_code: str,
     context: PermissionContext | None = None,
 ) -> bool:
+    if user.is_superuser:
+        return False
     permission_context = context or PermissionContext()
     return any(
         _scope_matches(grant, user.id, permission_context)

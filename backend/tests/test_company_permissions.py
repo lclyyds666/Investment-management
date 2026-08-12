@@ -178,8 +178,9 @@ class CompanyPermissionDependencyTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
-    def test_require_roles_denies_superuser_without_assignment(self):
+    def test_require_roles_denies_superuser_with_business_assignment(self):
         user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
+        self.add_assignment(user, "supply.business_handler")
 
         with self.assertRaises(HTTPException) as raised:
             require_roles(Role.BUSINESS_HANDLER)(current_user=user, db=self.db)
