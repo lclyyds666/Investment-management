@@ -127,6 +127,19 @@ class WorkflowModelContractTest(unittest.TestCase):
                 source,
             )
 
+    def test_unified_organization_tables_use_production_collation(self):
+        source = Path(
+            "migrations/20260813_unified_organization_permissions.sql"
+        ).read_text(encoding="utf-8")
+        table_options = [
+            line.strip()
+            for line in source.splitlines()
+            if line.strip().startswith(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        ]
+        self.assertEqual(len(table_options), 7)
+        for table_option in table_options:
+            self.assertIn("COLLATE=utf8mb4_unicode_ci", table_option)
+
 
 if __name__ == "__main__":
     unittest.main()

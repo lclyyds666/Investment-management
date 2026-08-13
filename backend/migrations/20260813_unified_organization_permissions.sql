@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `sys_organization` (
   KEY `idx_organization_company_code` (`company_code`),
   CONSTRAINT `fk_organization_parent`
     FOREIGN KEY (`parent_id`) REFERENCES `sys_organization` (`id`) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Organizations and departments';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Organizations and departments';
 
 CREATE TABLE IF NOT EXISTS `sys_position` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS `sys_position` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_position_code` (`code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Assignable positions';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Assignable positions';
 
 CREATE TABLE IF NOT EXISTS `sys_permission` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_permission_code` (`code`),
   KEY `idx_permission_resource` (`resource`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Permission catalog';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Permission catalog';
 
 CREATE TABLE IF NOT EXISTS `sys_user_assignment` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS `sys_user_assignment` (
     FOREIGN KEY (`organization_id`) REFERENCES `sys_organization` (`id`) ON DELETE RESTRICT,
   CONSTRAINT `fk_assignment_position`
     FOREIGN KEY (`position_id`) REFERENCES `sys_position` (`id`) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='User position assignments';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='User position assignments';
 
 CREATE TABLE IF NOT EXISTS `sys_position_permission` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS `sys_position_permission` (
     FOREIGN KEY (`position_id`) REFERENCES `sys_position` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_position_permission_permission`
     FOREIGN KEY (`permission_id`) REFERENCES `sys_permission` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Permissions granted to positions';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Permissions granted to positions';
 
 CREATE TABLE IF NOT EXISTS `sys_governance_scope` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS `sys_governance_scope` (
   UNIQUE KEY `uq_assignment_governance_scope` (`assignment_id`, `scope_type`, `scope_ref`),
   CONSTRAINT `fk_governance_scope_assignment`
     FOREIGN KEY (`assignment_id`) REFERENCES `sys_user_assignment` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Governance scopes for assignments';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Governance scopes for assignments';
 
 CREATE TABLE IF NOT EXISTS `sys_external_assignment` (
   `id` INT NOT NULL AUTO_INCREMENT,
@@ -109,4 +109,4 @@ CREATE TABLE IF NOT EXISTS `sys_external_assignment` (
   UNIQUE KEY `uq_external_assignment_assignment_id` (`assignment_id`),
   CONSTRAINT `fk_external_assignment_assignment`
     FOREIGN KEY (`assignment_id`) REFERENCES `sys_user_assignment` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='External assignment details';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='External assignment details';
