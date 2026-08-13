@@ -15,7 +15,7 @@
 ## 📊 任务进度(需求实现进度)
 
 > 数据源:`需求规格说明书.md` 附录 A/B/C/D。图例:✅ 已实现　🟡 部分实现 / 与商用有差距　❌ 未实现 / 未开工　🔒 甲方依赖(接口权限未下发)。
-> **约定:每次功能有更新,必须同步更新本章节**(模块状态 + 阶段勾选 + 文末「迭代日志」追加一行)。最后更新:**2026-07-29**。
+> **约定:每次功能有更新,必须同步更新本章节**(模块状态 + 阶段勾选 + 文末「迭代日志」追加一行)。最后更新:**2026-08-13**。
 > 粗略完成度:P0 核心约 **80%**;整份规格(含 P1/P2/小程序)约 **55%**。
 
 ### 模块实现状态
@@ -23,7 +23,7 @@
 | 模块 | 优先级 | 状态 | 说明 / 主要缺口 |
 | --- | --- | --- | --- |
 | 认证安全 | P0 | ✅ | 密码登录 + JWT + 图形验证码 + 防爆破(Redis/内存兜底)。缺:忘记密码、Token 刷新 |
-| 用户与权限 | P0 | ✅ | 完整 CRUD + 8 角色 + 本人改密改名 + 手机号脱敏 + 「仅超管」双保险 |
+| 用户与权限 | P0 | ✅ | 统一账号 + 组织/岗位/人员任职 + 岗位授权;一人多任职时权限取并集;本人改密改名 + 手机号脱敏 + 超管治理边界 |
 | 电子签名 | P0 | ✅ | 上传 / 审批快照附签 / 打印渲染。缺:水印、超管重置签名 |
 | 合同全生命周期 | P0 | ✅ | 5 节点审批流 + 附件真实上传下载 + 台账导出 CSV + 「法律文件审批表」打印。缺:撤回/转交/加签/会签/时限/归档 |
 | 业务审批(双工作流) | P0 | ✅ | 付款审批单(7 节点,金额大小写转换)+ 业务审批单(5 节点)+ 按模板打印 + **AI 合同校对** |
@@ -35,7 +35,8 @@
 | 文旅业务(景区核销台账) | — | ✅ | 景区卡片 Grid → 详情(经营数据卡 + 平台入口 + 折叠台账);Excel 上传;按 `scenic_id` 严格数据隔离;门票/酒店编辑支持到账、佣金率、核销/结算金额联动与快照持久化 |
 | 明暗双主题切换 | — | ✅ | 明亮/暗黑切换 + localStorage 持久化;`--chrome-*` 外壳变量;大屏/登录页恒定深色 |
 | 操作审计 | P1 | ✅ | 登录日志 + 写操作中间件自动留痕(POST/PUT/DELETE)+ 导出类 GET;按用户/模块/动作/状态/时间筛选查询 + CSV 导出;仅超管可见 |
-| 系统配置 / 监控 / 定时任务 / 消息通知 | P2 | ❌ | 参数/字典/公告/部门/岗位、服务监控、缓存监控、定时同步、WebSocket 推送均未开工 |
+| 系统管理 | P0 | ✅ | 组织架构、岗位权限、人员任职、统一用户管理、操作日志、失效任务改派已完成;组织通讯录按岗位权限开放 |
+| 系统配置 / 监控 / 定时任务 / 消息通知 | P2 | ❌ | 参数/字典/公告、服务监控、缓存监控、定时同步、WebSocket 推送尚未实现 |
 | 传输加密(RSA+AES)、Docker Compose | P2 | ❌ | 未开工 |
 | 小程序端 | — | ❌ | 移动审批 / 待办 / 查看 / 个人中心整套未开工 |
 
@@ -46,12 +47,13 @@
 | 第 1 周 | 基础闭环与安全底座(用户 CRUD / 验证码 / 防爆破 / 脱敏) | ✅ 已完成 |
 | 第 2 周 | 财务闭环 + 操作审计 | 🟡 审计仅审批记录、进出账台账未做 |
 | 第 3 周 | 渠道对接 + 合同增强 | 🟡 合同增强大部完成;OTA 对接 🔒 待甲方接口 |
-| 第 4 周 | 小程序端 + 系统模块 + 联调上线 | ❌ 系统模块/小程序未开工(生产环境已上线运行) |
+| 第 4 周 | 小程序端 + 系统模块 + 联调上线 | 🟡 系统管理已完成;小程序未开工(生产环境已上线运行) |
 
 ### 迭代日志(每次更新在此追加一行)
 
 | 日期 | 本轮内容 | 部署 |
 | --- | --- | --- |
+| 2026-08-13 | **统一组织岗位权限**(统一账号、组织/岗位/人员任职、岗位授权、多任职权限并集)+ **v2 岗位工作流**(共享岗位抢办 `shared_position`、提交时指定人 `designated_user`、超管仅治理改派)+ 审批动作保留组织/岗位/办理人历史快照 | 待部署 🟡 |
 | 2026-07-10 | 商用数据打通(签名/审批快照、渠道联动、真实 DeepSeek、财务/项目看板) | 生产 ✅ |
 | 2026-07-13 | 大屏地图数据驱动 + 上传即上屏;生产库补齐 schema | 生产 ✅ |
 | 2026-07-14 | 认证安全 P0(验证码/防爆破)+ 用户完整 CRUD + 脱敏 + 导航重构 + 客户 AI 尽调 | 生产 ✅ |
@@ -86,10 +88,10 @@ Investment-management/
 ├── backend/                    # FastAPI 后端
 │   ├── app/
 │   │   ├── api/v1/endpoints/    # 路由:auth / user / contract / customer / channel / invoice / operation ...
-│   │   ├── core/               # 配置、枚举(角色/审批链)、安全、脱敏、KV 存储、验证码
+│   │   ├── core/               # 配置、枚举、权限范围、安全、脱敏、KV 存储、验证码
 │   │   ├── models/             # SQLAlchemy ORM 模型
 │   │   ├── schemas/            # Pydantic 出入参模型
-│   │   ├── services/           # 业务服务:AI 代理 / 渠道 ETL / 财务 / 客户尽调 / 地理词典 ...
+│   │   ├── services/           # organization_catalog/assignment_permissions/workflow_catalog/workflow_engine + AI/渠道/财务等
 │   │   └── db/                 # 会话、Base、init_db(建表+种子)
 │   ├── migrations/             # 运行库增量迁移 SQL(按序执行)
 │   ├── uploads/                # 上传文件落盘(gitignore)
@@ -97,10 +99,10 @@ Investment-management/
 │   └── .env                    # 密钥配置(gitignore,照 .env.example 重建)
 ├── frontend/                   # Vue3 前端
 │   ├── src/
-│   │   ├── views/              # 页面:dashboard / operation / contract / approval / customer / channel / invoice / finance / system ...
+│   │   ├── views/              # 业务页面 + system(账号/通讯录/组织/岗位权限/任职/日志/AI 会话审计)
 │   │   ├── components/         # 复用组件(合同详情抽屉、客户 AI 尽调弹窗 ...)
-│   │   ├── router/、permission.js  # 路由与守卫(角色/超管拦截)
-│   │   ├── store/、api/、constants/ # Pinia / 接口封装 / 业务常量(角色、审批链)
+│   │   ├── router/、permission.js  # 路由与守卫(岗位权限/超管治理边界)
+│   │   ├── store/、api/、constants/ # Pinia / 接口封装 / 业务常量
 │   │   └── layout/             # 侧边栏(按 meta.group 分组渲染)
 │   └── public/geo/china.json   # 大屏地图底图(本地自托管)
 ├── deploy/                     # 生产部署产物(nginx.conf、systemd service)
@@ -118,9 +120,10 @@ Investment-management/
 | 模块 | 能力 |
 | --- | --- |
 | **认证安全** | 密码登录 + JWT;图形验证码(SVG 零依赖,一次性消费);暴力破解防护(失败 5 次锁 30 分钟,Redis→内存兜底) |
-| **用户与权限** | 用户完整 CRUD(超管);本人改密/改登录名;手机号脱敏;8 角色 + 「仅超管」页面双保险 |
-| **合同全生命周期** | 新建(申请部门/编号/名称/类型/是否内部/标的/签订日期/客户/金额/币种/付款条件/**附件真实上传**);5 节点审批流;**合同台账导出 CSV**;**「法律文件审批表」打印**;**PDF 附件预览/下载**(任意登录用户可查看) |
-| **业务审批**(原「审批中心」) | **两套独立工作流**:①业务付款审批单(7 节点,含付款金额大小写自动转换/开户行/银行账号)②业务审批单(5 节点);列表统一列(申请日期/客户/业务类型/合同编号/付款金额);**按原始 xlsx 模板还原打印**;**AI 合同校对**(附件 ⇄ 合同库原件文本比对,DeepSeek + 规则兜底,聚焦正文、排除落款/盖章/签字页) |
+| **用户与权限** | 统一账号 CRUD;组织树、岗位目录、任职有效期、治理/外聘任职、岗位权限模板;有效多任职的权限按范围取并集;本人改密/改登录名;手机号脱敏 |
+| **系统管理** | 统一页面提供人员账号、组织通讯录、组织管理、岗位与权限、人员任职、操作日志和 AI 会话审计;超管可处理因任职失效进入待改派队列的审批任务 |
+| **合同全生命周期** | 新建、附件真实上传、`supply.contract.v2` 岗位工作流、合同台账导出 CSV、「法律文件审批表」打印、PDF 附件预览/下载 |
+| **业务审批**(原「审批中心」) | **两套独立 v2 工作流**:`supply.payment.v2`(7 节点)与 `supply.business.v2`(5 节点);支持共享岗位抢办与提交时指定审批人;按原始 xlsx 模板还原打印;AI 合同校对 |
 | **文旅业务**(渠道业务下) | 入口页景区卡片 Grid(每行 3 个)→ 景区详情(平台入口 + **核销数据台账**);**Excel 上传/清空/预览**;**按 `scenic_id` 严格数据隔离**(接口只返本景区数据,`WHERE scenic_id`) |
 | **客户档案库** | 增删改查 + 手机号脱敏;**AI 尽职调查**(PDF/Word/Excel **批量上传** → 解析 → 融合博查外部资讯 → DeepSeek 生成分析报告,两级降级不 500) |
 | **经营数据 & 大屏** | 项目维度经营看板;数据大屏(KPI/趋势/**数据驱动地图飞线**/省份联动/审批跑马灯/AI 雷达) |
@@ -132,31 +135,33 @@ Investment-management/
 
 ---
 
-## 三、角色与权限
+## 三、组织、岗位与权限
 
-系统共 **8 个角色**(角色值存字符串,重命名只改显示名):
+权限模型以“统一账号 → 有效任职 → 岗位权限”为主线。山东出版投资有限公司为一级公司;山东出版供应链管理有限公司(供管公司)和山东出版股权基金管理有限公司(基管公司)为其二级子公司。投资公司下设综合管理部、投资管理部、法务风控部、资产财务部。
 
-| 角色值 | 显示名 | 说明 |
-| --- | --- | --- |
-| `business_handler` | 业务经办 | 合同录入与提交 |
-| `scm_director` | 供管公司负责人 | 合同审批节点① |
-| `legal_counsel` | **法律顾问** | 仅可访问「合同管理 / 审批中心」;合同审批节点② |
-| `risk_auditor` | 投资公司法务风控 | 合同审批节点③(原「风控审核」) |
-| `invest_director` | 投资公司总经理 | 合同审批节点④,末级(原「投资公司分管领导 / 负责人」) |
-| `finance_reviewer` | 投资公司财务复核 | 财务模块(原「财务复核」) |
-| `business_reviewer` / `finance_handler` | 业务复核 / 财务经办 | 保留角色,不在合同审批链上 |
+**岗位目录:**
 
-**审批链**(顺序即流转顺序,三条互不干扰):
+- 投资公司高管:董事长、总经理、副总经理;四部门通用职级:部门总监、部门副总监、高级经理、中级经理、初级经理。
+- 供管公司业务岗位:业务经办、业务复核、供管公司负责人、供应链财务经办;另有面向供管公司的治理任职“供管公司分管领导”、供应链风控复核、供应链财务复核。
+- 基管公司:基管公司董事长、基管公司总经理;另有基管公司分管领导治理任职。
+- 外部任职:外聘法律顾问,记录服务单位、服务范围与任职有效期。
 
+一个账号可同时拥有多条有效任职,最终权限是这些岗位授权在各自数据范围内的并集。权限授予岗位,不再直接绑定旧角色字符串;任职失效后对应权限立即失效。超管仅负责账号授权、组织/岗位/任职治理、审计与任务改派,不获得业务审批权限,也不能绕过业务审批节点。
+
+**v2 审批链**(顺序即流转顺序):
+
+```text
+supply.contract.v2
+业务经办 → 供管公司负责人 → 外聘法律顾问 → 供应链法务风控复核 → 供管公司分管领导
+
+supply.payment.v2
+业务经办 → 业务复核 → 供应链财务经办 → 供管公司负责人 → 供应链法务风控复核 → 供应链财务复核 → 供管公司分管领导
+
+supply.business.v2
+业务经办 → 业务复核 → 供管公司负责人 → 供应链法务风控复核 → 供管公司分管领导
 ```
-① 合同(法律)审批链   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司总经理
-② 业务付款审批单(7)   业务经办 → 业务复核 → 财务经办 → 供管公司负责人 → 投资公司法务风控 → 投资公司财务复核 → 投资公司总经理
-③ 业务审批单(5)       业务经办 → 业务复核 → 供管公司负责人 → 投资公司法务风控 → 投资公司总经理
-```
 
-除「业务经办」(提交时自动完成第 0 级并附签)外,其余节点在「业务审批」页均需/可填写审批意见,并自动附加电子签章;末级通过即 `approved`。
-
-> **信息维护**(超管账号身份,`info_maintainer`)不参与签章:上传/维护电子签名的接口与页面均已拦截/隐藏。
+`shared_position` 节点由当前有效任职中符合岗位的人员共享待办,首位成功提交动作的人完成该任务;并发后到者收到已完成冲突。`designated_user` 节点必须在提交业务时从符合任职条件的候选人中明确指定,只允许该指定人办理。三条流程中业务经办均为 `shared_position` 且提交时自动完成;供管公司负责人、外聘法律顾问、供管公司分管领导为 `designated_user`(付款/事项不含法律顾问),其余复核节点为 `shared_position`。审批动作持久化办理人、组织、岗位、签名及改派前后人员快照,历史记录不随后续任职变化。
 
 ---
 
@@ -188,15 +193,9 @@ npm install
 npm run dev                                # http://localhost:5173  (/api 代理到 8000)
 ```
 
-### 4. 默认账号(密码均 `123456`,登录后请尽快改密)
+### 4. 初始账号
 
-| 账号 | 角色 | 账号 | 角色 |
-| --- | --- | --- | --- |
-| `admin` | 超级管理员 | `scm` | 供管公司负责人 |
-| `op` | 业务经办 | `legal` | 法律顾问 |
-| `risk` | 投资公司法务风控 | `inv` | 投资公司总经理 |
-| `review` | 业务复核 | `fin` | 财务经办 |
-| `finr` | 投资公司财务复核 | | |
+`python -m app.db.init_db` 会为本地开发创建兼容种子账号,初始密码均为 `123456`。其中 `admin` 是唯一超管治理账号;其余兼容账号必须通过任职迁移或在“系统管理 → 人员任职”中绑定有效岗位后才能获得业务权限。生产环境不得把旧 `role` 字符串当作审批授权依据,并应在首次登录后立即修改所有初始密码。
 
 ---
 
@@ -232,7 +231,26 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260731_ledger_confirm_sta
 mysql -u root -p sd_publish_scm < backend/migrations/20260802_hotel_payment_date.sql    # 酒店台账付款日期 payment_date
 mysql -u root -p sd_publish_scm < backend/migrations/20260803_ledger_commission_rate.sql # 门票/酒店服务商佣金率 commission_rate
 mysql -u root -p sd_publish_scm < backend/migrations/20260804_ledger_co_investment.sql   # 门票/酒店跟投金额 co_investment_amount
+mysql -u root -p sd_publish_scm < backend/migrations/20260813_authorization_audit_context.sql       # 授权审计组织/岗位/前后快照上下文
+mysql -u root -p sd_publish_scm < backend/migrations/20260813_unified_organization_permissions.sql  # 组织/岗位/任职/岗位权限模型
+mysql -u root -p sd_publish_scm < backend/migrations/20260814_position_workflow_engine.sql           # v2 岗位工作流定义、实例、任务与动作快照
 ```
+
+### 统一权限与活动流程生产迁移顺序
+
+完成数据库备份并执行以上三份 SQL 后,必须在 `backend/` 目录按以下顺序生成和保留 JSON 报告。预览命令不带 `--apply`;只有报告无阻塞项后才执行对应应用命令。
+
+```bash
+# 1. 旧角色 → 人员任职:预览,人工审阅后应用
+.venv/bin/python scripts/migrate_company_roles_to_assignments.py --report /opt/sd-scm/reports/legacy-assignment-preview.json
+.venv/bin/python scripts/migrate_company_roles_to_assignments.py --apply --report /opt/sd-scm/reports/legacy-assignment-apply.json
+
+# 2. 活动中的旧审批 → v2 工作流:预览,人工审阅后应用
+.venv/bin/python scripts/migrate_active_workflows.py --report /opt/sd-scm/reports/active-workflow-preview.json
+.venv/bin/python scripts/migrate_active_workflows.py --apply --report /opt/sd-scm/reports/active-workflow-apply.json
+```
+
+任一报告出现 `unresolved` 非零,或条目结果为 `needs_designation` / `invalid_state`,必须停止部署并人工修复任职、指定审批人或流程状态后重新预览;禁止猜测人员、禁止跳过预览直接应用。预览与应用报告均须随数据库备份长期保留,用于上线核对和审计追溯。
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。
 
@@ -268,20 +286,24 @@ nginx -t && systemctl restart nginx
 # 1) 本地构建前端
 cd frontend && npm run build
 
-# 2) 打包并上传(前端 dist + 后端 app + 依赖清单)
+# 2) 打包并上传(前端 dist + 后端 app + 迁移/脚本)
 tar -czf dist.tgz -C frontend/dist .
 tar -czf app.tgz  -C backend app
-scp dist.tgz app.tgz root@39.107.52.146:/tmp/
+tar -czf backend-support.tgz -C backend migrations scripts
+scp dist.tgz app.tgz backend-support.tgz root@39.107.52.146:/tmp/
 
-# 3) 服务器:备份→覆盖→授权→(涉及新表则跑迁移)→重启
+# 3) 服务器:备份→覆盖→授权→执行新迁移与 preview/apply→保留报告→重启
 ssh root@39.107.52.146 '
   cd /opt/sd-scm
   cp -a frontend/dist frontend/dist.bak && cp -a backend/app backend/app.bak
   rm -rf frontend/dist && mkdir frontend/dist && tar -xzf /tmp/dist.tgz -C frontend/dist
   tar -xzf /tmp/app.tgz -C backend
-  chown -R www-data:www-data frontend/dist backend/app
+  tar -xzf /tmp/backend-support.tgz -C backend
+  mkdir -p reports
+  chown -R www-data:www-data frontend/dist backend/app backend/migrations backend/scripts reports
   cd backend && .venv/bin/pip install -q -r requirements.txt
-  # 若有新迁移:mysql sd_publish_scm < migrations/xxx.sql
+  # 本轮须按第五节执行 20260813/20260814 三份迁移,再依次完成任职和活动流程 preview/apply。
+  # reports/*.json 与数据库备份必须保留;任何 unresolved/needs_designation/invalid_state 均停止上线。
   systemctl restart sd-scm-backend
   nginx -t && systemctl reload nginx
 '
