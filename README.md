@@ -142,8 +142,8 @@ Investment-management/
 **岗位目录:**
 
 - 投资公司高管:董事长、总经理、副总经理;四部门通用职级:部门总监、部门副总监、高级经理、中级经理、初级经理。
-- 供管公司业务岗位:业务经办、业务复核、供管公司负责人、供应链财务经办;另有面向供管公司的治理任职“供管公司分管领导”、供应链风控复核、供应链财务复核。
-- 基管公司:基管公司董事长、基管公司总经理;另有基管公司分管领导治理任职。
+- 供管公司业务岗位:业务经办、业务复核、供应链公司负责人、供应链财务经办;另有面向供管公司的治理任职“供应链分管领导”、供应链风控复核、供应链财务复核。
+- 基管公司:基金公司董事长、基金公司总经理;另有基金公司分管领导治理任职。
 - 外部任职:外聘法律顾问,记录服务单位、服务范围与任职有效期。
 
 一个账号可同时拥有多条有效任职,最终权限是这些岗位授权在各自数据范围内的并集。权限授予岗位,不再直接绑定旧角色字符串;任职失效后对应权限立即失效。超管仅负责账号授权、组织/岗位/任职治理、审计与任务改派,不获得业务审批权限,也不能绕过业务审批节点。
@@ -233,24 +233,46 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260803_ledger_commission_
 mysql -u root -p sd_publish_scm < backend/migrations/20260804_ledger_co_investment.sql   # 门票/酒店跟投金额 co_investment_amount
 mysql -u root -p sd_publish_scm < backend/migrations/20260813_authorization_audit_context.sql       # 授权审计组织/岗位/前后快照上下文
 mysql -u root -p sd_publish_scm < backend/migrations/20260813_unified_organization_permissions.sql  # 组织/岗位/任职/岗位权限模型
-mysql -u root -p sd_publish_scm < backend/migrations/20260814_position_workflow_engine.sql           # v2 岗位工作流定义、实例、任务与动作快照
+mysql -u root -p sd_publish_scm < backend/migrations/20260814_position_workflow_engine.sql           # v2 岗位工作流持久化表、实例、任务与动作快照
 ```
 
 ### 统一权限与活动流程生产迁移顺序
 
-完成数据库备份并执行以上三份 SQL 后,必须在 `backend/` 目录按以下顺序生成和保留 JSON 报告。预览命令不带 `--apply`;只有报告无阻塞项后才执行对应应用命令。
+进入维护窗口并暂停合同、付款和事项审批的新提交。完成数据库备份并执行以上三份 SQL 后,必须在 `backend/` 目录按以下顺序播种目录、生成并保留 JSON 报告。预览命令不带 `--apply`;只有报告无阻塞项后才执行对应应用命令。
 
 ```bash
-# 1. 旧角色 → 人员任职:预览,人工审阅后应用
-.venv/bin/python scripts/migrate_company_roles_to_assignments.py --report /opt/sd-scm/reports/legacy-assignment-preview.json
-.venv/bin/python scripts/migrate_company_roles_to_assignments.py --apply --report /opt/sd-scm/reports/legacy-assignment-apply.json
+# 1. 幂等播种组织、岗位、权限和岗位授权目录
+PYTHONPATH=. .venv/bin/python - <<'PY'
+from app.db.session import SessionLocal
+from app.services.organization_catalog import seed_authorization_catalog
+with SessionLocal() as db:
+    seed_authorization_catalog(db)
+PY
 
-# 2. 活动中的旧审批 → v2 工作流:预览,人工审阅后应用
-.venv/bin/python scripts/migrate_active_workflows.py --report /opt/sd-scm/reports/active-workflow-preview.json
-.venv/bin/python scripts/migrate_active_workflows.py --apply --report /opt/sd-scm/reports/active-workflow-apply.json
+# 2. 旧角色 → 人员任职:预览,人工审阅后应用
+.venv/bin/python -m scripts.migrate_company_roles_to_assignments --report /opt/sd-scm/reports/legacy-assignment-preview.json
+.venv/bin/python -m scripts.migrate_company_roles_to_assignments --apply --report /opt/sd-scm/reports/legacy-assignment-apply.json
+
+# 3. 使用现有超管作为发布人,幂等发布三条 v2 工作流;任职冲突会阻断发布
+PYTHONPATH=. .venv/bin/python - <<'PY'
+from sqlalchemy import select
+from app.db.session import SessionLocal
+from app.models.user import User
+from app.services.workflow_engine import seed_workflow_definitions
+with SessionLocal() as db:
+    publisher_id = db.scalar(select(User.id).where(User.is_superuser.is_(True)).order_by(User.id))
+    if publisher_id is None:
+        raise RuntimeError("workflow publisher superuser is missing")
+    seed_workflow_definitions(db, publisher_id)
+    db.commit()
+PY
+
+# 4. 活动中的旧审批 → v2 工作流:预览,人工审阅后应用
+.venv/bin/python -m scripts.migrate_active_workflows --report /opt/sd-scm/reports/active-workflow-preview.json
+.venv/bin/python -m scripts.migrate_active_workflows --apply --report /opt/sd-scm/reports/active-workflow-apply.json
 ```
 
-任一报告出现 `unresolved` 非零,或条目结果为 `needs_designation` / `invalid_state`,必须停止部署并人工修复任职、指定审批人或流程状态后重新预览;禁止猜测人员、禁止跳过预览直接应用。预览与应用报告均须随数据库备份长期保留,用于上线核对和审计追溯。
+任一报告出现 `unresolved` 非零,或条目结果为 `needs_designation` / `invalid_state`,必须停止部署并人工修复任职、指定审批人或流程状态后重新预览;禁止猜测人员、禁止跳过预览直接应用。应用后必须确认不存在 `status='pending'` 且 `workflow_instance_id IS NULL` 的合同或审批单,并逐项对照 preview/apply 报告;全部通过后才能恢复新提交。预览与应用报告均须随数据库备份长期保留,用于上线核对和审计追溯。
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。
 
@@ -302,8 +324,9 @@ ssh root@39.107.52.146 '
   mkdir -p reports
   chown -R www-data:www-data frontend/dist backend/app backend/migrations backend/scripts reports
   cd backend && .venv/bin/pip install -q -r requirements.txt
-  # 本轮须按第五节执行 20260813/20260814 三份迁移,再依次完成任职和活动流程 preview/apply。
+  # 本轮须先暂停合同/付款/事项新提交,按第五节执行三份 SQL、播种目录、任职 preview/apply、发布 v2 工作流、活动流程 preview/apply。
   # reports/*.json 与数据库备份必须保留;任何 unresolved/needs_designation/invalid_state 均停止上线。
+  # apply 后确认所有 pending 合同/审批单均已关联 workflow_instance_id,并核对 preview/apply 报告后才恢复提交。
   systemctl restart sd-scm-backend
   nginx -t && systemctl reload nginx
 '

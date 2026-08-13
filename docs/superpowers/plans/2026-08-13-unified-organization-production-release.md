@@ -218,21 +218,29 @@ Enable a temporary Nginx maintenance rule for contract and approval submission P
 
 Run the three SQL migrations in timestamp order using credentials read inside the production environment without printing them.
 
-- [ ] **Step 3: Preview organization assignment migration**
+- [ ] **Step 3: Seed the authorization catalog**
+
+Run `seed_authorization_catalog` from the staged candidate against the production database. This idempotently creates only missing organization, position, permission, and position-grant rows and must complete before legacy roles can be mapped.
+
+- [ ] **Step 4: Preview organization assignment migration**
 
 Run from the staged backend with production environment:
 
 ```bash
-python scripts/migrate_company_roles_to_assignments.py --report /opt/sd-scm/releases/<revision>/organization-preview.json
+python -m scripts.migrate_company_roles_to_assignments --report /opt/sd-scm/releases/<revision>/organization-preview.json
 ```
 
 Expected: exit code `0` and no unresolved rows. Exit code `2` or unresolved rows stops the release and triggers database rollback before the maintenance rule is removed.
 
-- [ ] **Step 4: Apply organization assignment migration**
+- [ ] **Step 5: Apply organization assignment migration**
 
 Run `--apply` to `organization-applied.json`, then confirm it reports no unresolved rows.
 
-- [ ] **Step 5: Preview active workflow migration**
+- [ ] **Step 6: Publish v2 workflow definitions**
+
+Select the first existing superuser ID as `publisher_id`, call `seed_workflow_definitions(db, publisher_id)`, and commit. Publication must stop on catalog drift or any assignment conflict; do not bypass validation.
+
+- [ ] **Step 7: Preview active workflow migration**
 
 Run:
 
@@ -242,7 +250,7 @@ python -m scripts.migrate_active_workflows --report /opt/sd-scm/releases/<revisi
 
 Expected: no `needs_designation` or `invalid_state` pending rows. Any such row stops the release and restores the database backup; no designated person is guessed.
 
-- [ ] **Step 6: Apply active workflow migration**
+- [ ] **Step 8: Apply active workflow migration**
 
 Run `--apply` to `workflow-applied.json`, then verify no pending contract or approval form lacks `workflow_instance_id`.
 
