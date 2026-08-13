@@ -131,14 +131,25 @@ class WorkflowModelContractTest(unittest.TestCase):
         source = Path(
             "migrations/20260813_unified_organization_permissions.sql"
         ).read_text(encoding="utf-8")
-        table_options = [
-            line.strip()
-            for line in source.splitlines()
-            if line.strip().startswith(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
-        ]
-        self.assertEqual(len(table_options), 7)
-        for table_option in table_options:
-            self.assertIn("COLLATE=utf8mb4_unicode_ci", table_option)
+        for table_name in (
+            "sys_organization",
+            "sys_position",
+            "sys_permission",
+            "sys_user_assignment",
+            "sys_position_permission",
+            "sys_governance_scope",
+            "sys_external_assignment",
+        ):
+            marker = f"CREATE TABLE IF NOT EXISTS `{table_name}` ("
+            statement_start = source.index(marker)
+            statement_end = source.index(";", statement_start)
+            statement = source[statement_start : statement_end + 1]
+            self.assertIn(
+                "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
+                "COLLATE=utf8mb4_unicode_ci",
+                statement,
+                table_name,
+            )
 
 
 if __name__ == "__main__":
