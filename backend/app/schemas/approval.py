@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.enums import ApprovalAction, role_label
 
@@ -17,6 +17,14 @@ class RejectRequest(BaseModel):
     """驳回：原因必填。"""
 
     comment: str = Field(min_length=1, description="驳回原因（必填）")
+
+    @field_validator("comment")
+    @classmethod
+    def require_nonblank_comment(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("退回原因不能为空")
+        return normalized
 
 
 class ApprovalCreate(BaseModel):
@@ -38,9 +46,13 @@ class ApprovalOut(BaseModel):
     action: ApprovalAction
     comment: str = ""
     signature_snapshot: Optional[str] = None
+    organization_code: Optional[str] = None
+    organization_name: Optional[str] = None
+    position_code: Optional[str] = None
+    position_name: Optional[str] = None
     created_at: datetime
 
     @computed_field
     @property
     def role_label(self) -> str:
-        return role_label(self.approver_role)
+        return self.position_name or role_label(self.approver_role)

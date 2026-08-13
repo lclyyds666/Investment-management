@@ -21,13 +21,18 @@ TITLE_FONT = "方正小标宋简体"      # 标题字体(公文标准)
 BODY_FONT = "仿宋_GB2312"          # 正文字体(公文标准)
 ROW_HEIGHT_CM = 3                  # 严格行高 3cm
 
-# 4 个意见栏(角色值 → 栏目名),顺序即审批流转顺序
+# 新工作流意见栏（岗位编码 → 栏目名），顺序即审批流转顺序。
 OPINION_ROLES = [
-    ("scm_director", "供管公司负责人意见"),
-    ("legal_counsel", "法律顾问意见"),
-    ("risk_auditor", "投资公司法务风控部意见"),
-    ("invest_director", "投资公司总经理意见"),
+    ("external.legal_counsel", "法律顾问意见"),
+    ("investment.duty.supply_risk_review", "投资公司法务风控部意见"),
+    ("governance.supply_leader", "供管公司分管领导意见"),
 ]
+
+HISTORICAL_OPINION_POSITIONS = {
+    "legal_counsel": "external.legal_counsel",
+    "risk_auditor": "investment.duty.supply_risk_review",
+    "invest_director": "governance.supply_leader",
+}
 
 
 def _set_font(run, name: str, size_pt: float, bold: bool = False) -> None:
@@ -123,7 +128,7 @@ def build_legal_doc(contract: dict, opinions: dict) -> bytes:
     """生成审批表 .docx 字节。
 
     contract: {title, contract_no, sign_date, creator_name}
-    opinions: {role_value: {comment, approver_name, signature, date}}
+    opinions: {position_code: {comment, approver_name, signature, date}}
              comment 为实际审批意见（空则留空，不默认“同意”）；
              signature 为电子签名 data-URI（光栅图渲染图片，否则用姓名占位）。
     """
@@ -165,7 +170,7 @@ def build_legal_doc(contract: dict, opinions: dict) -> bytes:
     _name_value = f"{_title}（{_no}）" if _no else _title
     _fill_cell(r.cells[1].merge(r.cells[5]), _name_value)
 
-    # 4 个意见栏：实际审批意见 + 电子签名占位
+    # 意见栏：实际审批意见 + 电子签名占位
     for role, label in OPINION_ROLES:
         r = add_row()
         _fill_cell(r.cells[0], label, bold=True, center=True)

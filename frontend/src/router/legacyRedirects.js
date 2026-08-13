@@ -20,8 +20,8 @@ export const legacySupplyRedirects = [
   { path: '/contract', redirect: redirectTo('Contract') },
   { path: '/approval', redirect: redirectTo('Approval') },
   { path: '/customer', redirect: redirectTo('Customer') },
-  { path: '/org', redirect: redirectTo('Org') },
-  { path: '/audit', redirect: redirectTo('Audit') },
+  { path: '/org', redirect: redirectTo('SystemUsers') },
+  { path: '/audit', redirect: redirectTo('SystemAudit') },
   { path: '/profile', redirect: redirectTo('Profile') },
   { path: '/screen', redirect: redirectTo('Screen') }
 ]

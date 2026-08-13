@@ -90,3 +90,51 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | 合同 | POST `/contracts/{id}/submit` | 提交审批 | staff |
 | 合同 | POST `/contracts/{id}/approve` | 审批(通过/驳回) | leader |
 | 经营 | GET `/operation/dashboard` | 看板聚合数据 | staff/leader |
+
+## Unified Organization Permission Migration
+
+Run the following production sequence from the `backend` directory. Review
+`migration-preview.json` before applying the migration.
+
+```powershell
+mysql -u USER -p DATABASE < migrations/20260813_unified_organization_permissions.sql
+python -m app.db.init_db
+python scripts/migrate_company_roles_to_assignments.py --report migration-preview.json
+python scripts/migrate_company_roles_to_assignments.py --apply --report migration-applied.json
+python -m unittest tests.test_assignment_permissions tests.test_company_permissions tests.test_portal_api -v
+```
+
+The migration command exits with code `2` when its report contains unresolved
+rows that require operator review. Resolve those rows, rerun the preview, and
+then apply only after the report is acceptable.
+
+The legacy role tables and their rows remain untouched by this process. The
+rollback boundary is the new permission feature routing: disable that routing
+and continue reading the untouched legacy role rows while the migration is
+investigated or reversed operationally.
+
+## Active Legacy Workflow Cutover
+
+Do not enable version 2 submissions until this sequence finishes successfully:
+
+1. Pause all new contract and approval-form submissions.
+2. Run `python -m scripts.migrate_active_workflows --report active-workflow-preview.json`.
+3. Resolve every `needs_designation` and `invalid_state` row in the report. A
+   designated position must have exactly one eligible person; the migration never
+   chooses between zero or multiple candidates.
+4. Rerun the dry-run until it contains no unresolved pending row, then run
+   `python -m scripts.migrate_active_workflows --apply --report active-workflow-applied.json`.
+5. Verify the database contains no `pending` contract or approval form whose
+   `workflow_instance_id` is null, and compare the applied report to the preview.
+6. Enable version 2 submissions.
+
+The dry-run performs no writes. Apply materializes only pending legacy rows whose
+current step maps to a shared position and whose future designated positions each
+have exactly one eligible person. Existing approved/rejected rows remain version 1
+history and receive no workflow instance or runtime task. Migration also creates no
+synthetic `SUBMIT`, workflow action, `Approval`, or `ApprovalFormAction` audit row;
+the existing version 1 history remains authoritative for actions before cutover.
+The report is written and flushed to a same-directory temporary file before the
+database commit, then atomically renamed after commit. If that final rename fails,
+the command exits nonzero and prints the retained temporary path for recovery; do
+not rerun apply until that report has been preserved and the database verified.

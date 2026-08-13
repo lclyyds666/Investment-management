@@ -8,6 +8,13 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push })
 }))
 
+vi.mock('@/store/portal', () => ({
+  usePortalStore: () => ({
+    isSuperuser: true,
+    hasPermission: () => true
+  })
+}))
+
 const global = {
   stubs: {
     ThemeToggle: true,
@@ -33,5 +40,16 @@ describe('GlobalHeader', () => {
   it('does not render the supply assistant action in the portal shell', () => {
     const wrapper = mount(GlobalHeader, { global })
     expect(wrapper.find('[aria-label="AI 助手"]').exists()).toBe(false)
+  })
+
+  it('shows global directory and system entry points from permission snapshots', async () => {
+    const wrapper = mount(GlobalHeader, { global })
+
+    expect(wrapper.get('[aria-label="组织通讯录"]').exists()).toBe(true)
+    expect(wrapper.get('[aria-label="系统管理"]').exists()).toBe(true)
+    await wrapper.get('[aria-label="组织通讯录"]').trigger('click')
+    await wrapper.get('[aria-label="系统管理"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ name: 'SystemDirectory' })
+    expect(push).toHaveBeenCalledWith({ name: 'SystemUsers' })
   })
 })

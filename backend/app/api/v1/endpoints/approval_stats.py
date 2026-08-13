@@ -1,68 +1,84 @@
-"""审批角标统计端点 —— 按当前登录用户角色统计「待我处理」的审批数量。
-
-供前端侧边栏在「合同管理」「业务审批」及其分组上渲染 Badge 角标。
-两条独立审批流各自统计（互不干扰）：
-- contract：合同(法律)类审批，链见 enums.APPROVAL_CHAIN；
-- business：业务审批单(付款/业务两套链)，链见 enums.form_role_at_step。
-
-判定「待我审批」：审批单处于 pending 且当前流转环节角色 == 我的角色；
-超级管理员可审批任意环节，故统计其为「全部 pending」。
-"""
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+"""审批角标统计端点，按可执行工作流任务计数。"""
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_any_company_resource
-from app.core.enums import CompanyCode, ContractStatus, ResourceCode, form_role_at_step, role_at_step
+from app.api.deps import get_current_user
+from app.core.enums import CompanyCode, DataScope, WorkflowTargetType
 from app.db.session import get_db
-from app.models.approval_form import ApprovalForm
-from app.models.contract import Contract
 from app.models.user import User
 from app.schemas.common import Response
-from app.services.permissions import get_company_role
+from app.services.assignment_permissions import permission_grants
+from app.services.workflow_engine import (
+    actionable_active_task_counts,
+    awaiting_reassignment_count,
+)
 
 router = APIRouter()
+
+_VIEW_PERMISSIONS = {"supply.contract.view", "supply.approval.view"}
+
+
+def _pending_view_grant_codes(db: Session, user_id: int) -> set[str]:
+    return {
+        grant.code
+        for grant in permission_grants(db, user_id)
+        if grant.code in _VIEW_PERMISSIONS
+        and (
+            grant.data_scope == DataScope.ASSIGNED
+            or (
+                grant.data_scope == DataScope.COMPANY
+                and grant.scope_ref == CompanyCode.SUPPLY_MANAGEMENT.value
+            )
+        )
+    }
+
+
+def _require_pending_view(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    if current_user.is_superuser:
+        return current_user
+    if not _pending_view_grant_codes(db, current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+    return current_user
 
 
 @router.get(
     "/pending-count",
     response_model=Response[dict],
     summary="待我审批数量(合同/业务审批,供导航角标)",
-    dependencies=[Depends(require_any_company_resource(
-        CompanyCode.SUPPLY_MANAGEMENT,
-        ResourceCode.SUPPLY_CONTRACT,
-        ResourceCode.SUPPLY_APPROVAL,
-    ))],
 )
 def pending_count(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(_require_pending_view),
 ):
-    is_super = current_user.is_superuser
-    my_role = current_user.role if current_user.is_superuser else get_company_role(
-        db, current_user, CompanyCode.SUPPLY_MANAGEMENT
+    grant_codes = (
+        set()
+        if current_user.is_superuser
+        else _pending_view_grant_codes(db, current_user.id)
     )
-
-    # 合同(法律)类审批
-    contracts = db.scalars(
-        select(Contract).where(Contract.status == ContractStatus.PENDING)
-    ).all()
-    contract_cnt = sum(
-        1 for c in contracts
-        if is_super or role_at_step(c.current_step) == my_role
+    counts = (
+        {}
+        if current_user.is_superuser
+        else actionable_active_task_counts(db, current_user)
     )
-
-    # 业务审批单（付款单 7 节点 / 业务单 5 节点，按 form_type 分派）
-    forms = db.scalars(
-        select(ApprovalForm).where(ApprovalForm.status == ContractStatus.PENDING)
-    ).all()
-    business_cnt = sum(
-        1 for f in forms
-        if is_super or form_role_at_step(f.form_type, f.current_step) == my_role
+    contract_cnt = (
+        counts.get(WorkflowTargetType.CONTRACT, 0)
+        if "supply.contract.view" in grant_codes
+        else 0
     )
-
-    return Response.ok({
+    business_cnt = (
+        counts.get(WorkflowTargetType.PAYMENT_APPROVAL, 0)
+        + counts.get(WorkflowTargetType.BUSINESS_APPROVAL, 0)
+        if "supply.approval.view" in grant_codes
+        else 0
+    )
+    result = {
         "contract": contract_cnt,
         "business": business_cnt,
         "total": contract_cnt + business_cnt,
-    })
+    }
+    if current_user.is_superuser:
+        result["reassignment"] = awaiting_reassignment_count(db)
+    return Response.ok(result)

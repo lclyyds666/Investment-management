@@ -1,4 +1,4 @@
-// 业务常量：7 级角色、审批链、合同类型、状态 —— 与后端 app/core/enums.py 对齐
+// 业务常量：公司、角色标签、合同类型与状态
 
 export const COMPANY_CODES = {
   INVESTMENT: 'investment',
@@ -43,25 +43,6 @@ export const ROLE_LABELS = {
 
 export const roleLabel = (v) => ROLE_LABELS[v] || v || '—'
 
-// 合同审批链，顺序即流转顺序（index === step）
-//   业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司总经理
-export const APPROVAL_CHAIN = [
-  ROLES.BUSINESS_HANDLER,
-  ROLES.SCM_DIRECTOR,
-  ROLES.LEGAL_COUNSEL,
-  ROLES.RISK_AUDITOR,
-  ROLES.INVEST_DIRECTOR
-]
-
-// 审批中心的审批人角色（除业务经办外的节点；业务经办在提交时自动完成第 0 级）
-export const APPROVER_ROLES = APPROVAL_CHAIN.slice(1)
-export const DIRECTOR_ROLES = [ROLES.SCM_DIRECTOR, ROLES.INVEST_DIRECTOR]
-export const FINANCE_ROLES = [ROLES.FINANCE_HANDLER, ROLES.FINANCE_REVIEWER]
-
-// 法律顾问：仅可访问「合同管理」+「个人设置」（合同法律审批内嵌在合同管理页）；
-// 不放行「业务审批」/approval、「客户档案库」/customer —— 法律顾问不参与这些流程。
-export const LEGAL_COUNSEL_PATHS = ['/supplymanagement/contract', '/supplymanagement/profile']
-
 // 合同/审批单类型
 export const CONTRACT_TYPES = {
   PAYMENT: 'payment',   // 业务付款审批单
@@ -72,38 +53,12 @@ export const CONTRACT_TYPE_LABELS = {
   business: '业务审批单'
 }
 
-// 审批中心：两套独立审批单的审批链（index === step，与后端 enums 对齐）
-export const PAYMENT_APPROVAL_CHAIN = [
-  ROLES.BUSINESS_HANDLER,   // 业务经办
-  ROLES.BUSINESS_REVIEWER,  // 业务复核
-  ROLES.FINANCE_HANDLER,    // 供管公司财务审核（财务经办）
-  ROLES.SCM_DIRECTOR,       // 供管公司负责人
-  ROLES.RISK_AUDITOR,       // 投资公司法务风控部
-  ROLES.FINANCE_REVIEWER,   // 投资公司财务负责人（财务复核）
-  ROLES.INVEST_DIRECTOR     // 投资公司总经理
-]
-export const BUSINESS_APPROVAL_CHAIN = [
-  ROLES.BUSINESS_HANDLER,   // 业务经办
-  ROLES.BUSINESS_REVIEWER,  // 业务复核
-  ROLES.SCM_DIRECTOR,       // 供管公司负责人
-  ROLES.RISK_AUDITOR,       // 投资公司法务风控部
-  ROLES.INVEST_DIRECTOR     // 投资公司总经理
-]
-export const FORM_CHAINS = {
-  payment: PAYMENT_APPROVAL_CHAIN,
-  business: BUSINESS_APPROVAL_CHAIN
-}
-// 审批中心参与角色（两链去重并集）——业务经办创建、其余角色逐级审批
-export const APPROVAL_CENTER_ROLES = [
-  ...new Set([...PAYMENT_APPROVAL_CHAIN, ...BUSINESS_APPROVAL_CHAIN])
-]
-
 // 合同状态
 export const STATUS_META = {
   draft: { text: '草稿', type: 'info' },
   pending: { text: '审批中', type: 'warning' },
   approved: { text: '已通过', type: 'success' },
-  rejected: { text: '已驳回', type: 'danger' }
+  rejected: { text: '已退回', type: 'danger' }
 }
 
 // 发票开票状态

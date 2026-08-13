@@ -25,6 +25,15 @@ from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 
 from app.models.invoice import Invoice
 from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
 from app.models.operation import OperationData
+from app.models.organization import (
+    ExternalAssignment,
+    GovernanceScope,
+    Organization,
+    Permission,
+    Position,
+    PositionPermission,
+    UserAssignment,
+)
 from app.models.portal import UserCompanyRole
 from app.models.project import ProjectMetrics  # noqa: F401
 from app.models.research import CustomerMaterial, CustomerResearch  # noqa: F401
@@ -32,6 +41,15 @@ from app.models.scenic import ScenicLedger  # noqa: F401
 from app.models.scenic_config import ScenicConfig
 from app.models.ticket_ledger import TicketLedger  # noqa: F401 确保 create_all 建表
 from app.models.user import User
+from app.models.workflow import (  # noqa: F401
+    WorkflowDefinition,
+    WorkflowInstance,
+    WorkflowNode,
+    WorkflowTask,
+    WorkflowTaskAction,
+    WorkflowVersion,
+)
+from app.services.organization_catalog import seed_authorization_catalog
 
 
 def mock_signature(name: str) -> str:
@@ -224,6 +242,7 @@ def init() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        seed_authorization_catalog(db)
         seed_users(db)
         seed_operation(db)
         seed_customers(db)

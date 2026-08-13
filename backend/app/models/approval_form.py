@@ -67,6 +67,12 @@ class ApprovalForm(Base):
     current_step: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, comment="当前待审批步序（对应链下标），pending 时有效",
     )
+    workflow_instance_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wf_instance.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="新版岗位工作流实例",
+    )
     created_by: Mapped[int] = mapped_column(
         ForeignKey("sys_user.id"), nullable=False, comment="创建人(业务经办)"
     )
@@ -74,6 +80,7 @@ class ApprovalForm(Base):
     actions: Mapped[list["ApprovalFormAction"]] = relationship(
         back_populates="form", cascade="all, delete-orphan"
     )
+    workflow_instance = relationship("WorkflowInstance", foreign_keys=[workflow_instance_id])
 
 
 class ApprovalFormAction(Base):
@@ -96,6 +103,17 @@ class ApprovalFormAction(Base):
     signature_snapshot: Mapped[str | None] = mapped_column(
         SignatureText, nullable=True, comment="电子签名快照"
     )
+    workflow_task_action_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wf_task_action.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    organization_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    organization_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    position_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    position_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     form = relationship("ApprovalForm", back_populates="actions")
     approver = relationship("User")
+    workflow_task_action = relationship("WorkflowTaskAction", foreign_keys=[workflow_task_action_id])
+
+
+from app.models.workflow import WorkflowInstance, WorkflowTaskAction  # noqa: E402,F401

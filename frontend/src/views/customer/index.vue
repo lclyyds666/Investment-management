@@ -10,7 +10,7 @@
       empty-text="暂无客户数据"
     >
       <template #toolbar>
-        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新建客户</el-button>
+        <el-button v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新建客户</el-button>
         <el-button :icon="Refresh" @click="reload">刷新</el-button>
       </template>
 
@@ -25,8 +25,8 @@
         <div class="customer-actions">
           <el-button size="small" link :icon="View" @click="openView(row)">查看</el-button>
           <el-button size="small" type="success" link :icon="MagicStick" @click="openResearch(row)">AI</el-button>
-          <el-button v-if="canEdit" size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="canEdit" size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
+          <el-button v-if="canUpdate" size="small" type="primary" link class="op-edit" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canDelete" size="small" type="danger" link :icon="Delete" @click="onDelete(row)">删除</el-button>
         </div>
       </template>
     </ProTable>
@@ -51,7 +51,7 @@
               v-for="m in dialogMaterials"
               :key="'m' + m.id"
               type="success"
-              closable
+              :closable="canDelete"
               @close="removeExistingMaterial(m)"
               class="file-tag"
             >
@@ -68,7 +68,7 @@
               <el-icon><Document /></el-icon> {{ f.name }}（待上传）
             </el-tag>
           </div>
-          <el-upload
+          <el-upload v-if="canUpdate"
             action="#" multiple :auto-upload="false" :show-file-list="false"
             accept=".pdf,.docx,.xlsx" :on-change="onFileChange"
           >
@@ -121,12 +121,13 @@ import { listCustomers, getCustomer, createCustomer, updateCustomer, deleteCusto
 import CustomerResearchDialog from '@/components/CustomerResearchDialog.vue'
 import ProTable from '@/components/ProTable.vue'
 import { computed } from 'vue'
-import { ROLES } from '@/constants/business'
-import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
+import { canUsePermission } from '@/utils/businessAuthorization'
 
-const userStore = useUserStore()
-// 新建/编辑/删除客户档案：仅业务经办 + 信息维护(超管)
-const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
+const portalStore = usePortalStore()
+const canCreate = computed(() => canUsePermission(portalStore, 'supply.customer.create'))
+const canUpdate = computed(() => canUsePermission(portalStore, 'supply.customer.update'))
+const canDelete = computed(() => canUsePermission(portalStore, 'supply.customer.delete'))
 
 const columns = [
   { prop: 'customer_code', label: '客户ID', minWidth: 120, showOverflowTooltip: true },

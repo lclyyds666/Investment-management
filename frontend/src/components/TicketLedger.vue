@@ -9,13 +9,14 @@
       </div>
       <div class="tl-ops">
         <el-upload
-          v-if="canEdit" :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls"
+          v-if="canCreate" :auto-upload="false" :show-file-list="false" accept=".xlsx,.xls"
           :on-change="onFileChange"
         >
           <el-button type="primary" :icon="UploadFilled" :loading="parsing">上传对账明细</el-button>
         </el-upload>
         <el-button :icon="Refresh" @click="loadSaved">刷新</el-button>
         <el-button
+          v-if="canExport"
           type="success" plain :icon="Download"
           :disabled="!savedRows.length" @click="onExport"
         >导出Excel</el-button>
@@ -151,10 +152,8 @@
       </el-table-column>
       <el-table-column label="操作" min-width="110">
         <template #default="{ row }">
-          <template v-if="!row.isTotal && canEdit">
-            <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
-          </template>
+          <el-button v-if="!row.isTotal && canUpdate" size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="!row.isTotal && canDelete" size="small" text type="danger" @click="onDeleteRow(row)">删除</el-button>
         </template>
       </el-table-column>
       <!-- 状态：本期合计行(多行)或独行(单行)有内容(总合计行不显示)；确认函仅业务复核+信息维护 -->
@@ -164,7 +163,7 @@
             <template v-if="!row.confirm_stored">
               <el-tag type="info" size="small" effect="plain">未确认</el-tag>
               <el-upload
-                v-if="canUploadConfirm" :auto-upload="false" :show-file-list="false"
+                v-if="canUpdate" :auto-upload="false" :show-file-list="false"
                 accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
                 :on-change="(f) => onConfirmPick(row, f)"
                 style="display:inline-block; margin-left:8px"
@@ -174,18 +173,18 @@
             </template>
             <template v-else>
               <el-tag :type="row.confirmed ? 'success' : 'warning'" size="small" effect="plain">{{ row.confirmed ? '已确认' : '待确认' }}</el-tag>
-              <el-button size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
-              <el-button size="small" text @click="onConfirmDownload(row)">下载</el-button>
+              <el-button v-if="canExport" size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
+              <el-button v-if="canExport" size="small" text @click="onConfirmDownload(row)">下载</el-button>
               <el-button v-if="!row.confirmed && canApproveConfirm" size="small" text type="success" @click="onConfirmApprove(row)">确认</el-button>
               <el-upload
-                v-if="canUploadConfirm" :auto-upload="false" :show-file-list="false"
+                v-if="canUpdate" :auto-upload="false" :show-file-list="false"
                 accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
                 :on-change="(f) => onConfirmPick(row, f)"
                 style="display:inline-block"
               >
                 <el-button size="small" text>重传</el-button>
               </el-upload>
-              <el-button v-if="canUploadConfirm" size="small" text type="danger" @click="onConfirmDelete(row)">删除</el-button>
+              <el-button v-if="canDelete" size="small" text type="danger" @click="onConfirmDelete(row)">删除</el-button>
             </template>
           </template>
         </template>
@@ -277,21 +276,21 @@ import {
 } from '@/api/ticketLedger'
 import { downloadBlob } from '@/utils/file'
 import { getScenicById } from '@/constants/scenic'
-import { ROLES } from '@/constants/business'
-import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
+import { canUsePermission } from '@/utils/businessAuthorization'
 
 const props = defineProps({
   scenicId: { type: String, required: true }
 })
 
-const userStore = useUserStore()
+const portalStore = usePortalStore()
 // 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
 const scenicName = computed(() => getScenicById(props.scenicId)?.name || props.scenicId)
-// 上传/编辑/删除台账：业务经办 + 信息维护(超管)
-const canEdit = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
-// 确认函 上传/重传/删除：业务经办 + 信息维护(超管)；「确认」：业务复核 + 信息维护(超管)
-const canUploadConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_HANDLER)
-const canApproveConfirm = computed(() => userStore.isSuperuser || userStore.role === ROLES.BUSINESS_REVIEWER)
+const canCreate = computed(() => canUsePermission(portalStore, 'supply.scenic.create'))
+const canUpdate = computed(() => canUsePermission(portalStore, 'supply.scenic.update'))
+const canDelete = computed(() => canUsePermission(portalStore, 'supply.scenic.delete'))
+const canApproveConfirm = computed(() => canUsePermission(portalStore, 'supply.scenic.review'))
+const canExport = computed(() => canUsePermission(portalStore, 'supply.scenic.export'))
 
 const PLATFORMS = ['抖音', '美团', '携程', '同程']
 const loading = ref(false)

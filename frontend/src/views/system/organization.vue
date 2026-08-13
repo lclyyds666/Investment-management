@@ -1,0 +1,22 @@
+<template>
+  <div class="organization-register">
+    <aside><div class="register-heading">组织治理名录</div><el-tree :data="tree" node-key="id" :props="{ label: 'name', children: 'children' }" @node-click="select"><template #default="{ data }"><span class="tree-node"><b>{{ data.name }}</b><small>{{ data.code }}</small></span></template></el-tree><el-button type="primary" @click="create">新建组织</el-button></aside>
+    <section class="detail-surface"><h2>{{ form.id ? '组织详情' : '新建组织' }}</h2><el-form :model="form" label-width="100px"><el-form-item label="组织编码"><el-input v-model="form.code" :disabled="Boolean(form.id)" /></el-form-item><el-form-item label="组织名称"><el-input v-model="form.name" /></el-form-item><el-form-item label="组织类型"><el-select v-model="form.organization_type" :disabled="Boolean(form.id)"><el-option label="公司" value="company" /><el-option label="部门" value="department" /></el-select></el-form-item><el-form-item label="上级组织"><el-select v-model="form.parent_code" clearable :disabled="form.organization_type === 'company'"><el-option v-for="item in parentOptions" :key="item.code" :label="item.name" :value="item.code" /></el-select></el-form-item><el-form-item label="所属公司"><el-input :model-value="inheritedCompany" disabled /></el-form-item><el-form-item label="排序"><el-input-number v-model="form.sort_order" /></el-form-item><el-form-item label="启用"><el-switch v-model="form.is_active" /></el-form-item><el-form-item label="变更原因" required><el-input v-model="reason" maxlength="200" show-word-limit /></el-form-item></el-form><el-button type="primary" :disabled="!reason.trim()" @click="save">保存组织</el-button></section>
+  </div>
+</template>
+<script setup>
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useOrganizationStore } from '@/store/organization'
+const store = useOrganizationStore(); const form = reactive({}); const reason = ref(''); const tree = computed(() => store.tree)
+const flat = computed(() => { const walk = nodes => nodes.flatMap(node => [node, ...walk(node.children || [])]); return walk(tree.value) })
+const selectedParent = computed(() => flat.value.find(item => item.code === form.parent_code))
+const inheritedCompany = computed(() => form.organization_type === 'company' ? form.code : (selectedParent.value?.company_code || selectedParent.value?.code || ''))
+const parentOptions = computed(() => flat.value.filter(item => item.id !== form.id && (form.organization_type !== 'company' || item.organization_type === 'company')))
+watch(() => form.organization_type, type => { if (type === 'company') form.parent_code = null })
+function select(node) { Object.assign(form, { ...node, parent_code: flat.value.find(item => item.id === node.parent_id)?.code || node.parent_code || null }); reason.value = '' }
+function create() { Object.assign(form, { id:null, code:'', name:'', organization_type:'department', parent_code:null, sort_order:0, is_active:true }); reason.value='' }
+async function save() { if (!reason.value.trim()) return; const parentCode = form.organization_type === 'company' ? null : form.parent_code; const parent = flat.value.find(item => item.code === parentCode); if (form.organization_type === 'department' && !parent) { ElMessage.error('部门必须归属到公司或部门'); return } try { const { id, children, parent_id, ...payload } = form; Object.assign(payload, { parent_code: parentCode, company_code: form.organization_type === 'company' ? form.code : (parent.company_code || parent.code) }); await store.saveOrganization(payload, reason.value.trim(), id); await store.loadTree(true); ElMessage.success('组织已保存') } catch (error) { ElMessage.error(error.response?.data?.detail?.message || '组织保存失败') } }
+onMounted(async () => { await store.loadTree(); if (tree.value[0]) select(tree.value[0]) })
+</script>
+<style scoped>.organization-register{display:grid;grid-template-columns:minmax(240px,30%) minmax(0,1fr);gap:18px;padding:20px;min-height:100%;background:var(--app-bg)}aside,.detail-surface{padding:18px;background:var(--el-bg-color);border:1px solid var(--surface-border)}.register-heading{padding-left:10px;border-left:4px solid var(--brand-vermilion);font-weight:750}.tree-node{display:flex;flex-direction:column}.tree-node small{color:var(--el-text-color-secondary);font-family:var(--font-data)}.detail-surface h2{margin-top:0;font-family:var(--font-display)}@media(max-width:760px){.organization-register{grid-template-columns:1fr}}</style>

@@ -13,7 +13,7 @@
         <div class="toolbar-right">
           <!-- 新建审批：悬停展开下拉，选择审批单类型 -->
           <el-dropdown
-            v-if="isBusinessHandler"
+            v-if="canCreate"
             class="new-approval-dropdown"
             trigger="hover"
             @command="openCreate"
@@ -70,24 +70,16 @@
             <div class="op-cell">
               <el-button size="small" type="info" :icon="View" @click="openDetail(row)">详情</el-button>
               <el-button size="small" class="btn-ai" :icon="MagicStick" @click="openProofread(row)">AI 合同校对</el-button>
-              <template v-if="row.attachment_name">
+              <template v-if="row.attachment_name && canExport">
                 <el-button size="small" type="primary" plain :icon="View" @click="previewFormAttachment(row)">预览附件</el-button>
                 <el-button size="small" type="primary" plain :icon="Download" @click="downloadFormAttachment(row)">下载附件</el-button>
               </template>
-              <el-button size="small" :icon="Printer" @click="onPrint(row)">打印导出</el-button>
-              <template v-if="isBusinessHandler && ['draft', 'rejected'].includes(row.status)">
-                <el-button size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-                <el-button size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
-                <el-button size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
-              </template>
-              <template v-if="canApprove(row)">
-                <el-button size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
-                <el-button size="small" type="warning" @click="openAction(row, 'reject')">驳回</el-button>
-              </template>
-              <el-button
-                v-if="row.status === 'approved' && isSuperuser"
-                size="small" type="danger" :icon="Delete" @click="onDelete(row)"
-              >删除</el-button>
+              <el-button v-if="canExport" size="small" :icon="Printer" @click="onPrint(row)">打印导出</el-button>
+              <el-button v-if="canUpdate && ['draft', 'rejected'].includes(row.status)" size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
+              <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
+              <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
+              <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">退回</el-button>
             </div>
           </template>
         </el-table-column>
@@ -173,10 +165,33 @@
       </template>
     </el-dialog>
 
-    <!-- 通过 / 驳回 -->
+    <el-dialog
+      v-model="submitVisible"
+      :title="`提交${submitCurrent?.form_type_label || '审批单'}审批`"
+      width="680px"
+      top="6vh"
+      :close-on-click-modal="!submitSaving"
+      @closed="resetSubmitDialog"
+    >
+      <DesignatedApproverFields
+        v-if="submitVisible"
+        ref="submitFieldsRef"
+        v-model="selectedApprovers"
+        :workflow-code="submitWorkflowCode"
+        :exclude-user-id="userStore.userInfo?.id"
+      />
+      <template #footer>
+        <el-button :disabled="submitSaving" @click="submitVisible = false">取消</el-button>
+        <el-button data-testid="confirm-submit" type="primary" :loading="submitSaving" @click="confirmSubmit">
+          确认提交
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 通过 / 退回 -->
     <el-dialog
       v-model="actionVisible"
-      :title="action === 'approve' ? '审批通过 - 审批意见' : '驳回 - 请输入驳回原因'"
+      :title="action === 'approve' ? '审批通过 - 审批意见' : '退回 - 请输入退回原因'"
       width="480px"
     >
       <el-alert
@@ -187,7 +202,7 @@
         <el-form-item prop="comment">
           <el-input
             v-model="actionForm.comment" type="textarea" :rows="4"
-            :placeholder="action === 'approve' ? '请输入审批意见（可选）' : '请输入驳回原因（必填）'"
+            :placeholder="action === 'approve' ? '请输入审批意见（可选）' : '请输入退回原因（必填）'"
           />
         </el-form-item>
       </el-form>
@@ -196,7 +211,7 @@
         <el-button
           :type="action === 'approve' ? 'success' : 'danger'"
           :loading="actionSaving" @click="confirmAction"
-        >确认{{ action === 'approve' ? '通过' : '驳回' }}</el-button>
+        >确认{{ action === 'approve' ? '通过' : '退回' }}</el-button>
       </template>
     </el-dialog>
 
@@ -223,7 +238,7 @@
         <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无校对结果" />
       </div>
       <template #footer>
-        <template v-if="aiCurrent && aiCurrent.attachment_name">
+        <template v-if="aiCurrent && aiCurrent.attachment_name && canExport">
           <el-button :icon="View" @click="previewFormAttachment(aiCurrent)">预览附件</el-button>
           <el-button :icon="Download" @click="downloadFormAttachment(aiCurrent)">下载附件</el-button>
         </template>
@@ -235,6 +250,7 @@
 
     <!-- 详情：字段 + 流转时间轴 -->
     <el-dialog v-model="detailVisible" title="审批单详情" width="680px" top="6vh">
+      <div v-loading="detailLoading" class="detail-body">
       <template v-if="detail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="单据类型">{{ detail.form_type_label }}</el-descriptions-item>
@@ -253,7 +269,7 @@
             <el-descriptions-item label="备注" :span="2">{{ detail.remark || '—' }}</el-descriptions-item>
           </template>
           <el-descriptions-item label="合同附件" :span="2">
-            <template v-if="detail.attachment_name">
+            <template v-if="detail.attachment_name && canExport">
               <span class="att-name">{{ detail.attachment_name }}</span>
               <el-button size="small" link type="primary" :icon="View" @click="previewFormAttachment(detail)">预览</el-button>
               <el-button size="small" link type="primary" :icon="Download" @click="downloadFormAttachment(detail)">下载</el-button>
@@ -262,59 +278,84 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <div class="timeline-title">审批流转记录</div>
-        <el-timeline v-if="actions.length">
-          <el-timeline-item
-            v-for="a in actions" :key="a.id"
-            :type="a.action === 'approve' ? 'success' : 'danger'"
-            :timestamp="String(a.created_at).slice(0, 19).replace('T', ' ')"
+        <div class="timeline-title">岗位责任轨道</div>
+        <div v-loading="timelineLoading" class="timeline-panel">
+          <el-alert
+            v-if="timelineError"
+            type="error"
+            :closable="false"
+            title="流程记录加载失败，可重试"
+            class="timeline-error"
           >
-            <div class="tl-row">
-              <b>{{ a.role_label }}</b> · {{ a.approver_name }}
-              <el-tag size="small" :type="a.action === 'approve' ? 'success' : 'danger'" effect="plain">
-                {{ a.action === 'approve' ? '通过' : '驳回' }}
-              </el-tag>
-            </div>
-            <div v-if="a.comment" class="tl-comment">{{ a.comment }}</div>
-            <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="tl-sig" alt="签名" />
-          </el-timeline-item>
-        </el-timeline>
-        <el-empty v-else :image-size="48" description="尚无流转记录（未提交）" />
+            <template #default><el-button link type="primary" @click="loadDetailTimeline">重试加载</el-button></template>
+          </el-alert>
+          <template v-else>
+            <WorkflowTimeline v-if="detail.workflow_version >= 2" :tasks="workflowTasks" />
+            <el-timeline v-else-if="actions.length">
+              <el-timeline-item
+                v-for="a in actions" :key="a.id"
+                :type="a.action === 'approve' ? 'success' : 'danger'"
+                :timestamp="String(a.created_at).slice(0, 19).replace('T', ' ')"
+              >
+                <div class="tl-row">
+                  <b>{{ a.role_label }}</b> · {{ a.approver_name }}
+                  <el-tag size="small" :type="a.action === 'approve' ? 'success' : 'danger'" effect="plain">
+                    {{ a.action === 'approve' ? '通过' : '退回' }}
+                  </el-tag>
+                </div>
+                <div v-if="a.comment" class="tl-comment">{{ a.comment }}</div>
+                <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="tl-sig" alt="签名" />
+              </el-timeline-item>
+            </el-timeline>
+            <el-empty v-else :image-size="48" description="尚无流转记录（未提交）" />
+          </template>
+        </div>
       </template>
+      </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Plus, ArrowDown, Edit, Delete, Refresh, View, Download, UploadFilled,
   MagicStick, CopyDocument, Money, Document, Printer
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
+import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
-import { ROLES, STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
+import { STATUS_META, CONTRACT_TYPE_LABELS } from '@/constants/business'
+import { canUsePermission } from '@/utils/businessAuthorization'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
+import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFields.vue'
+import WorkflowTimeline from '@/components/workflow/WorkflowTimeline.vue'
 import {
   listForms, createForm, updateForm, deleteForm, submitForm,
   uploadFormAttachment, approveForm, rejectForm, listActions,
   proofreadForm, downloadFormPrint, getForm, fetchFormAttachmentBlob
 } from '@/api/approval'
 import { listCustomers } from '@/api/customer'
+import { getWorkflowTimeline } from '@/api/workflow'
 
+const portalStore = usePortalStore()
 const userStore = useUserStore()
 const badgeStore = useApprovalBadgeStore()
-const isSuperuser = computed(() => userStore.isSuperuser)
-const isBusinessHandler = computed(
-  () => userStore.role === ROLES.BUSINESS_HANDLER || userStore.isSuperuser
-)
+const canCreate = computed(() => canUsePermission(portalStore, 'supply.approval.create'))
+const canUpdate = computed(() => canUsePermission(portalStore, 'supply.approval.update'))
+const canDelete = computed(() => canUsePermission(portalStore, 'supply.approval.delete'))
+const canSubmit = computed(() => canUsePermission(portalStore, 'supply.approval.submit'))
+const canExport = computed(() => canUsePermission(portalStore, 'supply.approval.export'))
 
 function canApprove(row) {
-  if (row.status !== 'pending') return false
-  return userStore.isSuperuser || row.current_role === userStore.role
+  return Boolean(row.active_task && row.can_act)
+}
+
+function canReturn(row) {
+  return Boolean(row.active_task && row.can_act)
 }
 
 const loading = ref(false)
@@ -455,14 +496,65 @@ function onFileChange(file) {
   pickedFile.value = raw
 }
 
-async function onSubmit(row) {
-  await submitForm(row.id)
+const submitVisible = ref(false)
+const submitSaving = ref(false)
+const submitCurrent = ref(null)
+const submitFieldsRef = ref()
+const selectedApprovers = ref({})
+const submitWorkflowCode = computed(() => (
+  submitCurrent.value?.form_type === 'payment' ? 'supply.payment.v2' : 'supply.business.v2'
+))
+
+function isHandlerResubmit(row) {
+  return Boolean(row.workflow_instance_id && row.active_task?.node_code === 'handler')
+}
+
+function resetSubmitDialog() {
+  submitCurrent.value = null
+  selectedApprovers.value = {}
+}
+
+async function finishSubmit(row, payload) {
+  await submitForm(row.id, payload)
   ElMessage.success('已提交审批，进入审批流')
   load()
   badgeStore.refresh() // 提交后可能轮到下一环节角色，实时刷新角标
 }
 
-// 通过 / 驳回
+async function onSubmit(row) {
+  if (isHandlerResubmit(row)) {
+    if (submitSaving.value) return
+    submitSaving.value = true
+    try {
+      await finishSubmit(row)
+    } finally {
+      submitSaving.value = false
+    }
+    return
+  }
+  submitCurrent.value = row
+  selectedApprovers.value = {}
+  submitVisible.value = true
+}
+
+async function confirmSubmit() {
+  if (submitSaving.value) return
+  submitSaving.value = true
+  try {
+    if (!await submitFieldsRef.value?.validate()) return
+    await finishSubmit(submitCurrent.value, { designated_users: selectedApprovers.value })
+    submitVisible.value = false
+  } catch (error) {
+    if (error.response?.status === 422) {
+      await submitFieldsRef.value?.reloadCandidates?.({ preserve: true })
+      ElMessage.warning('审批人任职信息已变化，请核对更新后的候选人后重试')
+    }
+  } finally {
+    submitSaving.value = false
+  }
+}
+
+// 通过 / 退回
 const actionVisible = ref(false)
 const actionSaving = ref(false)
 const action = ref('approve')
@@ -471,7 +563,7 @@ const actionFormRef = ref()
 const actionForm = reactive({ comment: '' })
 const actionRules = computed(() => ({
   comment: action.value === 'reject'
-    ? [{ required: true, message: '请输入驳回原因', trigger: 'blur' }]
+    ? [{ required: true, message: '请输入退回原因', trigger: 'blur' }]
     : []
 }))
 function openAction(row, act) {
@@ -482,19 +574,32 @@ function openAction(row, act) {
   actionFormRef.value?.clearValidate?.()
 }
 async function confirmAction() {
-  await actionFormRef.value?.validate()
+  if (actionSaving.value) return
   actionSaving.value = true
   try {
+    await actionFormRef.value?.validate()
     if (action.value === 'approve') {
       await approveForm(actionCurrent.value.id, actionForm.comment)
       ElMessage.success('已通过并附加电子签名')
     } else {
       await rejectForm(actionCurrent.value.id, actionForm.comment)
-      ElMessage.success('已驳回')
+      ElMessage.success('已退回')
     }
     badgeStore.refresh() // 审批完成后本人待办数减少，实时刷新角标
     actionVisible.value = false
-    load()
+    await load()
+  } catch (error) {
+    const detail = error.response?.data?.detail
+    if (error.response?.status === 409 && detail?.code === 'task_already_completed') {
+      actionVisible.value = false
+      await load()
+      if (detailVisible.value && detail.value?.id === actionCurrent.value?.id) {
+        await openDetail(actionCurrent.value)
+      }
+      ElMessage.warning(`该节点已由 ${detail.actor || '其他办理人'} 办理`)
+      return
+    }
+    throw error
   } finally {
     actionSaving.value = false
   }
@@ -532,16 +637,70 @@ async function onPrint(row) {
 const detailVisible = ref(false)
 const detail = ref(null)
 const actions = ref([])
+const workflowTasks = ref([])
+const detailLoading = ref(false)
+const timelineLoading = ref(false)
+const timelineError = ref(false)
+let detailGeneration = 0
+function isSameTarget(left, right) {
+  return left != null && right != null && String(left) === String(right)
+}
 async function openDetail(row) {
-  detail.value = row
+  const targetId = row.id
+  const generation = ++detailGeneration
+  detail.value = null
   actions.value = []
+  workflowTasks.value = []
+  detailLoading.value = true
+  timelineLoading.value = false
+  timelineError.value = false
   detailVisible.value = true
   try {
-    const [d, acts] = await Promise.all([getForm(row.id), listActions(row.id)])
-    detail.value = d
-    actions.value = acts
-  } catch { /* 忽略 */ }
+    const loadedDetail = await getForm(targetId)
+    if (generation !== detailGeneration) return
+    detail.value = loadedDetail
+  } finally {
+    if (generation === detailGeneration) {
+      detailLoading.value = false
+    }
+  }
+  if (generation === detailGeneration) {
+    await loadDetailTimeline(generation, targetId)
+  }
 }
+
+async function loadDetailTimeline(generation = detailGeneration, targetId = detail.value?.id) {
+  if (!detail.value) return
+  const timelineDetail = detail.value
+  if (generation !== detailGeneration || !isSameTarget(timelineDetail.id, targetId)) return
+  actions.value = []
+  workflowTasks.value = []
+  timelineLoading.value = true
+  timelineError.value = false
+  try {
+    if (timelineDetail.workflow_version >= 2) {
+      const tasks = await getWorkflowTimeline(timelineDetail.workflow_instance_id)
+      if (generation !== detailGeneration || !isSameTarget(detail.value?.id, targetId)) return
+      workflowTasks.value = tasks
+    } else {
+      const loadedActions = await listActions(timelineDetail.id)
+      if (generation !== detailGeneration || !isSameTarget(detail.value?.id, targetId)) return
+      actions.value = loadedActions
+    }
+  } catch {
+    if (generation === detailGeneration && isSameTarget(detail.value?.id, targetId)) {
+      timelineError.value = true
+    }
+  } finally {
+    if (generation === detailGeneration && isSameTarget(detail.value?.id, targetId)) {
+      timelineLoading.value = false
+    }
+  }
+}
+
+onBeforeUnmount(() => {
+  detailGeneration += 1
+})
 
 // 合同附件：预览 / 下载（任意登录用户可用）
 async function previewFormAttachment(row) {
@@ -627,6 +786,9 @@ loadCustomers()
 .md-body :deep(table) { border-collapse: collapse; width: 100%; }
 .md-body :deep(th), .md-body :deep(td) { border: 1px solid var(--el-border-color); padding: 6px 8px; }
 .timeline-title { font-weight: 600; margin: 18px 0 10px; color: var(--el-color-primary); }
+.detail-body { min-height: 120px; }
+.timeline-panel { min-height: 72px; }
+.timeline-error { margin-bottom: 12px; }
 .tl-row { display: flex; align-items: center; gap: 8px; }
 .tl-comment { color: var(--el-text-color-regular); font-size: 13px; margin-top: 2px; }
 .tl-sig { max-height: 44px; margin-top: 4px; }

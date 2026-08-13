@@ -39,6 +39,17 @@ class Approval(Base):
     signature_snapshot: Mapped[str | None] = mapped_column(
         SignatureText, nullable=True, comment="电子签名快照"
     )
+    workflow_task_action_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wf_task_action.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    organization_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    organization_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    position_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    position_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     contract = relationship("Contract", back_populates="approvals")
     approver = relationship("User")
+    workflow_task_action = relationship("WorkflowTaskAction", foreign_keys=[workflow_task_action_id])
+
+
+from app.models.workflow import WorkflowTaskAction  # noqa: E402,F401

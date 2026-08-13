@@ -6,7 +6,8 @@
     direction="rtl"
     @update:model-value="(v) => $emit('update:modelValue', v)"
   >
-    <div v-loading="loading" v-if="contract">
+    <div v-loading="detailLoading" class="detail-body">
+      <template v-if="contract">
       <div class="drawer-toolbar">
         <el-tag :type="STATUS_META[contract.status]?.type">
           {{ contract.status_label }}
@@ -55,61 +56,80 @@
         <el-descriptions-item label="备注" :span="2">{{ contract.remark || '无' }}</el-descriptions-item>
       </el-descriptions>
 
-      <!-- 流转进度 -->
-      <h4 class="section-title"><el-icon><Guide /></el-icon> 审批流转进度（{{ APPROVAL_CHAIN.length }} 级）</h4>
-      <el-steps :active="stepsActive" align-center :process-status="processStatus" finish-status="success" class="chain-steps">
-        <el-step v-for="(r, i) in APPROVAL_CHAIN" :key="r" :title="roleLabel(r)" />
-      </el-steps>
-
-      <!-- 流转时间轴（审计日志 + 签章） -->
-      <h4 class="section-title"><el-icon><Clock /></el-icon> 合规审计日志</h4>
-      <el-timeline class="flow-timeline">
-        <el-timeline-item
-          v-for="a in approvals"
-          :key="a.id"
-          :type="a.action === 'reject' ? 'danger' : 'success'"
-          :timestamp="fmt(a.created_at)"
-          size="large"
+      <h4 class="section-title"><el-icon><Guide /></el-icon> 岗位责任轨道</h4>
+      <div v-loading="timelineLoading" class="timeline-panel">
+        <el-alert
+          v-if="timelineError"
+          type="error"
+          :closable="false"
+          title="流程记录加载失败，可重试"
+          class="timeline-error"
         >
-          <div class="flow-node">
-            <div class="flow-node-main">
-              <span class="flow-role">{{ a.role_label }}</span>
-              <el-tag :type="a.action === 'reject' ? 'danger' : 'success'" size="small" effect="plain">
-                {{ a.action === 'reject' ? '驳回' : '通过' }}
-              </el-tag>
-              <span class="flow-approver">{{ a.approver_name }}</span>
-            </div>
-            <div class="flow-comment" v-if="a.comment">{{ a.comment }}</div>
-            <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="flow-sig" alt="签名" />
-          </div>
-        </el-timeline-item>
-        <el-empty v-if="!approvals.length" :image-size="60" description="暂无审批流转记录" />
-      </el-timeline>
+          <template #default><el-button link type="primary" @click="loadTimeline">重试加载</el-button></template>
+        </el-alert>
+        <template v-else>
+          <WorkflowTimeline v-if="contract.workflow_version >= 2" :tasks="workflowTasks" />
+          <el-timeline v-else class="flow-timeline">
+            <el-timeline-item
+              v-for="a in approvals"
+              :key="a.id"
+              :type="a.action === 'reject' ? 'danger' : 'success'"
+              :timestamp="fmt(a.created_at)"
+              size="large"
+            >
+              <div class="flow-node">
+                <div class="flow-node-main">
+                  <span class="flow-role">{{ a.role_label }}</span>
+                  <el-tag :type="a.action === 'reject' ? 'danger' : 'success'" size="small" effect="plain">
+                    {{ a.action === 'reject' ? '退回' : '通过' }}
+                  </el-tag>
+                  <span class="flow-approver">{{ a.approver_name }}</span>
+                </div>
+                <div class="flow-comment" v-if="a.comment">{{ a.comment }}</div>
+                <img v-if="a.signature_snapshot" :src="a.signature_snapshot" class="flow-sig" alt="签名" />
+              </div>
+            </el-timeline-item>
+            <el-empty v-if="!approvals.length" :image-size="60" description="暂无审批流转记录" />
+          </el-timeline>
+        </template>
+      </div>
+      </template>
     </div>
   </el-drawer>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Printer, Clock, Guide, Document, View, Download } from '@element-plus/icons-vue'
+import { Printer, Guide, Document, View, Download } from '@element-plus/icons-vue'
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
-import { APPROVAL_CHAIN, STATUS_META, roleLabel } from '@/constants/business'
+import { getWorkflowTimeline } from '@/api/workflow'
+import { STATUS_META } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
+import WorkflowTimeline from '@/components/workflow/WorkflowTimeline.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   contractId: { type: [Number, String], default: null }
 })
 defineEmits(['update:modelValue'])
+defineExpose({ reload: load })
 
-const loading = ref(false)
+const detailLoading = ref(false)
 const contract = ref(null)
 const approvals = ref([])
+const workflowTasks = ref([])
+const timelineLoading = ref(false)
+const timelineError = ref(false)
 const docLoading = ref(false)
+let loadGeneration = 0
 
 const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) : ''))
+
+function isSameTarget(left, right) {
+  return String(left) === String(right)
+}
 
 async function downloadAttachment() {
   if (!contract.value?.attachment_name) return
@@ -131,15 +151,6 @@ async function previewAttachment() {
   }
 }
 
-const stepsActive = computed(() => {
-  const c = contract.value
-  if (!c) return 0
-  if (c.status === 'approved') return APPROVAL_CHAIN.length
-  if (c.status === 'draft') return 0
-  return c.current_step // pending / rejected 停留在当前环节
-})
-const processStatus = computed(() => (contract.value?.status === 'rejected' ? 'error' : 'process'))
-
 function fmt(t) {
   if (!t) return ''
   return String(t).replace('T', ' ').slice(0, 19)
@@ -150,17 +161,55 @@ function fmtDate(t) {
 }
 
 async function load() {
-  if (!props.contractId) return
-  loading.value = true
+  const targetId = props.contractId
+  if (!targetId) return
+  const generation = ++loadGeneration
+  detailLoading.value = true
+  contract.value = null
+  approvals.value = []
+  workflowTasks.value = []
+  timelineLoading.value = false
+  timelineError.value = false
   try {
-    const [c, aps] = await Promise.all([
-      getContract(props.contractId),
-      listApprovals(props.contractId)
-    ])
-    contract.value = c
-    approvals.value = aps
+    const loadedContract = await getContract(targetId)
+    if (generation !== loadGeneration || !isSameTarget(props.contractId, targetId)) return
+    contract.value = loadedContract
   } finally {
-    loading.value = false
+    if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) {
+      detailLoading.value = false
+    }
+  }
+  if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) {
+    await loadTimeline(generation, targetId)
+  }
+}
+
+async function loadTimeline(generation = loadGeneration, targetId = props.contractId) {
+  if (!contract.value) return
+  const timelineContract = contract.value
+  if (generation !== loadGeneration || !isSameTarget(targetId, props.contractId) || !isSameTarget(timelineContract.id, targetId)) return
+  approvals.value = []
+  workflowTasks.value = []
+  timelineLoading.value = true
+  timelineError.value = false
+  try {
+    if (timelineContract.workflow_version >= 2) {
+      const tasks = await getWorkflowTimeline(timelineContract.workflow_instance_id)
+      if (generation !== loadGeneration || !isSameTarget(targetId, props.contractId)) return
+      workflowTasks.value = tasks
+    } else {
+      const loadedApprovals = await listApprovals(timelineContract.id)
+      if (generation !== loadGeneration || !isSameTarget(targetId, props.contractId)) return
+      approvals.value = loadedApprovals
+    }
+  } catch {
+    if (generation === loadGeneration && isSameTarget(targetId, props.contractId)) {
+      timelineError.value = true
+    }
+  } finally {
+    if (generation === loadGeneration && isSameTarget(targetId, props.contractId)) {
+      timelineLoading.value = false
+    }
   }
 }
 
@@ -190,6 +239,10 @@ watch(
   },
   { immediate: true }
 )
+
+onBeforeUnmount(() => {
+  loadGeneration += 1
+})
 </script>
 
 <style scoped lang="scss">
@@ -212,13 +265,12 @@ watch(
   color: var(--el-text-color-primary);
   .el-icon { color: var(--el-color-primary); }
 }
-.chain-steps {
-  margin-bottom: 8px;
-  :deep(.el-step__title) { font-size: 12px; }
-}
 .flow-timeline {
   padding-left: 4px;
 }
+.detail-body { min-height: 120px; }
+.timeline-panel { min-height: 72px; }
+.timeline-error { margin-bottom: 12px; }
 .flow-node-main {
   display: flex;
   align-items: center;

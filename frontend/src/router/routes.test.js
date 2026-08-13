@@ -3,6 +3,7 @@ import router from './index'
 import { legacySupplyRedirects } from './legacyRedirects'
 
 vi.mock('@/layout/index.vue', () => ({ default: {} }))
+vi.mock('@/layout/SystemLayout.vue', () => ({ default: {} }))
 vi.mock('@/views/cultural-tourism/DetailView.vue', () => ({ default: {} }))
 vi.mock('@/views/dashboard/index.vue', () => ({ default: {} }))
 vi.mock('@/views/invoice/index.vue', () => ({ default: {} }))
@@ -18,9 +19,6 @@ const supplyRoutes = [
   ['Contract', '/supplymanagement/contract', 'supply.contract'],
   ['Approval', '/supplymanagement/approval', 'supply.approval'],
   ['Customer', '/supplymanagement/customer', 'supply.customer'],
-  ['Org', '/supplymanagement/org', 'supply.admin'],
-  ['Audit', '/supplymanagement/audit', 'supply.admin'],
-  ['AiConversations', '/supplymanagement/ai-conversations', 'supply.admin'],
   ['Screen', '/supplymanagement/screen', 'supply.dashboard']
 ]
 
@@ -38,8 +36,8 @@ const legacyRoutes = [
   ['/contract', 'Contract', {}],
   ['/approval', 'Approval', {}],
   ['/customer', 'Customer', {}],
-  ['/org', 'Org', {}],
-  ['/audit', 'Audit', {}],
+  ['/org', 'SystemUsers', {}],
+  ['/audit', 'SystemAudit', {}],
   ['/profile', 'Profile', {}],
   ['/screen', 'Screen', {}]
 ]
@@ -87,9 +85,31 @@ describe('unified portal routes', () => {
   })
 
   it('keeps superuser-only metadata on administration routes', () => {
-    expect(router.resolve({ name: 'Org' }).meta.requiresSuperuser).toBe(true)
-    expect(router.resolve({ name: 'Audit' }).meta.requiresSuperuser).toBe(true)
-    expect(router.resolve({ name: 'AiConversations' }).meta.requiresSuperuser).toBe(true)
+    expect(router.resolve({ name: 'SystemUsers' }).meta.requiresSuperuser).toBe(true)
+    expect(router.resolve({ name: 'SystemAudit' }).meta.requiresSuperuser).toBe(true)
+    expect(router.resolve({ name: 'SystemAiConversations' }).meta.requiresSuperuser).toBe(true)
+    expect(router.resolve({ name: 'SystemAssignments' }).meta.requiresSuperuser).toBe(true)
+  })
+
+  it('mounts administration under the global system console', () => {
+    expect(router.resolve('/system/users').name).toBe('SystemUsers')
+    expect(router.resolve('/system/organization').name).toBe('SystemOrganization')
+    expect(router.resolve('/system/positions').name).toBe('SystemPositions')
+    expect(router.resolve('/system/assignments').name).toBe('SystemAssignments')
+    expect(router.resolve('/system/audit').name).toBe('SystemAudit')
+    expect(router.resolve('/system/ai-conversations').name).toBe('SystemAiConversations')
+    expect(router.resolve('/system/directory').meta.permission).toBe('organization.directory.view')
+  })
+
+  it('redirects former supply admin paths', () => {
+    expect(router.getRoutes().find(item => item.path === '/supplymanagement/org').redirect).toBe('/system/users')
+    expect(router.getRoutes().find(item => item.path === '/supplymanagement/audit').redirect).toBe('/system/audit')
+    expect(router.getRoutes().find(item => item.path === '/supplymanagement/ai-conversations').redirect).toBe('/system/ai-conversations')
+  })
+
+  it('does not expose system management in the supply children', () => {
+    const supply = router.getRoutes().find(item => item.path === '/supplymanagement')
+    expect(supply.children.some(item => ['org', 'audit', 'ai-conversations'].includes(item.path))).toBe(false)
   })
 
   it('keeps the supply profile company-scoped without inventing a backend resource', () => {

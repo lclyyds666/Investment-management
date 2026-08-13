@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, require_superuser
 from app.core.config import settings
-from app.core.enums import CompanyCode, Role
+from app.core.enums import Role
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
-from app.models.portal import UserCompanyRole
+from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.user import (
@@ -115,23 +115,34 @@ def change_my_username(
 @router.get("", response_model=Response[list[UserBrief]], summary="用户列表 / 组织架构")
 def list_users(
     keyword: str | None = None,
-    role: Role | None = None,
+    organization_code: str | None = None,
+    position_code: str | None = None,
     is_active: bool | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_superuser),
 ):
-    """按审批链角色排序展示人员，支持关键字（账号/姓名/部门）、角色、状态筛选。"""
-    stmt = select(User).options(selectinload(User.company_roles))
+    """列出账户并按组织/岗位筛选；授权信息由 assignment_summaries 表示。"""
+    stmt = select(User).options(
+        selectinload(User.company_roles),
+        selectinload(User.assignments).selectinload(UserAssignment.organization),
+        selectinload(User.assignments).selectinload(UserAssignment.position),
+    )
     if keyword:
         like = f"%{keyword.strip()}%"
         stmt = stmt.where(
             or_(User.username.like(like), User.full_name.like(like), User.department.like(like))
         )
-    if role is not None:
-        stmt = stmt.where(User.role == role)
+    if organization_code is not None:
+        stmt = stmt.join(User.assignments).join(UserAssignment.organization).where(
+            Organization.code == organization_code
+        )
+    if position_code is not None:
+        stmt = stmt.join(User.assignments).join(UserAssignment.position).where(
+            Position.code == position_code
+        )
     if is_active is not None:
         stmt = stmt.where(User.is_active == is_active)
-    rows = db.scalars(stmt.order_by(User.id.asc())).all()
+    rows = db.scalars(stmt.distinct().order_by(User.id.asc())).all()
     return Response.ok([UserBrief.model_validate(u) for u in rows])
 
 
@@ -149,23 +160,14 @@ def create_user(
         raise HTTPException(status_code=400, detail="登录账号不能为空")
     if db.scalar(select(User).where(User.username == uname)):
         raise HTTPException(status_code=400, detail="登录账号已存在")
-    if payload.role == Role.INFO_MAINTAINER and _information_maintainer_exists(db):
-        raise HTTPException(status_code=400, detail="系统只能保留一个信息维护超级管理员账号")
-
-    legacy_role = _managed_legacy_role(
-        payload.role,
-        payload.is_superuser,
-        payload.company_roles,
-    )
     user = User(
         username=uname,
         full_name=payload.full_name,
-        role=legacy_role,
-        department=payload.department,
-        is_superuser=payload.is_superuser,
+        role=Role.UNASSIGNED,
+        department="",
+        is_superuser=False,
         is_active=True,
         hashed_password=hash_password(payload.password),
-        company_roles=_company_role_models(payload.company_roles),
     )
     db.add(user)
     _commit_and_refresh(db, user)
@@ -179,60 +181,17 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_superuser),
 ):
-    user = db.scalar(
-        select(User)
-        .options(selectinload(User.company_roles))
-        .where(User.id == uid)
-    )
+    user = db.scalar(select(User).where(User.id == uid))
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     data = payload.model_dump(exclude_unset=True)
-    assignments = payload.company_roles
-    effective_assignments = assignments if assignments is not None else user.company_roles
-    requested_role = data.get("role", user.role)
-    requested_superuser = data.get("is_superuser", user.is_superuser)
-
-    if user.role == Role.INFO_MAINTAINER or user.is_superuser:
-        if requested_role != Role.INFO_MAINTAINER or not requested_superuser:
-            raise HTTPException(
-                status_code=400,
-                detail="信息维护与超级管理员是同一个固定账号身份，不能拆分或取消",
-            )
-        legacy_role = Role.INFO_MAINTAINER
-    else:
-        if requested_role == Role.INFO_MAINTAINER or requested_superuser:
-            if requested_role != Role.INFO_MAINTAINER or not requested_superuser:
-                raise HTTPException(
-                    status_code=400,
-                    detail="信息维护与超级管理员必须是同一个角色和账号身份",
-                )
-            if _information_maintainer_exists(db, exclude_user_id=user.id):
-                raise HTTPException(
-                    status_code=400,
-                    detail="系统只能保留一个信息维护超级管理员账号",
-                )
-        legacy_role = _managed_legacy_role(
-            requested_role,
-            requested_superuser,
-            effective_assignments,
-        )
-    # 保护：不能取消自己的超管身份 / 停用自己，避免自锁
+    # 保护：不能停用当前登录账号，避免固定信息维护账户自锁。
     if user.id == current_user.id:
-        if data.get("is_superuser") is False:
-            raise HTTPException(status_code=400, detail="不能取消自己的超级管理员身份")
         if data.get("is_active") is False:
             raise HTTPException(status_code=400, detail="不能停用当前登录账号")
-    # 保护：不能撤下最后一个超管
-    if data.get("is_superuser") is False and user.is_superuser:
-        if _superuser_count(db) <= 1:
-            raise HTTPException(status_code=400, detail="必须至少保留一个超级管理员")
     for field, value in data.items():
-        if field in {"company_roles", "role", "is_superuser"}:
-            continue
         setattr(user, field, value)
-    user.role = legacy_role
-    user.is_superuser = requested_superuser
-    _commit_and_refresh(db, user, assignments)
+    _commit_and_refresh(db, user)
     return Response.ok(UserOut.model_validate(user), message="用户已更新")
 
 
@@ -307,57 +266,8 @@ def _information_maintainer_exists(
     return db.scalar(stmt.limit(1)) is not None
 
 
-def _managed_legacy_role(
-    requested_role: Role,
-    is_superuser: bool,
-    assignments,
-) -> Role:
-    if is_superuser:
-        if requested_role != Role.INFO_MAINTAINER:
-            raise HTTPException(
-                status_code=400,
-                detail="信息维护与超级管理员必须是同一个角色和账号身份",
-            )
-        return Role.INFO_MAINTAINER
-
-    if any(assignment.role == Role.INFO_MAINTAINER for assignment in assignments):
-        raise HTTPException(
-            status_code=400,
-            detail="信息维护是全局超级管理员身份，不能分配为普通用户的公司角色",
-        )
-
-    supply_role = next(
-        (
-            assignment.role
-            for assignment in assignments
-            if CompanyCode(assignment.company_code) == CompanyCode.SUPPLY_MANAGEMENT
-        ),
-        None,
-    )
-    if supply_role is None:
-        raise HTTPException(
-            status_code=400,
-            detail="非超级管理员必须配置供管公司角色",
-        )
-    return supply_role
-
-
-def _company_role_models(assignments) -> list[UserCompanyRole]:
-    return [
-        UserCompanyRole(
-            company_code=CompanyCode(assignment.company_code).value,
-            role=assignment.role,
-        )
-        for assignment in assignments
-    ]
-
-
-def _commit_and_refresh(db: Session, user: User, assignments=None) -> None:
+def _commit_and_refresh(db: Session, user: User) -> None:
     try:
-        if assignments is not None:
-            user.company_roles.clear()
-            db.flush()
-            user.company_roles.extend(_company_role_models(assignments))
         db.commit()
     except Exception:
         db.rollback()

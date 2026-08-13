@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePortalStore } from './portal'
-import { useUserStore } from './user'
 import * as portalApi from '@/api/portal'
 
 vi.mock('@/api/portal')
@@ -9,7 +8,8 @@ vi.mock('@/api/portal')
 const applications = [{ code: 'supplymanagement', accessible: true }]
 const permissions = {
   is_superuser: false,
-  company_roles: [{ company_code: 'supplymanagement', role: 'business_handler' }],
+  assignments: [{ position_code: 'supply.business_handler' }],
+  permissions: [{ code: 'supply.scenic.analytics.view', data_scope: 'company', scope_ref: 'supplymanagement' }],
   resources: ['supply.scenic.analytics']
 }
 
@@ -30,14 +30,15 @@ describe('portal store', () => {
     localStorage.clear()
   })
 
-  it('loads applications and resolves the supply company role', async () => {
+  it('loads applications and exposes permission snapshot helpers', async () => {
     portalApi.getPortalApplications.mockResolvedValue(applications)
     portalApi.getMyPortalPermissions.mockResolvedValue(permissions)
 
     const store = usePortalStore()
     await store.loadPortalContext()
 
-    expect(store.companyRole('supplymanagement')).toBe('business_handler')
+    expect(store.hasPosition('supply.business_handler')).toBe(true)
+    expect(store.hasPermission('supply.scenic.analytics.view')).toBe(true)
     expect(store.hasResource('supply.scenic.analytics')).toBe(true)
   })
 
@@ -95,14 +96,13 @@ describe('portal store', () => {
 
     const portalStore = usePortalStore()
     await portalStore.loadPortalContext()
-    const userStore = useUserStore()
-    userStore.setUserInfo({ is_superuser: false, role: 'business_handler' })
-    userStore.logout()
+    portalStore.clearPortalContext()
 
     expect(portalStore.applications).toEqual([])
     expect(portalStore.permissions).toEqual({
       is_superuser: false,
-      company_roles: {},
+      assignments: [],
+      permissions: [],
       resources: []
     })
     expect(portalStore.isLoaded).toBe(false)
@@ -118,13 +118,14 @@ describe('portal store', () => {
       .mockReturnValueOnce(oldPermissions.promise)
       .mockResolvedValueOnce({
         is_superuser: false,
-        company_roles: { investment: 'invest_director' },
+        assignments: [{ position_code: 'investment.executive.general_manager' }],
+        permissions: [],
         resources: []
       })
 
     const portalStore = usePortalStore()
     const oldLoad = portalStore.loadPortalContext()
-    useUserStore().logout()
+    portalStore.clearPortalContext()
     await portalStore.loadPortalContext()
 
     oldApplications.resolve(applications)
@@ -132,55 +133,43 @@ describe('portal store', () => {
     await oldLoad
 
     expect(portalStore.applications).toEqual([{ code: 'investment', accessible: true }])
-    expect(portalStore.companyRole('investment')).toBe('invest_director')
+    expect(portalStore.hasPosition('investment.executive.general_manager')).toBe(true)
   })
 
-  it('reads the backend company-role map payload', async () => {
+  it('unions detailed permission grants and exposes active positions', async () => {
     portalApi.getPortalApplications.mockResolvedValue(applications)
     portalApi.getMyPortalPermissions.mockResolvedValue({
       is_superuser: false,
-      company_roles: { supplymanagement: 'business_reviewer' },
+      assignments: [
+        { position_code: 'investment.executive.general_manager' },
+        { position_code: 'governance.supply_leader' }
+      ],
+      permissions: [{ code: 'supply.contract.view', data_scope: 'company', scope_ref: 'supplymanagement' }],
       resources: []
     })
 
     const store = usePortalStore()
     await store.loadPortalContext()
 
-    expect(store.companyRole('supplymanagement')).toBe('business_reviewer')
+    expect(store.hasPosition('governance.supply_leader')).toBe(true)
+    expect(store.hasPermission('supply.contract.view')).toBe(true)
     expect(store.hasCompany('supplymanagement')).toBe(true)
   })
 
-  it('preserves superuser company and resource bypasses', async () => {
+  it('does not treat superuser as a business permission bypass', async () => {
     portalApi.getPortalApplications.mockResolvedValue(applications)
     portalApi.getMyPortalPermissions.mockResolvedValue({
       is_superuser: true,
-      company_roles: {},
+      assignments: [],
+      permissions: [],
       resources: []
     })
 
     const store = usePortalStore()
     await store.loadPortalContext()
 
-    expect(store.hasCompany('fundmanagement')).toBe(true)
-    expect(store.hasResource('supply.scenic.analytics')).toBe(true)
-  })
-
-  it('uses the authoritative supply role and preserves the user superuser bypass', async () => {
-    portalApi.getPortalApplications.mockResolvedValue(applications)
-    portalApi.getMyPortalPermissions.mockResolvedValue({
-      ...permissions,
-      company_roles: { supplymanagement: 'business_handler' }
-    })
-
-    const portalStore = usePortalStore()
-    await portalStore.loadPortalContext()
-    const userStore = useUserStore()
-    userStore.setUserInfo({ is_superuser: false, role: 'finance_handler' })
-
-    expect(userStore.hasRole(['business_handler'])).toBe(true)
-    expect(userStore.hasRole(['finance_handler'])).toBe(false)
-
-    userStore.setUserInfo({ is_superuser: true, role: 'info_maintainer' })
-    expect(userStore.hasRole(['finance_handler'])).toBe(true)
+    expect(store.hasPermission('supply.contract.approve')).toBe(false)
+    expect(store.hasResource('supply.scenic.analytics')).toBe(false)
+    expect(store.hasCompany('fundmanagement')).toBe(false)
   })
 })

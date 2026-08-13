@@ -24,9 +24,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.api.deps import require_permission
 from app.core.config import settings
-from app.core.enums import CompanyCode, ResourceCode, Role
+from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
@@ -43,10 +43,9 @@ from app.schemas.ticket_ledger import (
 )
 from app.services import ticket_ledger as tl_svc
 from app.services.scenic_config import get_effective_config
+from app.services.assignment_permissions import PermissionContext
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SCENIC_ANALYTICS
-))])
+router = APIRouter()
 
 _XLSX_EXT = {".xlsx", ".xls"}
 _MAX_BYTES = 30 * 1024 * 1024  # ≤ 30MB（明细可能上万行）
@@ -57,15 +56,13 @@ _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _PARSE_SEMAPHORE = asyncio.Semaphore(1)
 
 # 台账变更(上传/保存/编辑/删除)角色：业务经办 + 信息维护(超管始终放行)
-_edit_guard = require_roles(Role.BUSINESS_HANDLER)
-# 确认函「确认」动作角色：业务复核 + 信息维护(超管)
-_confirm_guard = require_roles(Role.BUSINESS_REVIEWER)
-# 台账明细/确认函「查看下载」角色：业务经办/业务复核/财务经办/供管负责人/投资总经理 + 超管
-# (法务风控、财务复核、法律顾问不可下载台账类资料)
-_download_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.FINANCE_HANDLER,
-    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR,
-)
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.scenic.view", _supply_context)
+_create_guard = require_permission("supply.scenic.create", _supply_context)
+_update_guard = require_permission("supply.scenic.update", _supply_context)
+_delete_guard = require_permission("supply.scenic.delete", _supply_context)
+_confirm_guard = require_permission("supply.scenic.review", _supply_context)
+_download_guard = require_permission("supply.scenic.export", _supply_context)
 _CONFIRM_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".xls", ".xlsx"}
 _CONFIRM_MAX_BYTES = 20 * 1024 * 1024
 
@@ -342,7 +339,7 @@ async def parse_files(
     scenic_id: str,
     files: list[UploadFile] = File(..., description="对账明细 Excel(.xlsx/.xls)，每次仅限 1 个"),
     db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
+    _: User = Depends(_create_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     config = get_effective_config(db, sid)
@@ -445,7 +442,7 @@ async def parse_files(
 def get_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(_download_guard),
+    _: User = Depends(_view_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     rows = _load_rows(db, sid)
@@ -469,7 +466,7 @@ def save_ledger(
     scenic_id: str,
     payload: TicketLedgerSaveIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_edit_guard),
+    current_user: User = Depends(_create_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     config = get_effective_config(db, sid)
@@ -576,7 +573,7 @@ def preview_update(
     row_id: int,
     payload: TicketLedgerUpdateIn,
     db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
+    _: User = Depends(_update_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(
@@ -599,7 +596,7 @@ def update_row(
     row_id: int,
     payload: TicketLedgerUpdateIn,
     db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
+    _: User = Depends(_update_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(
@@ -714,7 +711,7 @@ def delete_row(
     scenic_id: str,
     row_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
+    _: User = Depends(_delete_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(
@@ -748,7 +745,7 @@ def delete_row(
 def clear_ledger(
     scenic_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(_edit_guard),
+    _: User = Depends(_delete_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     result = db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))
@@ -838,7 +835,7 @@ def download_detail(
 async def upload_confirm(
     scenic_id: str, row_id: int,
     file: UploadFile = File(..., description="确认函(PDF/图片/Word/Excel)"),
-    db: Session = Depends(get_db), _: User = Depends(_edit_guard),
+    db: Session = Depends(get_db), _: User = Depends(_update_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
@@ -926,7 +923,7 @@ def download_confirm(
 )
 def delete_confirm(
     scenic_id: str, row_id: int,
-    db: Session = Depends(get_db), _: User = Depends(_edit_guard),
+    db: Session = Depends(get_db), _: User = Depends(_delete_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
     row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))

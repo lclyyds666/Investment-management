@@ -1,21 +1,4 @@
-"""合同端点 —— 【合同(法律)类审批】路径（合同全生命周期 + 逐级审批流）。
-
-⚠️ 审批路径区分（两条流程互不干扰、各自独立）：
-- 本模块 `/contracts/*` = **合同(法律)类审批**：合同全生命周期管理，审批操作入口
-  内嵌在前端「合同管理」页；审批人在其环节直接「通过/驳回」。
-- `/approval`（前端「业务审批」，原审批中心）= **日常业务类审批**，为独立模块，
-  当前为存根页，后续单独开发；与本合同审批流无任何共享状态或逻辑。
-
-合同审批链（`APPROVAL_CHAIN`，顺序即流转顺序）：
-    业务经办 → 供管公司负责人 → 法律顾问 → 投资公司法务风控 → 投资公司总经理
-
-流程：
-- 业务经办创建草稿并「提交审批」：自动完成第 0 级（附加本人电子签名），
-  合同进入 pending，current_step=1（供管公司负责人），进入待审批。
-- 后续每一级：仅当前 current_step 对应角色（或超管）可「通过」，
-  通过时自动附加本人电子签名快照，随后 current_step+1；走完末级即 approved。
-- 任一级可「驳回」（原因必填），合同置为 rejected，全程审批记录留存作审计。
-"""
+"""合同全生命周期与岗位工作流兼容端点。"""
 import io
 import uuid
 from pathlib import Path
@@ -24,38 +7,51 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
+from app.api.deps import get_current_user, require_permission
 from app.core.config import settings
 from app.core.enums import (
-    APPROVAL_CHAIN,
-    ApprovalAction,
     ContractStatus,
     CompanyCode,
-    ResourceCode,
-    Role,
-    is_final_step,
-    role_at_step,
+    DataScope,
+    WorkflowAction,
+    WorkflowTargetType,
+    WorkflowTaskStatus,
 )
 from app.db.session import get_db
 from app.models.approval import Approval
 from app.models.contract import Contract
 from app.models.user import User
+from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
 from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
+from app.schemas.workflow import WorkflowStartRequest
 from app.services import contract_review as review_svc
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
-from app.services.permissions import get_company_role
+from app.services.assignment_permissions import PermissionContext, has_permission, permission_grants
+from app.services.workflow_engine import (
+    WorkflowTaskConflict,
+    WorkflowValidationError,
+    complete_task,
+    my_active_tasks,
+    start_workflow,
+    task_is_actionable_by,
+)
 
-_OPINION_ROLES = {r for r, _ in legal_doc_svc.OPINION_ROLES}
+_OPINION_POSITIONS = {code for code, _ in legal_doc_svc.OPINION_ROLES}
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_CONTRACT
-))])
+router = APIRouter()
+
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.contract.view", _supply_context)
+_create_guard = require_permission("supply.contract.create", _supply_context)
+_update_guard = require_permission("supply.contract.update", _supply_context)
+_submit_guard = require_permission("supply.contract.submit", _supply_context)
+_export_guard = require_permission("supply.contract.export", _supply_context)
 
 # 合同附件允许的扩展名（与前端 accept 对齐）
 _ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
@@ -79,31 +75,124 @@ def _names_map(db: Session, ids: set[int]) -> dict[int, str]:
     return {i: n for i, n in rows}
 
 
-def _to_out(contract: Contract, creator_name: str = "") -> ContractOut:
-    out = ContractOut.model_validate(contract)
-    out.creator_name = creator_name
-    return out
-
-
-def _effective_supply_role(db: Session, user: User) -> Role | None:
-    return user.role if user.is_superuser else get_company_role(
-        db, user, CompanyCode.SUPPLY_MANAGEMENT
+def _active_task_for_contract(db: Session, contract: Contract) -> WorkflowTask | None:
+    if contract.workflow_instance_id is None:
+        return None
+    return db.scalar(
+        select(WorkflowTask)
+        .where(
+            WorkflowTask.instance_id == contract.workflow_instance_id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        )
+        .options(joinedload(WorkflowTask.node))
     )
 
 
-def _ensure_current_approver(db: Session, contract: Contract, user: User) -> Role:
-    """校验合同处于审批中且当前用户是本级审批人（超管放行）。返回本级期望角色。"""
-    if contract.status != ContractStatus.PENDING:
-        raise HTTPException(status_code=400, detail="该合同当前不处于审批中，无法操作")
-    expected = role_at_step(contract.current_step)
-    if expected is None:
-        raise HTTPException(status_code=400, detail="审批流状态异常")
-    if not user.is_superuser and _effective_supply_role(db, user) != expected:
-        raise HTTPException(
-            status_code=403,
-            detail=f"当前审批环节应由【{expected.label}】处理，您无权审批",
+def _to_out(
+    db: Session,
+    contract: Contract,
+    current_user: User,
+    creator_name: str = "",
+) -> ContractOut:
+    out = ContractOut.model_validate(contract)
+    out.creator_name = creator_name
+    if contract.workflow_instance_id is not None:
+        instance = db.get(WorkflowInstance, contract.workflow_instance_id)
+        out.workflow_version = instance.workflow_version.version if instance is not None else None
+    task = _active_task_for_contract(db, contract)
+    if task is not None:
+        out.active_task = {
+            "id": task.id,
+            "node_code": task.node.code,
+            "node_name": task.node.name,
+            "position_code": task.required_position_code,
+            "position_name": task.node.name,
+        }
+        out.can_act = task_is_actionable_by(db, task, current_user)
+    return out
+
+
+def _assigned_contract_ids(db: Session, user: User) -> set[int]:
+    has_assigned_grant = any(
+        grant.code == "supply.contract.view" and grant.data_scope == DataScope.ASSIGNED
+        for grant in permission_grants(db, user.id)
+    )
+    if not has_assigned_grant:
+        return set()
+    return set(db.scalars(
+        select(WorkflowInstance.target_id)
+        .join(WorkflowTask, WorkflowTask.instance_id == WorkflowInstance.id)
+        .where(
+            WorkflowInstance.target_type == WorkflowTargetType.CONTRACT,
+            WorkflowTask.designated_user_id == user.id,
         )
-    return expected
+    ))
+
+
+def _visible_contract_ids(db: Session, user: User) -> set[int] | None:
+    grants = tuple(
+        grant for grant in permission_grants(db, user.id)
+        if grant.code == "supply.contract.view"
+    )
+    if any(
+        grant.data_scope == DataScope.COMPANY
+        and grant.scope_ref == CompanyCode.SUPPLY_MANAGEMENT.value
+        for grant in grants
+    ):
+        return None
+    if not any(grant.data_scope == DataScope.ASSIGNED for grant in grants):
+        raise HTTPException(status_code=403, detail="权限不足")
+    return _assigned_contract_ids(db, user)
+
+
+def _ensure_contract_visible(db: Session, contract: Contract, user: User) -> None:
+    visible_ids = _visible_contract_ids(db, user)
+    if visible_ids is not None and contract.id not in visible_ids:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+
+def _workflow_error(error: WorkflowValidationError) -> HTTPException:
+    if error.code in {"workflow_task_not_found", "workflow_target_not_found"}:
+        http_status = status.HTTP_404_NOT_FOUND
+    elif error.code == "workflow_task_not_actionable":
+        http_status = status.HTTP_403_FORBIDDEN
+    else:
+        http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+    return HTTPException(
+        status_code=http_status,
+        detail={"code": error.code, "message": error.message, **error.details},
+    )
+
+
+def _complete_current_task(
+    db: Session,
+    contract: Contract,
+    current_user: User,
+    action: WorkflowAction,
+    comment: str,
+) -> ContractOut:
+    task = _active_task_for_contract(db, contract)
+    if task is None:
+        raise HTTPException(status_code=422, detail="合同没有可处理的当前工作流任务")
+    try:
+        complete_task(db, task.id, current_user, action, comment)
+        db.commit()
+    except WorkflowTaskConflict as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": error.code,
+                "actor": error.actor_name,
+                "action": error.action,
+                "completed_at": error.completed_at.isoformat(),
+            },
+        ) from error
+    except WorkflowValidationError as error:
+        db.rollback()
+        raise _workflow_error(error) from error
+    db.refresh(contract)
+    return _to_out(db, contract, current_user, current_user.full_name)
 
 
 # --------------------------------------------------------------------------- #
@@ -114,13 +203,14 @@ def list_contracts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """业务经办仅见本人合同；其余角色（复核/审核/负责人）作为审批与监督方见全部。"""
+    """公司范围岗位见全部供管合同，外聘法律顾问仅见被指定合同。"""
     stmt = select(Contract).order_by(Contract.id.desc())
-    if not current_user.is_superuser and _effective_supply_role(db, current_user) == Role.BUSINESS_HANDLER:
-        stmt = stmt.where(Contract.created_by == current_user.id)
+    visible_ids = _visible_contract_ids(db, current_user)
+    if visible_ids is not None:
+        stmt = stmt.where(Contract.id.in_(visible_ids))
     rows = db.scalars(stmt).all()
     names = _names_map(db, {c.created_by for c in rows})
-    return Response.ok([_to_out(c, names.get(c.created_by, "")) for c in rows])
+    return Response.ok([_to_out(db, c, current_user, names.get(c.created_by, "")) for c in rows])
 
 
 @router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同")
@@ -128,18 +218,15 @@ def list_todo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """审批中心列表：状态为 pending 且当前环节恰好轮到我处理的合同。"""
-    rows = db.scalars(
-        select(Contract)
-        .where(Contract.status == ContractStatus.PENDING)
-        .order_by(Contract.id.desc())
-    ).all()
-    todo = [
-        c for c in rows
-        if current_user.is_superuser or role_at_step(c.current_step) == _effective_supply_role(db, current_user)
-    ]
-    names = _names_map(db, {c.created_by for c in todo})
-    return Response.ok([_to_out(c, names.get(c.created_by, "")) for c in todo])
+    tasks = my_active_tasks(db, current_user, WorkflowTargetType.CONTRACT)
+    contract_ids = [task.instance.target_id for task in tasks]
+    rows_by_id = {
+        contract.id: contract
+        for contract in db.scalars(select(Contract).where(Contract.id.in_(contract_ids)))
+    }
+    rows = [rows_by_id[contract_id] for contract_id in contract_ids if contract_id in rows_by_id]
+    names = _names_map(db, {c.created_by for c in rows})
+    return Response.ok([_to_out(db, c, current_user, names.get(c.created_by, "")) for c in rows])
 
 
 @router.get("/{contract_id}", response_model=Response[ContractOut], summary="合同详情")
@@ -149,8 +236,9 @@ def get_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     names = _names_map(db, {contract.created_by})
-    return Response.ok(_to_out(contract, names.get(contract.created_by, "")))
+    return Response.ok(_to_out(db, contract, current_user, names.get(contract.created_by, "")))
 
 
 @router.get(
@@ -163,7 +251,8 @@ def list_approvals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _get_contract_or_404(db, contract_id)
+    contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     rows = db.scalars(
         select(Approval)
         .where(Approval.contract_id == contract_id)
@@ -185,7 +274,7 @@ def list_approvals(
     "",
     response_model=Response[ContractOut],
     summary="新建合同(业务经办)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_create_guard)],
 )
 def create_contract(
     payload: ContractCreate,
@@ -203,14 +292,14 @@ def create_contract(
     db.add(contract)
     db.commit()
     db.refresh(contract)
-    return Response.ok(_to_out(contract, current_user.full_name))
+    return Response.ok(_to_out(db, contract, current_user, current_user.full_name))
 
 
 @router.put(
     "/{contract_id}",
     response_model=Response[ContractOut],
     summary="修改合同(业务经办，仅草稿/驳回态)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_update_guard)],
 )
 def update_contract(
     contract_id: int,
@@ -219,7 +308,7 @@ def update_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能修改本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="当前状态不可修改")
@@ -227,14 +316,13 @@ def update_contract(
         setattr(contract, field, value)
     db.commit()
     db.refresh(contract)
-    return Response.ok(_to_out(contract, current_user.full_name))
+    return Response.ok(_to_out(db, contract, current_user, current_user.full_name))
 
 
 @router.delete(
     "/{contract_id}",
     response_model=Response[dict],
-    summary="删除合同(草稿/驳回态由业务经办删除；已通过合同仅超级管理员可删)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    summary="删除合同(仅本人草稿/驳回态；已审批记录不可删除)",
 )
 def delete_contract(
     contract_id: int,
@@ -243,16 +331,13 @@ def delete_contract(
 ):
     contract = _get_contract_or_404(db, contract_id)
 
-    # 精细化管控：已通过(已审核)合同仅超级管理员可删除，其余角色一律拒绝
     if contract.status == ContractStatus.APPROVED:
-        if not current_user.is_superuser:
-            raise HTTPException(status_code=403, detail="权限不足：仅超级管理员可删除已审核合同")
-        db.delete(contract)
-        db.commit()
-        return Response.ok({"id": contract_id})
+        raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
+    if not has_permission(db, current_user, "supply.contract.delete", _supply_context()):
+        raise HTTPException(status_code=403, detail="权限不足")
 
-    # 其余状态：仅本人创建(超管不限)、且仅草稿/被驳回可删；审批中(pending)不可删
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    # 其余状态：仅本人创建且仅草稿/被驳回可删；审批中(pending)不可删
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能删除本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="仅草稿或被驳回的合同可删除")
@@ -268,36 +353,41 @@ def delete_contract(
     "/{contract_id}/submit",
     response_model=Response[ContractOut],
     summary="提交审批(业务经办)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_submit_guard)],
 )
 def submit_contract(
     contract_id: int,
+    payload: WorkflowStartRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能提交本人创建的合同")
-    if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
-        raise HTTPException(status_code=400, detail="仅草稿或被驳回的合同可提交")
-
-    # 第 0 级（业务经办）随提交自动完成并附加电子签名
-    db.add(
-        Approval(
-            contract_id=contract.id,
-            approver_id=current_user.id,
-            step=0,
-            approver_role=Role.BUSINESS_HANDLER.value,
-            action=ApprovalAction.APPROVE,
-            comment="提交审批（业务经办）",
-            signature_snapshot=current_user.signature,
+    if contract.workflow_instance_id is not None:
+        instance = db.get(WorkflowInstance, contract.workflow_instance_id)
+        task = _active_task_for_contract(db, contract)
+        if instance is None or instance.submitted_by != current_user.id:
+            raise HTTPException(status_code=403, detail="只能由原提交人重新提交合同")
+        if task is None or not task.node.auto_complete_on_submit:
+            raise HTTPException(status_code=422, detail="合同当前不处于业务经办重提环节")
+        return Response.ok(_complete_current_task(
+            db, contract, current_user, WorkflowAction.SUBMIT, "重新提交审批"
+        ))
+    try:
+        start_workflow(
+            db,
+            WorkflowTargetType.CONTRACT,
+            contract.id,
+            current_user,
+            payload.designated_users if payload is not None else {},
         )
-    )
-    contract.status = ContractStatus.PENDING
-    contract.current_step = 1  # 流转至业务复核
-    db.commit()
+        db.commit()
+    except WorkflowValidationError as error:
+        db.rollback()
+        raise _workflow_error(error) from error
     db.refresh(contract)
-    return Response.ok(_to_out(contract, current_user.full_name))
+    return Response.ok(_to_out(db, contract, current_user, current_user.full_name))
 
 
 @router.post(
@@ -312,33 +402,15 @@ def approve_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    _ensure_current_approver(db, contract, current_user)
-
-    step = contract.current_step
-    db.add(
-        Approval(
-            contract_id=contract.id,
-            approver_id=current_user.id,
-            step=step,
-            approver_role=_effective_supply_role(db, current_user).value,
-            action=ApprovalAction.APPROVE,
-            comment=payload.comment or "",
-            signature_snapshot=current_user.signature,  # 自动电子签章
-        )
-    )
-    if is_final_step(step):
-        contract.status = ContractStatus.APPROVED  # 末级通过 → 全流程完成
-    else:
-        contract.current_step = step + 1
-    db.commit()
-    db.refresh(contract)
-    return Response.ok(_to_out(contract, current_user.full_name))
+    return Response.ok(_complete_current_task(
+        db, contract, current_user, WorkflowAction.APPROVE, payload.comment.strip()
+    ))
 
 
 @router.post(
     "/{contract_id}/reject",
     response_model=Response[ContractOut],
-    summary="驳回（原因必填，当前环节角色）",
+    summary="退回（原因必填，当前工作流任务）",
 )
 def reject_contract(
     contract_id: int,
@@ -347,23 +419,9 @@ def reject_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    _ensure_current_approver(db, contract, current_user)
-
-    db.add(
-        Approval(
-            contract_id=contract.id,
-            approver_id=current_user.id,
-            step=contract.current_step,
-            approver_role=_effective_supply_role(db, current_user).value,
-            action=ApprovalAction.REJECT,
-            comment=payload.comment,
-            signature_snapshot=None,
-        )
-    )
-    contract.status = ContractStatus.REJECTED  # 保留 current_step 记录驳回环节
-    db.commit()
-    db.refresh(contract)
-    return Response.ok(_to_out(contract, current_user.full_name))
+    return Response.ok(_complete_current_task(
+        db, contract, current_user, WorkflowAction.RETURN, payload.comment.strip()
+    ))
 
 
 # --------------------------------------------------------------------------- #
@@ -377,7 +435,7 @@ def _attachment_dir(contract_id: int) -> Path:
     "/{contract_id}/attachment",
     response_model=Response[ContractOut],
     summary="上传合同附件(业务经办，覆盖式单附件)",
-    dependencies=[Depends(require_roles(Role.BUSINESS_HANDLER))],
+    dependencies=[Depends(_update_guard)],
 )
 async def upload_attachment(
     contract_id: int,
@@ -386,7 +444,7 @@ async def upload_attachment(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if not current_user.is_superuser and contract.created_by != current_user.id:
+    if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能为本人创建的合同上传附件")
     fname = file.filename or "附件"
     ext = Path(fname).suffix.lower()
@@ -413,15 +471,15 @@ async def upload_attachment(
     db.commit()
     db.refresh(contract)
     names = _names_map(db, {contract.created_by})
-    return Response.ok(_to_out(contract, names.get(contract.created_by, "")), message="附件上传成功")
+    return Response.ok(
+        _to_out(db, contract, current_user, names.get(contract.created_by, "")),
+        message="附件上传成功",
+    )
 
 
 # 合同附件/法律文书 下载角色：业务经办/业务复核/法务风控/财务经办/供管负责人/投资总经理/法律顾问 + 超管
 # (仅财务复核不可下载)
-_contract_dl_guard = require_roles(
-    Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, Role.RISK_AUDITOR, Role.FINANCE_HANDLER,
-    Role.SCM_DIRECTOR, Role.INVEST_DIRECTOR, Role.LEGAL_COUNSEL,
-)
+_contract_dl_guard = _export_guard
 
 
 @router.get("/{contract_id}/attachment", summary="下载合同附件原件(除财务复核)")
@@ -455,12 +513,15 @@ def download_legal_doc(
         select(Approval).where(Approval.contract_id == contract_id).order_by(Approval.id.asc())
     ).all()
     ap_names = _names_map(db, {a.approver_id for a in approvals})
-    # 每个意见栏取该角色最近一次审批记录（id 升序 → 后者覆盖）：
+    # 每个意见栏取该岗位最近一次审批记录（id 升序 → 后者覆盖）：
     #   意见渲染其“实际审批意见”(comment，不再默认“同意”)，签名取电子签名快照。
     opinions: dict[str, dict] = {}
     for a in approvals:
-        if a.approver_role in _OPINION_ROLES:
-            opinions[a.approver_role] = {
+        opinion_position = a.position_code
+        if not opinion_position:
+            opinion_position = legal_doc_svc.HISTORICAL_OPINION_POSITIONS.get(a.approver_role)
+        if opinion_position in _OPINION_POSITIONS:
+            opinions[opinion_position] = {
                 "comment": a.comment or "",                    # 实际审批意见，空则留空
                 "approver_name": ap_names.get(a.approver_id, ""),
                 "signature": a.signature_snapshot or "",       # 电子签名快照(data-URI)
@@ -521,7 +582,7 @@ def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
 def ai_review_contract(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(_view_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
     contract_text, has_attachment = _contract_text_for_review(contract)

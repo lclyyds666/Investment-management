@@ -15,16 +15,16 @@ export const useUserStore = defineStore('user', () => {
 
   function _persist() {
     localStorage.setItem('token', token.value)
-    localStorage.setItem('role', role.value)
   }
 
   /** 登录：拿到 token 与角色并持久化 */
   async function login(username, password, captchaId, captchaCode) {
     const res = await loginApi(username, password, captchaId, captchaCode)
     token.value = res.access_token
-    role.value = res.role
+    role.value = res.user?.role || res.role || ''
     userInfo.value = res.user
     _persist()
+    localStorage.removeItem('role')
     return res
   }
 
@@ -33,7 +33,7 @@ export const useUserStore = defineStore('user', () => {
     const res = await getMe()
     userInfo.value = res
     role.value = res.role
-    localStorage.setItem('role', role.value)
+    localStorage.removeItem('role')
     return res
   }
 
@@ -42,7 +42,6 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = info
     if (info?.role) {
       role.value = info.role
-      localStorage.setItem('role', role.value)
     }
   }
 
@@ -55,15 +54,8 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('role')
   }
 
-  /** 判断当前角色是否在允许列表内；超级管理员始终放行 */
-  function hasRole(roles) {
-    if (!roles || roles.length === 0) return true
-    if (isSuperuser.value) return true
-    return roles.includes(usePortalStore().companyRole('supplymanagement'))
-  }
-
   return {
     token, role, userInfo, isLogin, isSuperuser, signature, roleLabel,
-    login, fetchUser, setUserInfo, logout, hasRole
+    login, fetchUser, setUserInfo, logout
   }
 })

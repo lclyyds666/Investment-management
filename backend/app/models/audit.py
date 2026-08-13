@@ -8,7 +8,7 @@
 设计要点：用户信息按快照存储（username/full_name/role），即便用户改名或删除，
 历史日志仍可读；仅记录 method/path/status 等元数据，不记录请求体（天然不泄露密码）。
 """
-from sqlalchemy import Integer, String, Text, Index
+from sqlalchemy import Integer, JSON, String, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -35,6 +35,13 @@ class AuditLog(Base):
     status: Mapped[str] = mapped_column(String(16), default="success", comment="结果(success/fail)")
     http_status: Mapped[int] = mapped_column(Integer, default=0, comment="HTTP 响应码")
     detail: Mapped[str | None] = mapped_column(Text, nullable=True, comment="摘要/错误信息(不含敏感字段)")
+    organization_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    organization_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    position_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    position_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    before_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    after_json: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("idx_audit_created", "created_at"),

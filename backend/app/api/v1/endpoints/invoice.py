@@ -5,21 +5,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_company_resource, require_roles
-from app.core.enums import CompanyCode, DIRECTOR_ROLES, FINANCE_ROLES, InvoiceStatus, ResourceCode, Role
+from app.api.deps import require_permission
+from app.core.enums import CompanyCode, InvoiceStatus
 from app.db.session import get_db
 from app.models.invoice import Invoice
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.invoice import InvoiceCreate, InvoiceOut, InvoiceStats, InvoiceUpdate
+from app.services.assignment_permissions import PermissionContext
 
-router = APIRouter(dependencies=[Depends(require_company_resource(
-    CompanyCode.SUPPLY_MANAGEMENT, ResourceCode.SUPPLY_FINANCE
-))])
+router = APIRouter()
 
-WRITE_ROLES = (*FINANCE_ROLES, *DIRECTOR_ROLES)
-# 智慧财务 查看：业务经办/业务复核 + 财务 + 负责人/总经理 + 超管（法务风控、法律顾问不可见）
-_view_guard = require_roles(Role.BUSINESS_HANDLER, Role.BUSINESS_REVIEWER, *FINANCE_ROLES, *DIRECTOR_ROLES)
+_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
+_view_guard = require_permission("supply.finance.view", _supply_context)
+_update_guard = require_permission("supply.finance.update", _supply_context)
 
 
 @router.get("", response_model=Response[list[InvoiceOut]], summary="发票列表")
@@ -45,7 +44,7 @@ def invoice_stats(db: Session = Depends(get_db), _: User = Depends(_view_guard))
 
 @router.post(
     "", response_model=Response[InvoiceOut], summary="新建发票",
-    dependencies=[Depends(require_roles(*WRITE_ROLES))],
+    dependencies=[Depends(_update_guard)],
 )
 def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
     inv = Invoice(**payload.model_dump())
@@ -57,7 +56,7 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
 
 @router.put(
     "/{iid}", response_model=Response[InvoiceOut], summary="修改发票/更新开票状态",
-    dependencies=[Depends(require_roles(*WRITE_ROLES))],
+    dependencies=[Depends(_update_guard)],
 )
 def update_invoice(iid: int, payload: InvoiceUpdate, db: Session = Depends(get_db)):
     inv = db.get(Invoice, iid)
@@ -72,7 +71,7 @@ def update_invoice(iid: int, payload: InvoiceUpdate, db: Session = Depends(get_d
 
 @router.delete(
     "/{iid}", response_model=Response[dict], summary="删除发票",
-    dependencies=[Depends(require_roles(*WRITE_ROLES))],
+    dependencies=[Depends(_update_guard)],
 )
 def delete_invoice(iid: int, db: Session = Depends(get_db)):
     inv = db.get(Invoice, iid)

@@ -37,6 +37,7 @@ class Role(str, Enum):
     INVEST_DIRECTOR = "invest_director"        # 投资公司总经理（原“投资公司分管领导/负责人”，值不变）
     LEGAL_COUNSEL = "legal_counsel"            # 法律顾问：仅看合同管理 + 审批中心给意见
     INFO_MAINTAINER = "info_maintainer"        # 信息维护：超管账号身份，不在 7 级审批链，权限来自 is_superuser
+    UNASSIGNED = "unassigned"                  # 未配置岗位
 
     @property
     def label(self) -> str:
@@ -54,6 +55,7 @@ ROLE_LABELS: dict[Role, str] = {
     Role.INVEST_DIRECTOR: "投资公司总经理",
     Role.LEGAL_COUNSEL: "法律顾问",
     Role.INFO_MAINTAINER: "信息维护",
+    Role.UNASSIGNED: "未配置岗位",
 }
 
 # 合同审批链：列表顺序 == 逐级流转顺序（index 即 step）
@@ -175,6 +177,91 @@ def form_role_at_step(form_type, step: int):
 def form_is_final_step(form_type, step: int) -> bool:
     """是否为该审批单类型审批链的最后一级。"""
     return step == len(form_chain(form_type)) - 1
+
+
+class OrganizationType(str, Enum):
+    COMPANY = "company"
+    DEPARTMENT = "department"
+    EXTERNAL = "external"
+
+
+class PositionCategory(str, Enum):
+    EXECUTIVE = "executive"
+    DEPARTMENT = "department"
+    BUSINESS = "business"
+    GOVERNANCE = "governance"
+    EXTERNAL = "external"
+    DUTY = "duty"
+
+
+class AssignmentStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class PermissionAction(str, Enum):
+    VIEW = "view"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    SUBMIT = "submit"
+    REVIEW = "review"
+    APPROVE = "approve"
+    RETURN = "return"
+    IMPORT = "import"
+    EXPORT = "export"
+    CONFIGURE = "configure"
+    REASSIGN = "reassign"
+    AUDIT = "audit"
+
+
+class DataScope(str, Enum):
+    PLATFORM = "platform"
+    COMPANY = "company"
+    DEPARTMENT = "department"
+    BUSINESS_DOMAIN = "business_domain"
+    OWN = "own"
+    PARTICIPATED = "participated"
+    ASSIGNED = "assigned"
+
+
+class WorkflowTargetType(str, Enum):
+    CONTRACT = "contract"
+    PAYMENT_APPROVAL = "payment_approval"
+    BUSINESS_APPROVAL = "business_approval"
+
+
+class WorkflowVersionStatus(str, Enum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    RETIRED = "retired"
+
+
+class WorkflowInstanceStatus(str, Enum):
+    ACTIVE = "active"
+    APPROVED = "approved"
+    CANCELLED = "cancelled"
+
+
+class WorkflowTaskStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    APPROVED = "approved"
+    RETURNED = "returned"
+    SKIPPED = "skipped"
+    AWAITING_REASSIGNMENT = "awaiting_reassignment"
+
+
+class WorkflowAssigneeMode(str, Enum):
+    SHARED_POSITION = "shared_position"
+    DESIGNATED_USER = "designated_user"
+
+
+class WorkflowAction(str, Enum):
+    SUBMIT = "submit"
+    APPROVE = "approve"
+    RETURN = "return"
+    REASSIGN = "reassign"
 
 
 class InvoiceStatus(str, Enum):
