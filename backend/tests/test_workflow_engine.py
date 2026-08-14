@@ -1494,6 +1494,151 @@ class WorkflowAuthorizationTest(unittest.TestCase):
             None,
         )
 
+    def test_superuser_cannot_use_actions_incompatible_with_task_node(self):
+        with self.assertRaises(WorkflowValidationError) as raised:
+            complete_task(
+                self.db,
+                self.designated_task.id,
+                self.admin,
+                WorkflowAction.SUBMIT,
+                "submit approval node",
+            )
+        self.assertEqual(raised.exception.code, "invalid_workflow_action")
+        self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(
+            self.db.query(WorkflowTaskAction).filter_by(
+                task_id=self.designated_task.id
+            ).count(),
+            0,
+        )
+
+        complete_task(
+            self.db,
+            self.designated_task.id,
+            self.leader,
+            WorkflowAction.RETURN,
+            "return to submitter",
+        )
+        handler_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 0,
+        ))
+        for action in (WorkflowAction.APPROVE, WorkflowAction.RETURN):
+            with self.subTest(action=action):
+                with self.assertRaises(WorkflowValidationError) as raised:
+                    complete_task(
+                        self.db,
+                        handler_task.id,
+                        self.admin,
+                        action,
+                        "approval action on submit node",
+                    )
+                self.assertEqual(raised.exception.code, "invalid_workflow_action")
+                self.assertEqual(handler_task.status, WorkflowTaskStatus.ACTIVE)
+                self.assertEqual(
+                    self.db.query(WorkflowTaskAction).filter_by(
+                        task_id=handler_task.id
+                    ).count(),
+                    1,
+                )
+
+    def test_superuser_cannot_act_when_workflow_instance_is_not_active(self):
+        for instance_status in (
+            WorkflowInstanceStatus.APPROVED,
+            WorkflowInstanceStatus.CANCELLED,
+        ):
+            with self.subTest(instance_status=instance_status):
+                self.instance.status = instance_status
+                self.db.commit()
+
+                with self.assertRaises(WorkflowValidationError) as raised:
+                    complete_task(
+                        self.db,
+                        self.designated_task.id,
+                        self.admin,
+                        WorkflowAction.APPROVE,
+                        "invalid instance state",
+                    )
+
+                self.assertEqual(raised.exception.code, "workflow_instance_not_active")
+                self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
+                self.assertEqual(
+                    self.db.query(WorkflowTaskAction).filter_by(
+                        task_id=self.designated_task.id
+                    ).count(),
+                    0,
+                )
+                self.instance.status = WorkflowInstanceStatus.ACTIVE
+                self.db.commit()
+
+    def test_superuser_cannot_act_when_target_state_is_incompatible(self):
+        for target_status in (
+            ContractStatus.DRAFT,
+            ContractStatus.APPROVED,
+            ContractStatus.REJECTED,
+        ):
+            with self.subTest(action=WorkflowAction.APPROVE, target_status=target_status):
+                self.contract.status = target_status
+                self.db.commit()
+
+                with self.assertRaises(WorkflowValidationError) as raised:
+                    complete_task(
+                        self.db,
+                        self.designated_task.id,
+                        self.admin,
+                        WorkflowAction.APPROVE,
+                        "invalid approval target state",
+                    )
+
+                self.assertEqual(raised.exception.code, "workflow_target_invalid_state")
+                self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
+                self.assertEqual(
+                    self.db.query(WorkflowTaskAction).filter_by(
+                        task_id=self.designated_task.id
+                    ).count(),
+                    0,
+                )
+
+        self.contract.status = ContractStatus.PENDING
+        self.db.commit()
+        complete_task(
+            self.db,
+            self.designated_task.id,
+            self.leader,
+            WorkflowAction.RETURN,
+            "return to submitter",
+        )
+        handler_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 0,
+        ))
+        for target_status in (
+            ContractStatus.DRAFT,
+            ContractStatus.PENDING,
+            ContractStatus.APPROVED,
+        ):
+            with self.subTest(action=WorkflowAction.SUBMIT, target_status=target_status):
+                self.contract.status = target_status
+                self.db.commit()
+
+                with self.assertRaises(WorkflowValidationError) as raised:
+                    complete_task(
+                        self.db,
+                        handler_task.id,
+                        self.admin,
+                        WorkflowAction.SUBMIT,
+                        "invalid resubmit target state",
+                    )
+
+                self.assertEqual(raised.exception.code, "workflow_target_invalid_state")
+                self.assertEqual(handler_task.status, WorkflowTaskStatus.ACTIVE)
+                self.assertEqual(
+                    self.db.query(WorkflowTaskAction).filter_by(
+                        task_id=handler_task.id
+                    ).count(),
+                    1,
+                )
+
     def test_enabled_superuser_receives_all_active_task_counts(self):
         business = ApprovalForm(
             form_type=ContractType.BUSINESS,

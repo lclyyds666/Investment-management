@@ -1496,6 +1496,16 @@ def _complete_task(
         raise WorkflowValidationError(
             "invalid_workflow_action", "Only submit, approve and return are supported."
         )
+    submit_node = task.node.auto_complete_on_submit
+    if (
+        (submit_node and action != WorkflowAction.SUBMIT)
+        or (not submit_node and action == WorkflowAction.SUBMIT)
+    ):
+        raise WorkflowValidationError(
+            "invalid_workflow_action",
+            "The action is not valid for this workflow node.",
+            {"node_code": task.node.code, "action": action.value},
+        )
     if action == WorkflowAction.RETURN and not task.node.allow_reject:
         raise WorkflowValidationError("workflow_return_not_allowed", "This workflow node cannot be returned.")
     actor = db.get(User, actor_id)
@@ -1515,8 +1525,30 @@ def _complete_task(
     if assignment is None and not enabled_superuser:
         raise WorkflowValidationError("workflow_task_not_actionable", "The actor is not authorized for this task.")
     actor_snapshot = _workflow_actor_snapshot(actor, assignment)
-
     instance = task.instance
+    if instance.status != WorkflowInstanceStatus.ACTIVE:
+        raise WorkflowValidationError(
+            "workflow_instance_not_active",
+            "Only active workflow instances can accept task actions.",
+            {"instance_id": instance.id, "status": instance.status.value},
+        )
+    target = _workflow_target_for_instance(db, instance)
+    required_target_status = (
+        ContractStatus.REJECTED
+        if action == WorkflowAction.SUBMIT
+        else ContractStatus.PENDING
+    )
+    if target.status != required_target_status:
+        raise WorkflowValidationError(
+            "workflow_target_invalid_state",
+            "The workflow target is not in the required state for this action.",
+            {
+                "action": action.value,
+                "status": target.status.value,
+                "required_status": required_target_status.value,
+            },
+        )
+
     next_status = (
         WorkflowTaskStatus.RETURNED
         if action == WorkflowAction.RETURN
@@ -1539,7 +1571,6 @@ def _complete_task(
     if updated.rowcount != 1:
         raise _WorkflowTaskCASFailed()
     returned_to_sequence = None
-    target = _workflow_target_for_instance(db, instance)
     if action == WorkflowAction.RETURN:
         previous_task = db.scalar(
             select(WorkflowTask)

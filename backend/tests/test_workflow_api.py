@@ -373,6 +373,32 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(submit_projection.organization_code, "system.governance")
         self.assertEqual(submit_projection.position_code, "system.superuser")
 
+    def test_superuser_cannot_approve_returned_submit_task(self):
+        task = self.active_task()
+        self.current_user = self.leader
+        returned = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/reject",
+            json={"reason": "return to handler"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        handler_task = self.active_task()
+        self.assertTrue(handler_task.node.auto_complete_on_submit)
+        self.current_user = self.admin
+
+        response = self.client.post(
+            f"/api/v1/workflows/tasks/{handler_task.id}/approve",
+            json={"comment": "invalid cross-action"},
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "invalid_workflow_action")
+        self.db.refresh(handler_task)
+        self.assertEqual(handler_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(
+            self.db.query(WorkflowTaskAction).filter_by(task_id=handler_task.id).count(),
+            1,
+        )
+
     def test_reject_requires_nonblank_reason_and_timeline_preserves_snapshot(self):
         task = self.active_task()
         self.current_user = self.leader
