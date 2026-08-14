@@ -553,6 +553,37 @@ class WorkflowStartTest(unittest.TestCase):
             UserAssignment.user_id == admin.id,
         )))
 
+    def test_disabled_superuser_cannot_start_own_draft_without_assignment(self):
+        admin = self.add_user("disabled-admin-submitter", "Disabled Admin")
+        admin.is_superuser = True
+        admin.is_active = False
+        contract = Contract(
+            contract_no="TASK3-DISABLED-ADMIN",
+            title="Disabled Admin Contract",
+            created_by=admin.id,
+        )
+        self.db.add(contract)
+        self.db.commit()
+
+        with self.assertRaises(WorkflowValidationError) as raised:
+            start_workflow(
+                self.db,
+                WorkflowTargetType.CONTRACT,
+                contract.id,
+                admin,
+                self.designated_users(),
+            )
+
+        self.assertEqual(raised.exception.code, "ineligible_workflow_submitter")
+        self.assertIsNone(self.db.scalar(select(UserAssignment).where(
+            UserAssignment.user_id == admin.id,
+        )))
+        self.db.refresh(contract)
+        self.assertEqual(contract.status, ContractStatus.DRAFT)
+        self.assertIsNone(contract.workflow_instance_id)
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+        self.assertEqual(self.db.query(WorkflowTaskAction).count(), 0)
+
     def test_start_supports_payment_and_business_targets(self):
         payment = ApprovalForm(
             form_type=ContractType.PAYMENT,
@@ -1278,6 +1309,67 @@ class WorkflowAuthorizationTest(unittest.TestCase):
         self.db.commit()
         self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.admin))
 
+    def test_disabled_superuser_cannot_complete_or_resubmit_active_tasks(self):
+        self.admin.is_active = False
+        self.db.commit()
+        self.assertIsNone(self.db.scalar(select(UserAssignment).where(
+            UserAssignment.user_id == self.admin.id,
+        )))
+
+        for action in (WorkflowAction.APPROVE, WorkflowAction.RETURN):
+            with self.subTest(action=action):
+                with self.assertRaises(WorkflowValidationError) as raised:
+                    complete_task(
+                        self.db,
+                        self.designated_task.id,
+                        self.admin,
+                        action,
+                        "disabled admin action",
+                    )
+                self.assertEqual(raised.exception.code, "workflow_task_not_actionable")
+                self.assertEqual(
+                    self.db.get(WorkflowTask, self.designated_task.id).status,
+                    WorkflowTaskStatus.ACTIVE,
+                )
+                self.assertEqual(
+                    self.db.query(WorkflowTaskAction).filter_by(
+                        task_id=self.designated_task.id
+                    ).count(),
+                    0,
+                )
+
+        complete_task(
+            self.db,
+            self.designated_task.id,
+            self.leader,
+            WorkflowAction.RETURN,
+            "ordinary leader return",
+        )
+        handler_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == self.instance.id,
+            WorkflowTask.sequence == 0,
+        ))
+        self.assertEqual(handler_task.status, WorkflowTaskStatus.ACTIVE)
+
+        with self.assertRaises(WorkflowValidationError) as raised:
+            complete_task(
+                self.db,
+                handler_task.id,
+                self.admin,
+                WorkflowAction.SUBMIT,
+                "disabled admin resubmission",
+            )
+
+        self.assertEqual(raised.exception.code, "workflow_task_not_actionable")
+        self.assertEqual(
+            self.db.get(WorkflowTask, handler_task.id).status,
+            WorkflowTaskStatus.ACTIVE,
+        )
+        self.assertEqual(
+            self.db.query(WorkflowTaskAction).filter_by(task_id=handler_task.id).count(),
+            1,
+        )
+
     def test_expired_designated_assignment_marks_task_for_reassignment(self):
         expired_assignment = self.add_assignment(
             "expired-leader", "Expired Leader", "supply.company_leader",
@@ -1314,9 +1406,66 @@ class WorkflowAuthorizationTest(unittest.TestCase):
             [task.id for task in my_active_tasks(self.db, self.leader)],
             [self.designated_task.id],
         )
+        business = ApprovalForm(
+            form_type=ContractType.BUSINESS,
+            created_by=self.handler.id,
+        )
+        payment = ApprovalForm(
+            form_type=ContractType.PAYMENT,
+            created_by=self.handler.id,
+        )
+        self.db.add_all([business, payment])
+        self.db.commit()
+        business_instance = start_workflow(
+            self.db,
+            WorkflowTargetType.BUSINESS_APPROVAL,
+            business.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        payment_instance = start_workflow(
+            self.db,
+            WorkflowTargetType.PAYMENT_APPROVAL,
+            payment.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        business_instance.submitted_at = self.instance.submitted_at - timedelta(seconds=1)
+        payment_instance.submitted_at = self.instance.submitted_at
+        self.db.commit()
+        business_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == business_instance.id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        ))
+        payment_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == payment_instance.id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        ))
+
+        admin_tasks = my_active_tasks(self.db, self.admin)
         self.assertEqual(
-            {task.id for task in my_active_tasks(self.db, self.admin)},
-            {self.designated_task.id, self.shared_task.id},
+            [task.id for task in admin_tasks],
+            [
+                business_task.id,
+                self.designated_task.id,
+                payment_task.id,
+                self.shared_task.id,
+            ],
+        )
+        self.assertEqual(
+            {task.id for task in admin_tasks},
+            {
+                business_task.id,
+                self.designated_task.id,
+                payment_task.id,
+                self.shared_task.id,
+            },
         )
 
     def test_superuser_approval_records_real_actor_and_system_governance_snapshot(self):
