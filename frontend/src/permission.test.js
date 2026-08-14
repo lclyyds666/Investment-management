@@ -93,12 +93,12 @@ describe('portal permission guard', () => {
     }))).resolves.toBe(true)
   })
 
-  it('does not grant supply business routes to a superuser without application access', async () => {
+  it('grants supply business routes to a superuser without ordinary application access', async () => {
     authenticatedContext({ isSuperuser: true, resources: ['supply.dashboard'] })
 
     await expect(portalGuard(route('/supplymanagement/dashboard', {
       company: 'supplymanagement', resource: 'supply.dashboard'
-    }))).resolves.toEqual({ path: '/' })
+    }))).resolves.toBe(true)
   })
 
   it('checks application access before a business resource', async () => {
