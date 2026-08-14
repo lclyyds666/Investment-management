@@ -10,13 +10,14 @@ export const WORKFLOW_ROLE_POSITIONS = Object.freeze({
 })
 
 export function canUsePermission(portalStore, permissionCode) {
-  return portalStore.hasPermission(permissionCode)
+  return portalStore.isSuperuser || portalStore.hasPermission(permissionCode)
 }
 
 export function canActOnWorkflow(portalStore, row, permissionCode) {
+  if (row?.status !== 'pending') return false
+  if (portalStore.isSuperuser) return true
   const positionCode = WORKFLOW_ROLE_POSITIONS[row?.current_role]
-  return row?.status === 'pending'
-    && Boolean(positionCode)
+  return Boolean(positionCode)
     && portalStore.hasPermission(permissionCode)
     && portalStore.hasPosition(positionCode)
 }

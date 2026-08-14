@@ -18,11 +18,12 @@ export const usePortalStore = defineStore('portal', () => {
   let contextVersion = 0
 
   function hasCompany(companyCode) {
-    return applications.value.some(item => item.code === companyCode && item.accessible)
+    return isSuperuser.value
+      || applications.value.some(item => item.code === companyCode && item.accessible)
   }
 
   function hasResource(resourceCode) {
-    return (permissions.value.resources || []).includes(resourceCode)
+    return isSuperuser.value || (permissions.value.resources || []).includes(resourceCode)
   }
 
   function hasPosition(positionCode) {
@@ -30,7 +31,8 @@ export const usePortalStore = defineStore('portal', () => {
   }
 
   function hasPermission(permissionCode) {
-    return (permissions.value.permissions || []).some(item => item.code === permissionCode)
+    return isSuperuser.value
+      || (permissions.value.permissions || []).some(item => item.code === permissionCode)
   }
 
   function clearPortalContext() {

@@ -25,12 +25,16 @@ describe('business UI authorization predicates', () => {
     }, 'supply.contract.approve')).toBe(true)
   })
 
-  it('does not grant business actions to a superuser with an empty snapshot', () => {
+  it('grants all business permissions and pending workflow actions to a superuser', () => {
     const portalStore = portalSnapshot({ isSuperuser: true })
 
-    expect(canUsePermission(portalStore, 'supply.customer.create')).toBe(false)
+    expect(canUsePermission(portalStore, 'supply.customer.create')).toBe(true)
     expect(canActOnWorkflow(portalStore, {
       status: 'pending',
+      current_role: 'scm_director'
+    }, 'supply.approval.approve')).toBe(true)
+    expect(canActOnWorkflow(portalStore, {
+      status: 'approved',
       current_role: 'scm_director'
     }, 'supply.approval.approve')).toBe(false)
   })

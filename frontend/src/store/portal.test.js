@@ -156,8 +156,8 @@ describe('portal store', () => {
     expect(store.hasCompany('supplymanagement')).toBe(true)
   })
 
-  it('does not treat superuser as a business permission bypass', async () => {
-    portalApi.getPortalApplications.mockResolvedValue(applications)
+  it('treats superuser as company resource and permission bypass without fake positions', async () => {
+    portalApi.getPortalApplications.mockResolvedValue([])
     portalApi.getMyPortalPermissions.mockResolvedValue({
       is_superuser: true,
       assignments: [],
@@ -168,8 +168,9 @@ describe('portal store', () => {
     const store = usePortalStore()
     await store.loadPortalContext()
 
-    expect(store.hasPermission('supply.contract.approve')).toBe(false)
-    expect(store.hasResource('supply.scenic.analytics')).toBe(false)
-    expect(store.hasCompany('fundmanagement')).toBe(false)
+    expect(store.hasPermission('supply.contract.approve')).toBe(true)
+    expect(store.hasResource('supply.scenic.analytics')).toBe(true)
+    expect(store.hasCompany('fundmanagement')).toBe(true)
+    expect(store.hasPosition('supply.business_handler')).toBe(false)
   })
 })
