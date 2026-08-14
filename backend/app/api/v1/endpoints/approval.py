@@ -345,7 +345,14 @@ def delete_form(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    form = _get_form_or_404(db, form_id)
+    form = db.scalar(
+        select(ApprovalForm)
+        .where(ApprovalForm.id == form_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if form is None:
+        raise HTTPException(status_code=404, detail="审批单不存在")
     if form.status == ContractStatus.APPROVED:
         raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
     if not has_permission(db, current_user, "supply.approval.delete", _supply_context()):

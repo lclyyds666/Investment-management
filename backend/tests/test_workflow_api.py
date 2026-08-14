@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import openpyxl
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -1098,9 +1098,24 @@ class ContractWorkflowApiTest(unittest.TestCase):
         self.assertTrue(returned_task_ids)
 
         self.current_user = self.handler
-        deleted = self.client.delete(f"/api/v1/contracts/{self.contract.id}")
+        locked_entities = []
+
+        def record_locked_entity(execute_state):
+            statement = execute_state.statement
+            if getattr(statement, "_for_update_arg", None) is not None:
+                locked_entities.append(statement.column_descriptions[0]["entity"])
+
+        event.listen(self.db, "do_orm_execute", record_locked_entity)
+        try:
+            deleted = self.client.delete(f"/api/v1/contracts/{self.contract.id}")
+        finally:
+            event.remove(self.db, "do_orm_execute", record_locked_entity)
 
         self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(
+            locked_entities,
+            [Contract, WorkflowInstance, WorkflowTask],
+        )
         self.assertIsNone(self.db.get(Contract, self.contract.id))
         instance = self.db.get(WorkflowInstance, instance_id)
         self.assertEqual(instance.target_type, WorkflowTargetType.CONTRACT)
@@ -1141,6 +1156,60 @@ class ContractWorkflowApiTest(unittest.TestCase):
             for task in timeline.json()["data"]
             for action in task["actions"]
         ), action_ids)
+
+    def test_delete_contract_commit_failure_rolls_back_target_and_workflow(self):
+        submitted = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+        instance_id = submitted.json()["data"]["workflow_instance_id"]
+        self.current_user = self.leader
+        returned = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/reject",
+            json={"comment": "退回补充"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        tasks_before = {
+            task.id: (task.status, task.version, task.completed_at)
+            for task in self.db.scalars(
+                select(WorkflowTask).where(WorkflowTask.instance_id == instance_id)
+            )
+        }
+        action_ids_before = list(self.db.scalars(
+            select(WorkflowTaskAction.id)
+            .join(WorkflowTaskAction.task)
+            .where(WorkflowTask.instance_id == instance_id)
+            .order_by(WorkflowTaskAction.id)
+        ))
+        contract_id = self.contract.id
+        self.current_user = self.handler
+
+        with patch.object(self.db, "commit", side_effect=RuntimeError("commit failed")):
+            with self.assertRaisesRegex(RuntimeError, "commit failed"):
+                self.client.delete(f"/api/v1/contracts/{contract_id}")
+        self.db.rollback()
+        self.db.expire_all()
+
+        restored_contract = self.db.get(Contract, contract_id)
+        restored_instance = self.db.get(WorkflowInstance, instance_id)
+        self.assertIsNotNone(restored_contract)
+        self.assertEqual(restored_contract.status, ContractStatus.REJECTED)
+        self.assertEqual(restored_instance.status, WorkflowInstanceStatus.ACTIVE)
+        self.assertIsNone(restored_instance.completed_at)
+        tasks_after = {
+            task.id: (task.status, task.version, task.completed_at)
+            for task in self.db.scalars(
+                select(WorkflowTask).where(WorkflowTask.instance_id == instance_id)
+            )
+        }
+        self.assertEqual(tasks_after, tasks_before)
+        self.assertEqual(list(self.db.scalars(
+            select(WorkflowTaskAction.id)
+            .join(WorkflowTaskAction.task)
+            .where(WorkflowTask.instance_id == instance_id)
+            .order_by(WorkflowTaskAction.id)
+        )), action_ids_before)
 
     def test_legacy_reject_wrapper_requires_nonblank_reason(self):
         submitted = self.client.post(
@@ -1636,87 +1705,115 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
         self.assertEqual(selected["contract"], 1)
         self.assertEqual(unselected["contract"], 0)
 
-    def test_delete_returned_business_form_cancels_workflow_and_preserves_timeline(self):
-        active_counts_before = actionable_active_task_counts(self.db, self.admin)
-        submitted = self.submit(self.business)
-        self.assertEqual(submitted.status_code, 200, submitted.text)
-        instance_id = submitted.json()["data"]["workflow_instance_id"]
-        self.current_user = self.reviewer_a
-        returned = self.client.post(
-            f"/api/v1/approval-forms/{self.business.id}/reject",
-            json={"comment": "退回复核"},
+    def test_delete_returned_forms_cancels_workflow_and_preserves_timeline(self):
+        cases = (
+            (self.business, WorkflowTargetType.BUSINESS_APPROVAL),
+            (self.payment, WorkflowTargetType.PAYMENT_APPROVAL),
         )
-        self.assertEqual(returned.status_code, 200, returned.text)
-        self.assertEqual(returned.json()["data"]["status"], "rejected")
-        tasks_before = list(self.db.scalars(
-            select(WorkflowTask)
-            .where(WorkflowTask.instance_id == instance_id)
-            .order_by(WorkflowTask.sequence)
-        ))
-        task_ids = [task.id for task in tasks_before]
-        approved_task_ids = {
-            task.id for task in tasks_before
-            if task.status == WorkflowTaskStatus.APPROVED
-        }
-        returned_task_ids = {
-            task.id for task in tasks_before
-            if task.status == WorkflowTaskStatus.RETURNED
-        }
-        action_ids = list(self.db.scalars(
-            select(WorkflowTaskAction.id)
-            .join(WorkflowTaskAction.task)
-            .where(WorkflowTask.instance_id == instance_id)
-            .order_by(WorkflowTaskAction.id)
-        ))
-        self.assertTrue(returned_task_ids)
+        for form, expected_target_type in cases:
+            with self.subTest(target_type=expected_target_type):
+                self.current_user = self.handler
+                form_id = form.id
+                active_counts_before = actionable_active_task_counts(self.db, self.admin)
+                submitted = self.submit(form)
+                self.assertEqual(submitted.status_code, 200, submitted.text)
+                instance_id = submitted.json()["data"]["workflow_instance_id"]
+                self.current_user = self.reviewer_a
+                returned = self.client.post(
+                    f"/api/v1/approval-forms/{form_id}/reject",
+                    json={"comment": "退回复核"},
+                )
+                self.assertEqual(returned.status_code, 200, returned.text)
+                self.assertEqual(returned.json()["data"]["status"], "rejected")
+                tasks_before = list(self.db.scalars(
+                    select(WorkflowTask)
+                    .where(WorkflowTask.instance_id == instance_id)
+                    .order_by(WorkflowTask.sequence)
+                ))
+                task_ids = [task.id for task in tasks_before]
+                approved_task_ids = {
+                    task.id for task in tasks_before
+                    if task.status == WorkflowTaskStatus.APPROVED
+                }
+                returned_task_ids = {
+                    task.id for task in tasks_before
+                    if task.status == WorkflowTaskStatus.RETURNED
+                }
+                action_ids = list(self.db.scalars(
+                    select(WorkflowTaskAction.id)
+                    .join(WorkflowTaskAction.task)
+                    .where(WorkflowTask.instance_id == instance_id)
+                    .order_by(WorkflowTaskAction.id)
+                ))
+                self.assertTrue(returned_task_ids)
 
-        self.current_user = self.handler
-        deleted = self.client.delete(f"/api/v1/approval-forms/{self.business.id}")
+                self.current_user = self.handler
+                locked_entities = []
 
-        self.assertEqual(deleted.status_code, 200, deleted.text)
-        self.assertIsNone(self.db.get(ApprovalForm, self.business.id))
-        instance = self.db.get(WorkflowInstance, instance_id)
-        self.assertEqual(instance.target_type, WorkflowTargetType.BUSINESS_APPROVAL)
-        self.assertEqual(instance.status, WorkflowInstanceStatus.CANCELLED)
-        self.assertIsNotNone(instance.completed_at)
-        tasks_after = list(self.db.scalars(
-            select(WorkflowTask)
-            .where(WorkflowTask.instance_id == instance_id)
-            .order_by(WorkflowTask.sequence)
-        ))
-        self.assertEqual([task.id for task in tasks_after], task_ids)
-        self.assertFalse(any(task.status in {
-            WorkflowTaskStatus.ACTIVE,
-            WorkflowTaskStatus.PENDING,
-            WorkflowTaskStatus.AWAITING_REASSIGNMENT,
-        } for task in tasks_after))
-        self.assertEqual(
-            {task.id for task in tasks_after if task.status == WorkflowTaskStatus.APPROVED},
-            approved_task_ids,
-        )
-        self.assertEqual(
-            {task.id for task in tasks_after if task.status == WorkflowTaskStatus.RETURNED},
-            returned_task_ids,
-        )
-        self.assertEqual(list(self.db.scalars(
-            select(WorkflowTaskAction.id)
-            .join(WorkflowTaskAction.task)
-            .where(WorkflowTask.instance_id == instance_id)
-            .order_by(WorkflowTaskAction.id)
-        )), action_ids)
-        self.assertEqual(
-            actionable_active_task_counts(self.db, self.admin),
-            active_counts_before,
-        )
-        self.current_user = self.admin
-        timeline = self.client.get(f"/api/v1/workflows/instances/{instance_id}/timeline")
-        self.assertEqual(timeline.status_code, 200, timeline.text)
-        self.assertEqual([task["id"] for task in timeline.json()["data"]], task_ids)
-        self.assertEqual(sorted(
-            action["id"]
-            for task in timeline.json()["data"]
-            for action in task["actions"]
-        ), action_ids)
+                def record_locked_entity(execute_state):
+                    statement = execute_state.statement
+                    if getattr(statement, "_for_update_arg", None) is not None:
+                        locked_entities.append(statement.column_descriptions[0]["entity"])
+
+                event.listen(self.db, "do_orm_execute", record_locked_entity)
+                try:
+                    deleted = self.client.delete(f"/api/v1/approval-forms/{form_id}")
+                finally:
+                    event.remove(self.db, "do_orm_execute", record_locked_entity)
+
+                self.assertEqual(deleted.status_code, 200, deleted.text)
+                self.assertEqual(
+                    locked_entities,
+                    [ApprovalForm, WorkflowInstance, WorkflowTask],
+                )
+                self.assertIsNone(self.db.get(ApprovalForm, form_id))
+                instance = self.db.get(WorkflowInstance, instance_id)
+                self.assertEqual(instance.target_type, expected_target_type)
+                self.assertEqual(instance.status, WorkflowInstanceStatus.CANCELLED)
+                self.assertIsNotNone(instance.completed_at)
+                tasks_after = list(self.db.scalars(
+                    select(WorkflowTask)
+                    .where(WorkflowTask.instance_id == instance_id)
+                    .order_by(WorkflowTask.sequence)
+                ))
+                self.assertEqual([task.id for task in tasks_after], task_ids)
+                self.assertFalse(any(task.status in {
+                    WorkflowTaskStatus.ACTIVE,
+                    WorkflowTaskStatus.PENDING,
+                    WorkflowTaskStatus.AWAITING_REASSIGNMENT,
+                } for task in tasks_after))
+                self.assertEqual(
+                    {task.id for task in tasks_after if task.status == WorkflowTaskStatus.APPROVED},
+                    approved_task_ids,
+                )
+                self.assertEqual(
+                    {task.id for task in tasks_after if task.status == WorkflowTaskStatus.RETURNED},
+                    returned_task_ids,
+                )
+                self.assertEqual(list(self.db.scalars(
+                    select(WorkflowTaskAction.id)
+                    .join(WorkflowTaskAction.task)
+                    .where(WorkflowTask.instance_id == instance_id)
+                    .order_by(WorkflowTaskAction.id)
+                )), action_ids)
+                self.assertEqual(
+                    actionable_active_task_counts(self.db, self.admin),
+                    active_counts_before,
+                )
+                self.current_user = self.admin
+                timeline = self.client.get(
+                    f"/api/v1/workflows/instances/{instance_id}/timeline"
+                )
+                self.assertEqual(timeline.status_code, 200, timeline.text)
+                self.assertEqual(
+                    [task["id"] for task in timeline.json()["data"]],
+                    task_ids,
+                )
+                self.assertEqual(sorted(
+                    action["id"]
+                    for task in timeline.json()["data"]
+                    for action in task["actions"]
+                ), action_ids)
 
     def test_print_endpoint_passes_position_snapshot(self):
         submitted = self.submit(self.business)

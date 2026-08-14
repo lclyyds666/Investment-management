@@ -334,7 +334,14 @@ def delete_contract(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    contract = _get_contract_or_404(db, contract_id)
+    contract = db.scalar(
+        select(Contract)
+        .where(Contract.id == contract_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if contract is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="合同不存在")
 
     if contract.status == ContractStatus.APPROVED:
         raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
