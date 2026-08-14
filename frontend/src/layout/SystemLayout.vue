@@ -29,6 +29,15 @@
     </el-aside>
     <el-container direction="vertical" class="system-content">
       <GlobalHeader context-label="治理与权限台账" />
+      <div class="system-toolbar">
+        <el-button
+          data-testid="return-workspace"
+          plain
+          @click="returnToWorkspace"
+        >
+          返回工作平台
+        </el-button>
+      </div>
       <el-main><router-view /></el-main>
     </el-container>
   </el-container>
@@ -66,6 +75,10 @@ function toggleCollapsed() {
   localStorage.setItem('system_sidebar_collapsed', manuallyCollapsed.value ? '1' : '0')
 }
 
+function returnToWorkspace() {
+  return router.push('/')
+}
+
 onMounted(() => window.addEventListener('resize', syncViewport))
 onUnmounted(() => window.removeEventListener('resize', syncViewport))
 </script>
@@ -73,6 +86,14 @@ onUnmounted(() => window.removeEventListener('resize', syncViewport))
 <style scoped lang="scss">
 .system-layout { height: 100%; min-width: 0; }
 .system-content { min-width: 0; }
+.system-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--surface-border);
+}
 .system-sidebar {
   display: flex;
   flex-direction: column;
@@ -120,4 +141,5 @@ onUnmounted(() => window.removeEventListener('resize', syncViewport))
 .collapse-bar:hover { background: var(--chrome-menu-hover-bg); color: var(--chrome-menu-hover-text); }
 .collapse-bar:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 @media (prefers-reduced-motion: reduce) { .system-sidebar, :deep(.el-menu-item) { transition: none; } }
+@media (max-width: 760px) { .system-toolbar { padding-inline: 12px; } }
 </style>

@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 import OrganizationView from './organization.vue'
 import { buildOrganizationTree } from '@/utils/organizationTree'
+
+const organizationSource = readFileSync(
+  new URL('src/views/system/organization.vue', pathToFileURL(`${process.cwd()}/`)),
+  'utf8'
+)
 
 const saveOrganization = vi.fn()
 const loadTree = vi.fn()
@@ -58,5 +65,14 @@ describe('organization hierarchy and form rules', () => {
     wrapper.vm.reason = '治理调整'
     await wrapper.vm.save()
     expect(saveOrganization).toHaveBeenCalledWith(expect.objectContaining({ organization_type: 'company', parent_code: null, company_code: 'new-company' }), '治理调整', 1)
+  })
+
+  it('uses adaptive multi-line tree node sizing', () => {
+    expect(organizationSource).toContain(':deep(.el-tree-node__content)')
+    expect(organizationSource).toMatch(/height:\s*auto/)
+    expect(organizationSource).toMatch(/min-height:\s*48px/)
+    expect(organizationSource).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(organizationSource).toMatch(/grid-template-columns:\s*clamp\(/)
+    expect(organizationSource).toMatch(/padding-block:\s*6px/)
   })
 })

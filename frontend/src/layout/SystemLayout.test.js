@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import SystemLayout from './SystemLayout.vue'
 
+const routerPush = vi.hoisted(() => vi.fn())
+
 const pathByName = {
   SystemUsers: '/system/users',
   SystemDirectory: '/system/directory',
@@ -23,7 +25,8 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ path: '/system/users' }),
   useRouter: () => ({
     options: { routes: [{ path: '/system', children: systemChildren }] },
-    resolve: ({ name }) => ({ path: pathByName[name] })
+    resolve: ({ name }) => ({ path: pathByName[name] }),
+    push: routerPush
   })
 }))
 
@@ -42,7 +45,8 @@ const stubs = {
   ElMain: { template: '<main><slot /></main>' },
   ElMenu: { template: '<nav><slot /></nav>' },
   ElMenuItem: { props: ['index'], template: '<div :data-menu-index="index"><slot /></div>' },
-  ElIcon: { template: '<span><slot /></span>' }
+  ElIcon: { template: '<span><slot /></span>' },
+  ElButton: { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' }
 }
 
 describe('system layout navigation', () => {
@@ -62,5 +66,14 @@ describe('system layout navigation', () => {
       '/system/audit',
       '/system/ai-conversations'
     ])
+  })
+
+  it('returns from every system page to the work platform', async () => {
+    wrapper = shallowMount(SystemLayout, { global: { stubs } })
+
+    const button = wrapper.get('[data-testid="return-workspace"]')
+    expect(button.text()).toContain('返回工作平台')
+    await button.trigger('click')
+    expect(routerPush).toHaveBeenCalledWith('/')
   })
 })

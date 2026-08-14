@@ -19,4 +19,73 @@ function create() { Object.assign(form, { id:null, code:'', name:'', organizatio
 async function save() { if (!reason.value.trim()) return; const parentCode = form.organization_type === 'company' ? null : form.parent_code; const parent = flat.value.find(item => item.code === parentCode); if (form.organization_type === 'department' && !parent) { ElMessage.error('部门必须归属到公司或部门'); return } try { const { id, children, parent_id, ...payload } = form; Object.assign(payload, { parent_code: parentCode, company_code: form.organization_type === 'company' ? form.code : (parent.company_code || parent.code) }); await store.saveOrganization(payload, reason.value.trim(), id); await store.loadTree(true); ElMessage.success('组织已保存') } catch (error) { ElMessage.error(error.response?.data?.detail?.message || '组织保存失败') } }
 onMounted(async () => { await store.loadTree(); if (tree.value[0]) select(tree.value[0]) })
 </script>
-<style scoped>.organization-register{display:grid;grid-template-columns:minmax(240px,30%) minmax(0,1fr);gap:18px;padding:20px;min-height:100%;background:var(--app-bg)}aside,.detail-surface{padding:18px;background:var(--el-bg-color);border:1px solid var(--surface-border)}.register-heading{padding-left:10px;border-left:4px solid var(--brand-vermilion);font-weight:750}.tree-node{display:flex;flex-direction:column}.tree-node small{color:var(--el-text-color-secondary);font-family:var(--font-data)}.detail-surface h2{margin-top:0;font-family:var(--font-display)}@media(max-width:760px){.organization-register{grid-template-columns:1fr}}</style>
+<style scoped>
+.organization-register {
+  display: grid;
+  grid-template-columns: clamp(280px, 32vw, 420px) minmax(0, 1fr);
+  gap: 18px;
+  padding: 20px;
+  min-height: 100%;
+  background: var(--app-bg);
+}
+
+aside,
+.detail-surface {
+  padding: 18px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--surface-border);
+}
+
+.register-heading {
+  padding-left: 10px;
+  border-left: 4px solid var(--brand-vermilion);
+  font-weight: 750;
+}
+
+:deep(.el-tree) {
+  margin: 14px 0;
+}
+
+:deep(.el-tree-node__content) {
+  height: auto;
+  min-height: 48px;
+  align-items: flex-start;
+  padding-block: 6px;
+}
+
+:deep(.el-tree-node__expand-icon) {
+  margin-top: 4px;
+}
+
+.tree-node {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+  line-height: 1.25;
+}
+
+.tree-node b,
+.tree-node small {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.tree-node small {
+  color: var(--el-text-color-secondary);
+  font-family: var(--font-data);
+}
+
+.detail-surface h2 {
+  margin-top: 0;
+  font-family: var(--font-display);
+}
+
+@media (max-width: 760px) {
+  .organization-register {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
