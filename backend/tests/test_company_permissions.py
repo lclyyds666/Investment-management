@@ -15,7 +15,10 @@ from app.db.session import get_db
 from app.main import create_app
 from app.api.v1.endpoints.approval import list_todo as list_approval_todo
 from app.api.v1.endpoints.approval_stats import pending_count
-from app.api.v1.endpoints.contract import list_todo as list_contract_todo
+from app.api.v1.endpoints.contract import (
+    _visible_contract_ids,
+    list_todo as list_contract_todo,
+)
 from app.api.v1.endpoints.user import create_user, update_user
 from app.core.enums import (
     AssignmentStatus, CompanyCode, ContractStatus, DataScope, PermissionAction,
@@ -124,6 +127,17 @@ class CompanyPermissionServiceTest(unittest.TestCase):
         self.assertEqual(
             allowed_resources(self.db, user, CompanyCode.SUPPLY_MANAGEMENT),
             frozenset(RESOURCE_VIEW_PERMISSIONS),
+        )
+
+    def test_disabled_superuser_has_no_resources_with_assignment(self):
+        user = self.add_user("disabled-admin", Role.INFO_MAINTAINER, is_superuser=True)
+        self.add_assignment(user, "supplymanagement", "supply.business_handler")
+        user.is_active = False
+        self.db.commit()
+
+        self.assertEqual(
+            allowed_resources(self.db, user, CompanyCode.SUPPLY_MANAGEMENT),
+            frozenset(),
         )
 
     def test_superuser_cannot_access_supply_resource_under_another_company(self):
@@ -373,6 +387,19 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             ).status_code,
             403,
         )
+
+    def test_disabled_superuser_with_assignment_cannot_view_contracts(self):
+        self._add_current_user()
+        self._assign_supply_role(self.current_user.id, Role.BUSINESS_HANDLER)
+        self.current_user.is_superuser = True
+        self.current_user.is_active = False
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as raised:
+            _visible_contract_ids(self.db, self.current_user)
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(self.client.get("/api/v1/contracts").status_code, 403)
 
     def _set_permission(
         self,

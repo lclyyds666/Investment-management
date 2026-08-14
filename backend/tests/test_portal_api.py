@@ -123,6 +123,19 @@ class PortalRegistryTest(unittest.TestCase):
         self.assertEqual([item.accessible for item in apps], [True, True, True])
         self.assertEqual([item.denial_reason for item in apps], [None, None, None])
 
+    def test_disabled_superuser_cannot_enter_applications_with_assignment(self):
+        self.add_assignment(self.admin, "supplymanagement", "supply.business_handler")
+        self.admin.is_active = False
+        self.db.commit()
+
+        apps = applications_for_user(self.db, self.admin)
+
+        self.assertEqual([item.accessible for item in apps], [False, False, False])
+        self.assertEqual(
+            [item.denial_reason for item in apps],
+            ["暂时无访问权限", "暂时无访问权限", "暂时无访问权限"],
+        )
+
     def test_product_name_is_unified(self):
         from app.core.config import Settings
 
@@ -263,6 +276,18 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
             set(snapshot.resources),
             {resource.value for resource in RESOURCE_VIEW_PERMISSIONS},
         )
+
+    def test_disabled_superuser_snapshot_is_empty_with_assignment(self):
+        self.admin.is_active = False
+        self.db.commit()
+
+        snapshot = permission_snapshot_for_user(self.db, self.admin)
+
+        self.assertTrue(snapshot.is_superuser)
+        self.assertEqual(snapshot.assignments, [])
+        self.assertEqual(snapshot.permissions, [])
+        self.assertEqual(snapshot.resources, [])
+        self.assertEqual(snapshot.company_roles, {})
 
 
 if __name__ == "__main__":
