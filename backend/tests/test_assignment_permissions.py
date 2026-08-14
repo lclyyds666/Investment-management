@@ -19,6 +19,8 @@ from app.models.portal import UserCompanyRole
 from app.models.user import User
 from app.services.legacy_assignment_migration import legacy_target, migrate_legacy_assignments
 from app.services.organization_catalog import (
+    INVESTMENT_EXECUTIVE_POSITION_CODES,
+    INVESTMENT_EXECUTIVE_READ_PERMISSIONS,
     ORGANIZATION_CATALOG,
     PERMISSION_CATALOG,
     POSITION_CATALOG,
@@ -105,6 +107,9 @@ class AuthorizationCatalogTest(unittest.TestCase):
 
     def test_supply_portal_enter_has_the_exact_platform_grant_topology(self):
         expected_positions = {
+            "investment.executive.chairman",
+            "investment.executive.general_manager",
+            "investment.executive.deputy_general_manager",
             "supply.business_handler",
             "supply.business_reviewer",
             "supply.finance_handler",
@@ -162,6 +167,56 @@ class AuthorizationCatalogTest(unittest.TestCase):
                 }
             ],
         )
+
+    def test_investment_executives_receive_only_cross_platform_read_permissions(self):
+        executive_positions = {
+            "investment.executive.chairman",
+            "investment.executive.general_manager",
+            "investment.executive.deputy_general_manager",
+        }
+        expected_permissions = {
+            "investment.portal.enter",
+            "supply.portal.enter",
+            "fund.portal.enter",
+            "organization.directory.view",
+            *{
+                item["code"]
+                for item in PERMISSION_CATALOG
+                if item["code"].startswith("supply.")
+                and item["code"].endswith((".view", ".export"))
+            },
+        }
+        forbidden_actions = {
+            "create", "update", "delete", "submit", "review",
+            "approve", "return", "configure",
+        }
+
+        self.assertEqual(set(INVESTMENT_EXECUTIVE_POSITION_CODES), executive_positions)
+        self.assertEqual(INVESTMENT_EXECUTIVE_READ_PERMISSIONS, expected_permissions)
+        for position_code in executive_positions:
+            with self.subTest(position_code=position_code):
+                grants = [
+                    item for item in POSITION_GRANTS
+                    if item["position_code"] == position_code
+                ]
+                self.assertEqual(
+                    {item["permission_code"] for item in grants},
+                    expected_permissions,
+                )
+                self.assertFalse({
+                    item["permission_code"].rsplit(".", 1)[-1]
+                    for item in grants
+                } & forbidden_actions)
+                for grant in grants:
+                    code = grant["permission_code"]
+                    if code == "investment.portal.enter":
+                        self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("platform", "investment"))
+                    elif code == "supply.portal.enter":
+                        self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("platform", "supplymanagement"))
+                    elif code == "fund.portal.enter":
+                        self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("platform", "fundmanagement"))
+                    else:
+                        self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("company", "supplymanagement"))
 
     def test_legacy_roles_map_to_confirmed_positions(self):
         self.assertEqual(
@@ -338,32 +393,31 @@ class AssignmentPermissionServiceTest(unittest.TestCase):
             PermissionContext(owner_id=self.multi_role_user.id),
         ))
 
-    def test_superuser_with_business_assignment_is_denied_by_authorization_adapters(self):
-        self.add_assignment(
-            self.admin,
-            "supplymanagement",
-            "supply.business_handler",
-        )
-
-        self.assertEqual(
-            [assignment.position.code for assignment in active_assignments(self.db, self.admin.id)],
-            ["supply.business_handler"],
-        )
-        self.assertIn(
+    def test_enabled_superuser_bypasses_permission_but_not_position_checks(self):
+        self.assertFalse(has_position(self.db, self.admin.id, "supply.business_handler"))
+        for permission_code in (
             "supply.contract.submit",
-            {grant.code for grant in permission_grants(self.db, self.admin.id)},
-        )
-        self.assertFalse(
-            has_position(self.db, self.admin.id, "supply.business_handler")
-        )
-        self.assertFalse(
-            has_permission(
-                self.db,
-                self.admin,
-                "supply.contract.submit",
-                PermissionContext(company_code="supplymanagement"),
-            )
-        )
+            "supply.approval.approve",
+            "supply.channel.configure",
+            "future.permission.not-yet-seeded",
+        ):
+            with self.subTest(permission_code=permission_code):
+                self.assertTrue(has_permission(
+                    self.db,
+                    self.admin,
+                    permission_code,
+                    PermissionContext(company_code="supplymanagement"),
+                ))
+
+    def test_disabled_superuser_has_no_permission_bypass(self):
+        self.admin.is_active = False
+        self.db.commit()
+        self.assertFalse(has_permission(
+            self.db,
+            self.admin,
+            "supply.contract.view",
+            PermissionContext(company_code="supplymanagement"),
+        ))
 
 
 class LegacyAssignmentMigrationTest(unittest.TestCase):

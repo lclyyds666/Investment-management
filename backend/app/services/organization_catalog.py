@@ -67,11 +67,51 @@ PERMISSION_CATALOG = tuple(_permission_catalog_item(code) for code in PERMISSION
 SUPPLY_VIEW_PERMISSIONS = frozenset(code for code in PERMISSION_CODES if code.startswith("supply.") and code.endswith(".view"))
 SUPPLY_EXPORT_PERMISSIONS = frozenset(code for code in PERMISSION_CODES if code.startswith("supply.") and code.endswith(".export"))
 
+INVESTMENT_EXECUTIVE_POSITION_CODES = (
+    "investment.executive.chairman",
+    "investment.executive.general_manager",
+    "investment.executive.deputy_general_manager",
+)
+
+INVESTMENT_EXECUTIVE_READ_PERMISSIONS = frozenset({
+    "investment.portal.enter",
+    "supply.portal.enter",
+    "fund.portal.enter",
+    "organization.directory.view",
+}) | SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS
+
 
 def _supply_grants(position_code: str, permission_codes: set[str] | frozenset[str]):
     return tuple(
         {"position_code": position_code, "permission_code": code, "data_scope": "company", "scope_ref": "supplymanagement"}
         for code in sorted(permission_codes)
+    )
+
+
+def _investment_executive_grants():
+    portal_scopes = {
+        "investment.portal.enter": "investment",
+        "supply.portal.enter": "supplymanagement",
+        "fund.portal.enter": "fundmanagement",
+    }
+    return tuple(
+        {
+            "position_code": position_code,
+            "permission_code": permission_code,
+            "data_scope": "platform",
+            "scope_ref": scope_ref,
+        }
+        for position_code in INVESTMENT_EXECUTIVE_POSITION_CODES
+        for permission_code, scope_ref in portal_scopes.items()
+    ) + tuple(
+        {
+            "position_code": position_code,
+            "permission_code": permission_code,
+            "data_scope": "company",
+            "scope_ref": "supplymanagement",
+        }
+        for position_code in INVESTMENT_EXECUTIVE_POSITION_CODES
+        for permission_code in sorted(SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS)
     )
 
 
@@ -123,9 +163,7 @@ POSITION_GRANTS = (
     }),
     {"position_code": "external.legal_counsel", "permission_code": "supply.contract.view", "data_scope": "assigned", "scope_ref": ""},
     {"position_code": "external.legal_counsel", "permission_code": "supply.contract.review", "data_scope": "assigned", "scope_ref": ""},
-    {"position_code": "investment.executive.chairman", "permission_code": "investment.portal.enter", "data_scope": "platform", "scope_ref": "investment"},
-    {"position_code": "investment.executive.general_manager", "permission_code": "investment.portal.enter", "data_scope": "platform", "scope_ref": "investment"},
-    {"position_code": "investment.executive.deputy_general_manager", "permission_code": "investment.portal.enter", "data_scope": "platform", "scope_ref": "investment"},
+    *_investment_executive_grants(),
     {"position_code": "fund.chairman", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     {"position_code": "fund.general_manager", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     *(

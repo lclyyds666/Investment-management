@@ -130,6 +130,8 @@ def _assigned_contract_ids(db: Session, user: User) -> set[int]:
 
 
 def _visible_contract_ids(db: Session, user: User) -> set[int] | None:
+    if user.is_superuser and user.is_active:
+        return None
     grants = tuple(
         grant for grant in permission_grants(db, user.id)
         if grant.code == "supply.contract.view"

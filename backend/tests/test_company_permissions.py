@@ -35,7 +35,12 @@ from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
 from app.schemas.user import UserCreate, UserOut, UserUpdate
 from app.services.organization_catalog import seed_authorization_catalog
-from app.services.permissions import allowed_resources, get_company_role, has_resource
+from app.services.permissions import (
+    RESOURCE_VIEW_PERMISSIONS,
+    allowed_resources,
+    get_company_role,
+    has_resource,
+)
 
 
 class CompanyRoleModelTest(unittest.TestCase):
@@ -114,11 +119,11 @@ class CompanyPermissionServiceTest(unittest.TestCase):
             )
         )
 
-    def test_superuser_has_no_implicit_registered_resources(self):
+    def test_enabled_superuser_has_all_registered_resources(self):
         user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
         self.assertEqual(
             allowed_resources(self.db, user, CompanyCode.SUPPLY_MANAGEMENT),
-            frozenset(),
+            frozenset(RESOURCE_VIEW_PERMISSIONS),
         )
 
     def test_superuser_cannot_access_supply_resource_under_another_company(self):
@@ -198,16 +203,16 @@ class CompanyPermissionDependencyTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
-    def test_require_company_resource_denies_superuser_without_assignment(self):
+    def test_require_company_resource_allows_enabled_superuser_without_assignment(self):
         user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
 
-        with self.assertRaises(HTTPException) as raised:
+        self.assertIs(
             require_company_resource(
                 CompanyCode.SUPPLY_MANAGEMENT,
                 ResourceCode.SCENIC_ANALYTICS,
-            )(current_user=user, db=self.db)
-
-        self.assertEqual(raised.exception.status_code, 403)
+            )(current_user=user, db=self.db),
+            user,
+        )
 
 
 class SupplyApiAuthorizationTest(unittest.TestCase):
@@ -329,6 +334,45 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["total"], 0)
+
+    def test_investment_executive_can_read_and_download_but_cannot_mutate(self):
+        self._add_current_user()
+        organization_id = self.db.scalar(
+            select(Organization.id).where(Organization.code == "investment")
+        )
+        position_id = self.db.scalar(
+            select(Position.id).where(
+                Position.code == "investment.executive.general_manager"
+            )
+        )
+        self.db.add(UserAssignment(
+            user_id=self.current_user.id,
+            organization_id=organization_id,
+            position_id=position_id,
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        self.db.commit()
+
+        self.assertEqual(self.client.get("/api/v1/contracts").status_code, 200)
+        self.assertNotEqual(
+            self.client.get("/api/v1/contracts/999/attachment").status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/contracts",
+                json={"contract_no": "EXEC-WRITE", "title": "Denied"},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/channels",
+                json={"name": "Denied"},
+            ).status_code,
+            403,
+        )
 
     def _set_permission(
         self,

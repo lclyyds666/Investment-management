@@ -1,7 +1,9 @@
 """统一门户应用注册表与当前用户权限快照。"""
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import CompanyCode, DataScope
+from app.models.organization import Permission
 from app.models.user import User
 from app.schemas.portal import (
     AssignmentSnapshotOut,
@@ -46,9 +48,10 @@ def applications_for_user(db: Session, user: User) -> list[PortalApplicationOut]
             for grant in permission_grants(db, user.id)
             if grant.data_scope == DataScope.PLATFORM
         }
+    enabled_superuser = bool(user.is_superuser and user.is_active)
     applications = []
     for code, company_name, route, status, enter_permission in APPLICATIONS:
-        accessible = enter_permission in platform_permissions
+        accessible = enabled_superuser or enter_permission in platform_permissions
         applications.append(
             PortalApplicationOut(
                 code=code,
@@ -88,11 +91,32 @@ def permission_snapshot_for_user(
     db: Session, user: User
 ) -> PortalPermissionSnapshot:
     if user.is_superuser:
+        if user.is_active:
+            permission_codes = list(db.scalars(
+                select(Permission.code)
+                .where(Permission.is_active.is_(True))
+                .order_by(Permission.code)
+            ))
+            return PortalPermissionSnapshot(
+                is_superuser=True,
+                assignments=[],
+                permissions=[
+                    PermissionGrantOut(
+                        code=code,
+                        data_scope=DataScope.PLATFORM.value,
+                        scope_ref="",
+                    )
+                    for code in permission_codes
+                ],
+                resources=sorted(resource.value for resource in RESOURCE_VIEW_PERMISSIONS),
+                company_roles={},
+            )
         return PortalPermissionSnapshot(
             is_superuser=True,
             assignments=[],
             permissions=[],
             resources=[],
+            company_roles={},
         )
 
     assignments = sorted(

@@ -8,8 +8,14 @@ from app.core.enums import AssignmentStatus, Role
 from app.db.base import Base
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
-from app.services.organization_catalog import seed_authorization_catalog
+from app.services.organization_catalog import (
+    INVESTMENT_EXECUTIVE_POSITION_CODES,
+    INVESTMENT_EXECUTIVE_READ_PERMISSIONS,
+    PERMISSION_CATALOG,
+    seed_authorization_catalog,
+)
 from app.services.portal import applications_for_user, permission_snapshot_for_user
+from app.services.permissions import RESOURCE_VIEW_PERMISSIONS
 
 
 class PortalRegistryTest(unittest.TestCase):
@@ -36,9 +42,6 @@ class PortalRegistryTest(unittest.TestCase):
         )
         self.add_assignment(
             self.user, "supplymanagement", "governance.supply_leader"
-        )
-        self.add_assignment(
-            self.admin, "investment", "investment.executive.general_manager"
         )
 
     def tearDown(self):
@@ -86,7 +89,7 @@ class PortalRegistryTest(unittest.TestCase):
             [item.status for item in apps],
             ["construction", "online", "construction"],
         )
-        self.assertEqual([item.accessible for item in apps], [True, True, False])
+        self.assertEqual([item.accessible for item in apps], [True, True, True])
 
     def test_every_intended_position_can_enter_the_supply_application(self):
         for index, (organization_code, position_code) in enumerate(
@@ -101,23 +104,24 @@ class PortalRegistryTest(unittest.TestCase):
                 self.assertTrue(supply_app.accessible)
                 self.assertIsNone(supply_app.denial_reason)
 
-    def test_investment_hierarchy_does_not_grant_supply_portal_access(self):
-        user = self.add_user("investment-only")
-        self.add_assignment(
-            user,
-            "investment",
+    def test_each_investment_executive_can_enter_all_three_applications(self):
+        for index, position_code in enumerate((
+            "investment.executive.chairman",
             "investment.executive.general_manager",
-        )
+            "investment.executive.deputy_general_manager",
+        )):
+            with self.subTest(position_code=position_code):
+                user = self.add_user(f"investment-executive-{index}")
+                self.add_assignment(user, "investment", position_code)
+                apps = applications_for_user(self.db, user)
+                self.assertEqual([item.accessible for item in apps], [True, True, True])
+                self.assertEqual([item.denial_reason for item in apps], [None, None, None])
 
-        supply_app = applications_for_user(self.db, user)[1]
-
-        self.assertFalse(supply_app.accessible)
-        self.assertEqual(supply_app.denial_reason, "暂时无访问权限")
-
-    def test_superuser_with_platform_assignment_has_no_business_applications(self):
+    def test_enabled_superuser_can_enter_every_application_without_assignments(self):
         apps = applications_for_user(self.db, self.admin)
 
-        self.assertEqual([item.accessible for item in apps], [False, False, False])
+        self.assertEqual([item.accessible for item in apps], [True, True, True])
+        self.assertEqual([item.denial_reason for item in apps], [None, None, None])
 
     def test_product_name_is_unified(self):
         from app.core.config import Settings
@@ -125,7 +129,7 @@ class PortalRegistryTest(unittest.TestCase):
         self.assertEqual(Settings().PROJECT_NAME, "山东出版投资有限公司工作平台")
 
     def test_denied_applications_include_the_required_reason(self):
-        apps = applications_for_user(self.db, self.admin)
+        apps = applications_for_user(self.db, self.add_user("denied-user"))
 
         self.assertEqual(
             [item.denial_reason for item in apps],
@@ -229,13 +233,36 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
 
         self.assertEqual(snapshot.company_roles, {"supplymanagement": "invest_director"})
 
-    def test_superuser_snapshot_has_system_identity_without_business_resources(self):
+    def test_each_investment_executive_snapshot_has_exact_read_only_boundary(self):
+        for index, position_code in enumerate(INVESTMENT_EXECUTIVE_POSITION_CODES):
+            with self.subTest(position_code=position_code):
+                user = self.add_user(f"snapshot-executive-{index}")
+                self.add_assignment(user, "investment", position_code)
+
+                snapshot = permission_snapshot_for_user(self.db, user)
+
+                self.assertEqual(
+                    {item.code for item in snapshot.permissions},
+                    INVESTMENT_EXECUTIVE_READ_PERMISSIONS,
+                )
+                self.assertEqual(
+                    set(snapshot.resources),
+                    {resource.value for resource in RESOURCE_VIEW_PERMISSIONS},
+                )
+
+    def test_superuser_snapshot_projects_all_registered_permissions_and_resources(self):
         snapshot = permission_snapshot_for_user(self.db, self.admin)
 
         self.assertTrue(snapshot.is_superuser)
         self.assertEqual(snapshot.assignments, [])
-        self.assertNotIn("supply.contract.view", {item.code for item in snapshot.permissions})
-        self.assertEqual(snapshot.resources, [])
+        self.assertEqual(
+            {item.code for item in snapshot.permissions},
+            {item["code"] for item in PERMISSION_CATALOG},
+        )
+        self.assertEqual(
+            set(snapshot.resources),
+            {resource.value for resource in RESOURCE_VIEW_PERMISSIONS},
+        )
 
 
 if __name__ == "__main__":

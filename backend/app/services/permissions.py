@@ -31,6 +31,8 @@ def allowed_resources(
 ) -> frozenset[ResourceCode]:
     if company != CompanyCode.SUPPLY_MANAGEMENT:
         return frozenset()
+    if user.is_superuser and user.is_active:
+        return frozenset(RESOURCE_VIEW_PERMISSIONS)
     return frozenset(
         resource
         for resource, permission_code in RESOURCE_VIEW_PERMISSIONS.items()

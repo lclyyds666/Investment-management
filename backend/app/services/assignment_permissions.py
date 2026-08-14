@@ -119,7 +119,7 @@ def has_permission(
     context: PermissionContext | None = None,
 ) -> bool:
     if user.is_superuser:
-        return False
+        return bool(user.is_active)
     permission_context = context or PermissionContext()
     return any(
         _scope_matches(grant, user.id, permission_context)
