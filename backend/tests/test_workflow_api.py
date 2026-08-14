@@ -310,37 +310,68 @@ class WorkflowApiTest(unittest.TestCase):
         approved = self.client.post(f"/api/v1/workflows/tasks/{task.id}/approve", json={"comment": "ok"})
         self.assertEqual(approved.status_code, 200)
 
-    def test_superuser_cannot_approve_and_second_action_returns_actor_snapshot(self):
+    def test_superuser_can_approve_and_second_action_returns_admin_snapshot(self):
         task = self.active_task()
         self.current_user = self.admin
-        self.assertEqual(
-            self.client.post(f"/api/v1/workflows/tasks/{task.id}/approve", json={"comment": "admin"}).status_code,
-            403,
+        approved = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/approve",
+            json={"comment": "admin test"},
         )
-        self.current_user = self.leader
-        self.assertEqual(
-            self.client.post(f"/api/v1/workflows/tasks/{task.id}/approve", json={"comment": "done"}).status_code,
-            200,
-        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+
         self.current_user = self.other_leader
-        conflict = self.client.post(f"/api/v1/workflows/tasks/{task.id}/approve", json={"comment": "late"})
+        conflict = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/approve",
+            json={"comment": "late"},
+        )
 
         self.assertEqual(conflict.status_code, 409)
-        self.assertEqual(conflict.json()["detail"]["actor"], self.leader.full_name)
-        self.assertEqual(conflict.json()["detail"]["action"], WorkflowAction.APPROVE.value)
-        self.assertIsNotNone(conflict.json()["detail"]["completed_at"])
-        self.assertEqual(
-            self.db.scalar(select(WorkflowTaskAction.actor_name).where(WorkflowTaskAction.task_id == task.id)),
-            self.leader.full_name,
+        self.assertEqual(conflict.json()["detail"]["actor"], self.admin.full_name)
+
+        action = self.db.scalar(select(WorkflowTaskAction).where(
+            WorkflowTaskAction.task_id == task.id,
+        ))
+        self.assertEqual(action.actor_id, self.admin.id)
+        self.assertEqual(action.organization_code, "system.governance")
+        self.assertEqual(action.position_code, "system.superuser")
+
+    def test_superuser_return_and_contract_resubmit_use_governance_snapshot(self):
+        instance_id = self.instance.id
+        task = self.active_task()
+        self.current_user = self.admin
+        returned = self.client.post(
+            f"/api/v1/workflows/tasks/{task.id}/reject",
+            json={"reason": "admin requests changes"},
         )
-        self.current_user = self.handler
-        self.assertEqual(
-            self.client.get(
-                "/api/v1/workflows/candidates",
-                params={"workflow_code": "supply.contract.v2", "node_code": "company_leader"},
-            ).status_code,
-            200,
+        self.assertEqual(returned.status_code, 200, returned.text)
+        return_projection = self.db.scalar(
+            select(Approval)
+            .where(Approval.contract_id == self.contract.id)
+            .order_by(Approval.id.desc())
         )
+        self.assertEqual(return_projection.action.value, "reject")
+        self.assertEqual(return_projection.approver_id, self.admin.id)
+        self.assertEqual(return_projection.organization_code, "system.governance")
+        self.assertEqual(return_projection.position_code, "system.superuser")
+
+        resumed = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={},
+        )
+
+        self.assertEqual(resumed.status_code, 200, resumed.text)
+        self.assertEqual(resumed.json()["data"]["workflow_instance_id"], instance_id)
+        submit_projection = self.db.scalar(
+            select(Approval)
+            .where(
+                Approval.contract_id == self.contract.id,
+                Approval.action == "approve",
+            )
+            .order_by(Approval.id.desc())
+        )
+        self.assertEqual(submit_projection.approver_id, self.admin.id)
+        self.assertEqual(submit_projection.organization_code, "system.governance")
+        self.assertEqual(submit_projection.position_code, "system.superuser")
 
     def test_reject_requires_nonblank_reason_and_timeline_preserves_snapshot(self):
         task = self.active_task()
@@ -1310,6 +1341,33 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
         self.assertTrue(all(item.workflow_task_action_id is not None for item in projections))
         self.assertEqual(projections[-1].position_code, "supply.business_handler")
 
+    def test_superuser_resubmits_form_from_another_users_handler_task(self):
+        first = self.submit(self.business)
+        instance_id = first.json()["data"]["workflow_instance_id"]
+        self.current_user = self.reviewer_a
+        returned = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/reject",
+            json={"comment": "请补充"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        self.current_user = self.admin
+
+        resumed = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/submit",
+            json={},
+        )
+
+        self.assertEqual(resumed.status_code, 200, resumed.text)
+        self.assertEqual(resumed.json()["data"]["workflow_instance_id"], instance_id)
+        projection = self.db.scalar(
+            select(ApprovalFormAction)
+            .where(ApprovalFormAction.form_id == self.business.id)
+            .order_by(ApprovalFormAction.id.desc())
+        )
+        self.assertEqual(projection.approver_id, self.admin.id)
+        self.assertEqual(projection.organization_code, "system.governance")
+        self.assertEqual(projection.position_code, "system.superuser")
+
     def test_generic_actions_project_snapshots_but_reassign_does_not_fake_approval(self):
         submitted = self.submit(self.business)
         task_id = submitted.json()["data"]["active_task"]["id"]
@@ -1401,9 +1459,34 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
             self.client.get("/api/v1/approval/pending-count").json()["data"]["business"],
             0,
         )
+        self.current_user = self.handler
+        submitted_payment = self.submit(self.payment)
+        self.assertEqual(submitted_payment.status_code, 200, submitted_payment.text)
+        contract = Contract(
+            contract_no="WF-FORM-STATS-ADMIN-CONTRACT",
+            title="Admin Stats Contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(contract)
+        self.db.commit()
+        start_workflow(
+            self.db,
+            "contract",
+            contract.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "legal_counsel": self.legal.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        self.db.commit()
         self.current_user = self.admin
         admin_data = self.client.get("/api/v1/approval/pending-count").json()["data"]
-        self.assertEqual(admin_data["total"], 0)
+        self.assertEqual(admin_data["contract"], 1)
+        self.assertEqual(admin_data["business"], 1)
+        self.assertEqual(admin_data["total"], 2)
         self.assertEqual(admin_data["reassignment"], 1)
 
     def test_pending_count_counts_contract_workflow_task_separately(self):

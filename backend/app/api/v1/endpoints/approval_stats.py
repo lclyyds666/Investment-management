@@ -38,7 +38,9 @@ def _require_pending_view(
     db: Session = Depends(get_db),
 ) -> User:
     if current_user.is_superuser:
-        return current_user
+        if current_user.is_active:
+            return current_user
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     if not _pending_view_grant_codes(db, current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     return current_user
@@ -53,16 +55,13 @@ def pending_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(_require_pending_view),
 ):
+    enabled_superuser = bool(current_user.is_active and current_user.is_superuser)
     grant_codes = (
-        set()
-        if current_user.is_superuser
+        _VIEW_PERMISSIONS
+        if enabled_superuser
         else _pending_view_grant_codes(db, current_user.id)
     )
-    counts = (
-        {}
-        if current_user.is_superuser
-        else actionable_active_task_counts(db, current_user)
-    )
+    counts = actionable_active_task_counts(db, current_user)
     contract_cnt = (
         counts.get(WorkflowTargetType.CONTRACT, 0)
         if "supply.contract.view" in grant_codes
@@ -79,6 +78,6 @@ def pending_count(
         "business": business_cnt,
         "total": contract_cnt + business_cnt,
     }
-    if current_user.is_superuser:
+    if enabled_superuser:
         result["reassignment"] = awaiting_reassignment_count(db)
     return Response.ok(result)

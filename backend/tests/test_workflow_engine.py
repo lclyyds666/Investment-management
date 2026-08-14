@@ -44,6 +44,7 @@ from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
     _load_task_conflict_after_rollback,
+    actionable_active_task_counts,
     complete_task,
     eligible_designated_users,
     ensure_workflow_version_mutable,
@@ -508,6 +509,49 @@ class WorkflowStartTest(unittest.TestCase):
         self.assertEqual(self.contract.status, ContractStatus.PENDING)
         self.assertEqual(self.contract.current_step, 1)
         self.assertEqual(self.contract.workflow_instance_id, instance.id)
+
+    def test_enabled_superuser_can_start_own_draft_with_governance_snapshot(self):
+        admin = self.add_user("admin-submitter", "Admin Submitter")
+        admin.is_superuser = True
+        admin.signature = "admin-signature"
+        contract = Contract(
+            contract_no="TASK3-ADMIN",
+            title="Admin Contract",
+            created_by=admin.id,
+        )
+        self.db.add(contract)
+        self.db.commit()
+
+        instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            contract.id,
+            admin,
+            self.designated_users(),
+        )
+
+        submit_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 0,
+        ))
+        action = self.db.scalar(select(WorkflowTaskAction).where(
+            WorkflowTaskAction.task_id == submit_task.id,
+        ))
+        first_approval_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 1,
+        ))
+        self.assertEqual(action.actor_id, admin.id)
+        self.assertEqual(action.actor_name, admin.full_name)
+        self.assertEqual(action.organization_code, "system.governance")
+        self.assertEqual(action.organization_name, "系统治理")
+        self.assertEqual(action.position_code, "system.superuser")
+        self.assertEqual(action.position_name, "超级管理员")
+        self.assertEqual(action.signature_snapshot, admin.signature)
+        self.assertEqual(first_approval_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertIsNone(self.db.scalar(select(UserAssignment).where(
+            UserAssignment.user_id == admin.id,
+        )))
 
     def test_start_supports_payment_and_business_targets(self):
         payment = ApprovalForm(
@@ -1223,7 +1267,15 @@ class WorkflowAuthorizationTest(unittest.TestCase):
         self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.leader_b))
         self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
 
-    def test_superuser_cannot_act_without_business_assignment(self):
+    def test_enabled_superuser_can_act_on_designated_and_shared_active_tasks(self):
+        self.shared_task.status = WorkflowTaskStatus.ACTIVE
+        self.db.commit()
+
+        self.assertTrue(task_is_actionable_by(self.db, self.designated_task, self.admin))
+        self.assertTrue(task_is_actionable_by(self.db, self.shared_task, self.admin))
+
+        self.admin.is_active = False
+        self.db.commit()
         self.assertFalse(task_is_actionable_by(self.db, self.designated_task, self.admin))
 
     def test_expired_designated_assignment_marks_task_for_reassignment(self):
@@ -1262,7 +1314,66 @@ class WorkflowAuthorizationTest(unittest.TestCase):
             [task.id for task in my_active_tasks(self.db, self.leader)],
             [self.designated_task.id],
         )
-        self.assertEqual(my_active_tasks(self.db, self.admin), [])
+        self.assertEqual(
+            {task.id for task in my_active_tasks(self.db, self.admin)},
+            {self.designated_task.id, self.shared_task.id},
+        )
+
+    def test_superuser_approval_records_real_actor_and_system_governance_snapshot(self):
+        complete_task(
+            self.db,
+            self.designated_task.id,
+            self.admin,
+            WorkflowAction.APPROVE,
+            "admin test approval",
+        )
+        action = self.db.scalar(select(WorkflowTaskAction).where(
+            WorkflowTaskAction.task_id == self.designated_task.id,
+        ))
+
+        self.assertEqual(action.actor_id, self.admin.id)
+        self.assertEqual(action.actor_name, self.admin.full_name)
+        self.assertEqual(action.organization_code, "system.governance")
+        self.assertEqual(action.organization_name, "系统治理")
+        self.assertEqual(action.position_code, "system.superuser")
+        self.assertEqual(action.position_name, "超级管理员")
+        self.assertEqual(action.signature_snapshot, self.admin.signature)
+        self.assertEqual(
+            self.db.scalar(select(UserAssignment).where(
+                UserAssignment.user_id == self.admin.id,
+            )),
+            None,
+        )
+
+    def test_enabled_superuser_receives_all_active_task_counts(self):
+        business = ApprovalForm(
+            form_type=ContractType.BUSINESS,
+            created_by=self.handler.id,
+        )
+        self.db.add(business)
+        self.db.commit()
+        start_workflow(
+            self.db,
+            WorkflowTargetType.BUSINESS_APPROVAL,
+            business.id,
+            self.handler,
+            {
+                "company_leader": self.leader.id,
+                "supply_governance_leader": self.governance.id,
+            },
+        )
+        self.db.commit()
+
+        self.assertEqual(
+            actionable_active_task_counts(self.db, self.admin),
+            {
+                WorkflowTargetType.CONTRACT: 1,
+                WorkflowTargetType.BUSINESS_APPROVAL: 1,
+            },
+        )
+        self.admin.is_active = False
+        self.db.commit()
+        self.assertEqual(actionable_active_task_counts(self.db, self.admin), {})
 
     def test_complete_and_return_moves_between_adjacent_nodes_with_snapshots(self):
         complete_task(self.db, self.designated_task.id, self.leader, WorkflowAction.APPROVE, "approved")
@@ -1348,6 +1459,42 @@ class WorkflowAuthorizationTest(unittest.TestCase):
             [item.action for item in actions],
             [WorkflowAction.SUBMIT, WorkflowAction.SUBMIT],
         )
+
+    def test_superuser_can_resubmit_another_users_active_handler_task(self):
+        original_instance_id = self.instance.id
+        complete_task(
+            self.db,
+            self.designated_task.id,
+            self.leader,
+            WorkflowAction.RETURN,
+            "handler changes required",
+        )
+        handler_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == original_instance_id,
+            WorkflowTask.sequence == 0,
+        ))
+
+        complete_task(
+            self.db,
+            handler_task.id,
+            self.admin,
+            WorkflowAction.SUBMIT,
+            "admin resubmission",
+        )
+
+        action = self.db.scalar(
+            select(WorkflowTaskAction)
+            .where(
+                WorkflowTaskAction.task_id == handler_task.id,
+                WorkflowTaskAction.action == WorkflowAction.SUBMIT,
+            )
+            .order_by(WorkflowTaskAction.id.desc())
+        )
+        self.db.refresh(self.designated_task)
+        self.assertEqual(self.designated_task.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(action.actor_id, self.admin.id)
+        self.assertEqual(action.organization_code, "system.governance")
+        self.assertEqual(action.position_code, "system.superuser")
 
     def test_return_to_expired_designated_assignment_awaits_reassignment(self):
         complete_task(self.db, self.designated_task.id, self.leader, WorkflowAction.APPROVE, "approved")

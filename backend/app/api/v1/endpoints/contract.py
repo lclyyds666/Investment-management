@@ -366,12 +366,17 @@ def submit_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
-    if contract.created_by != current_user.id:
+    enabled_superuser = bool(current_user.is_active and current_user.is_superuser)
+    if contract.created_by != current_user.id and not (
+        contract.workflow_instance_id is not None and enabled_superuser
+    ):
         raise HTTPException(status_code=403, detail="只能提交本人创建的合同")
     if contract.workflow_instance_id is not None:
         instance = db.get(WorkflowInstance, contract.workflow_instance_id)
         task = _active_task_for_contract(db, contract)
-        if instance is None or instance.submitted_by != current_user.id:
+        if instance is None or (
+            instance.submitted_by != current_user.id and not enabled_superuser
+        ):
             raise HTTPException(status_code=403, detail="只能由原提交人重新提交合同")
         if task is None or not task.node.auto_complete_on_submit:
             raise HTTPException(status_code=422, detail="合同当前不处于业务经办重提环节")

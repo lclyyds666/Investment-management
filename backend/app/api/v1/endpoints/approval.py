@@ -374,12 +374,17 @@ def submit_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
-    if form.created_by != current_user.id:
+    enabled_superuser = bool(current_user.is_active and current_user.is_superuser)
+    if form.created_by != current_user.id and not (
+        form.workflow_instance_id is not None and enabled_superuser
+    ):
         raise HTTPException(status_code=403, detail="只能提交本人创建的审批单")
     if form.workflow_instance_id is not None:
         instance = db.get(WorkflowInstance, form.workflow_instance_id)
         task = _active_task_for_form(db, form)
-        if instance is None or instance.submitted_by != current_user.id:
+        if instance is None or (
+            instance.submitted_by != current_user.id and not enabled_superuser
+        ):
             raise HTTPException(status_code=403, detail="只能由原提交人重新提交审批单")
         if task is None or not task.node.auto_complete_on_submit:
             raise HTTPException(status_code=422, detail="审批单当前不处于业务经办重提环节")

@@ -401,6 +401,66 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 403)
         self.assertEqual(self.client.get("/api/v1/contracts").status_code, 403)
 
+    def test_enabled_superuser_without_assignments_can_operate_owned_disposable_records(self):
+        admin = User(
+            id=7,
+            username="endpoint-admin",
+            full_name="Endpoint Admin",
+            hashed_password="test",
+            role=Role.INFO_MAINTAINER,
+            is_superuser=True,
+            is_active=True,
+        )
+        self.db.add_all([
+            admin,
+            Contract(
+                contract_no="OTHER-CONTRACT",
+                title="Other Contract",
+                created_by=999,
+            ),
+        ])
+        self.db.commit()
+        self.current_user = admin
+
+        listed = self.client.get("/api/v1/contracts")
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertIn(
+            "OTHER-CONTRACT",
+            {item["contract_no"] for item in listed.json()["data"]},
+        )
+
+        created_contract = self.client.post(
+            "/api/v1/contracts",
+            json={"contract_no": "ADMIN-DISPOSABLE", "title": "Admin Draft"},
+        )
+        self.assertEqual(created_contract.status_code, 200, created_contract.text)
+        contract_id = created_contract.json()["data"]["id"]
+        updated_contract = self.client.put(
+            f"/api/v1/contracts/{contract_id}",
+            json={"title": "Updated Admin Draft"},
+        )
+        self.assertEqual(updated_contract.status_code, 200, updated_contract.text)
+        self.assertEqual(
+            self.client.delete(f"/api/v1/contracts/{contract_id}").status_code,
+            200,
+        )
+
+        created_form = self.client.post(
+            "/api/v1/approval-forms",
+            json={"form_type": "business", "business_desc": "Admin Draft"},
+        )
+        self.assertEqual(created_form.status_code, 200, created_form.text)
+        form_id = created_form.json()["data"]["id"]
+        updated_form = self.client.put(
+            f"/api/v1/approval-forms/{form_id}",
+            json={"business_desc": "Updated Admin Draft"},
+        )
+        self.assertEqual(updated_form.status_code, 200, updated_form.text)
+        self.assertEqual(
+            self.client.delete(f"/api/v1/approval-forms/{form_id}").status_code,
+            200,
+        )
+
     def _set_permission(
         self,
         permission_code: str,

@@ -50,6 +50,38 @@ class WorkflowValidationError(Exception):
         self.details = details or {}
 
 
+@dataclass(frozen=True)
+class WorkflowActorSnapshot:
+    organization_code: str
+    organization_name: str
+    position_code: str
+    position_name: str
+
+
+def _workflow_actor_snapshot(
+    actor: User,
+    assignment: UserAssignment | None,
+) -> WorkflowActorSnapshot:
+    if actor.is_active and actor.is_superuser:
+        return WorkflowActorSnapshot(
+            organization_code="system.governance",
+            organization_name="系统治理",
+            position_code="system.superuser",
+            position_name="超级管理员",
+        )
+    if assignment is None:
+        raise WorkflowValidationError(
+            "workflow_task_not_actionable",
+            "The actor is not authorized for this task.",
+        )
+    return WorkflowActorSnapshot(
+        organization_code=assignment.organization.code,
+        organization_name=assignment.organization.name,
+        position_code=assignment.position.code,
+        position_name=assignment.position.name,
+    )
+
+
 class WorkflowTaskConflict(Exception):
     def __init__(
         self,
@@ -540,10 +572,11 @@ def _workflow_target(
 def _validate_start_assignments(
     db: Session,
     version: WorkflowVersion,
-    submitter_id: int,
+    submitter: User,
     designated_users: dict[str, int],
     submitted_on: date,
-) -> tuple[UserAssignment, dict[str, UserAssignment]]:
+) -> tuple[UserAssignment | None, dict[str, UserAssignment]]:
+    submitter_id = submitter.id
     designated_nodes = {
         item.code: item
         for item in version.nodes
@@ -591,7 +624,9 @@ def _validate_start_assignments(
         (item for item in submitter_assignments if item.position.code == submit_node.position_code),
         None,
     )
-    if submit_assignment is None:
+    if submit_assignment is None and not (
+        submitter.is_active and submitter.is_superuser
+    ):
         raise WorkflowValidationError(
             "ineligible_workflow_submitter",
             "The submitter is not eligible for the submit node.",
@@ -636,6 +671,13 @@ def _start_workflow(
     designated_users: dict[str, int],
     submitted_at: datetime,
 ) -> int:
+    submitter = db.get(User, submitter_id)
+    if submitter is None:
+        raise WorkflowValidationError(
+            "ineligible_workflow_submitter",
+            "The submitter is not eligible for the submit node.",
+            {"user_id": submitter_id},
+        )
     target = _workflow_target(db, target_type, target_id)
     if target.created_by != submitter_id:
         raise WorkflowValidationError(
@@ -667,11 +709,11 @@ def _start_workflow(
     submit_assignment, selected_assignments = _validate_start_assignments(
         db,
         version,
-        submitter_id,
+        submitter,
         designated_users,
         submitted_at.date(),
     )
-    submitter = submit_assignment.user
+    actor_snapshot = _workflow_actor_snapshot(submitter, submit_assignment)
     nodes = sorted(version.nodes, key=lambda item: item.sequence)
     next_node = next((item for item in nodes if not item.auto_complete_on_submit), None)
     if next_node is None:
@@ -728,10 +770,10 @@ def _start_workflow(
         action=WorkflowAction.SUBMIT,
         actor_id=submitter_id,
         actor_name=submitter.full_name,
-        organization_code=submit_assignment.organization.code,
-        organization_name=submit_assignment.organization.name,
-        position_code=submit_assignment.position.code,
-        position_name=submit_assignment.position.name,
+        organization_code=actor_snapshot.organization_code,
+        organization_name=actor_snapshot.organization_name,
+        position_code=actor_snapshot.position_code,
+        position_name=actor_snapshot.position_name,
         signature_snapshot=submitter.signature,
     )
     db.add(submit_action)
@@ -1151,6 +1193,8 @@ def task_is_actionable_by(
     user: User,
     on_date: date | None = None,
 ) -> bool:
+    if user.is_superuser:
+        return user.is_active and task.status == WorkflowTaskStatus.ACTIVE
     return _effective_task_assignment(db, task, user, on_date or date.today()) is not None
 
 
@@ -1194,6 +1238,19 @@ def my_active_tasks(
 ) -> list[WorkflowTask]:
     if not user.is_active:
         return []
+    if user.is_superuser:
+        statement = (
+            select(WorkflowTask)
+            .join(WorkflowTask.instance)
+            .where(WorkflowTask.status == WorkflowTaskStatus.ACTIVE)
+            .options(joinedload(WorkflowTask.instance), joinedload(WorkflowTask.node))
+            .order_by(WorkflowInstance.submitted_at, WorkflowTask.sequence, WorkflowTask.id)
+        )
+        if target_type is not None:
+            statement = statement.where(
+                WorkflowInstance.target_type == WorkflowTargetType(target_type)
+            )
+        return list(db.scalars(statement))
     effective_date = date.today()
     assignment_exists = exists(
         select(UserAssignment.id)
@@ -1243,6 +1300,17 @@ def actionable_active_task_counts(
         return {}
     effective_date = date.today()
     refresh_invalid_designated_tasks(db, effective_date)
+    if user.is_superuser:
+        rows = db.execute(
+            select(WorkflowInstance.target_type, func.count(WorkflowTask.id))
+            .join(WorkflowTask, WorkflowTask.instance_id == WorkflowInstance.id)
+            .where(WorkflowTask.status == WorkflowTaskStatus.ACTIVE)
+            .group_by(WorkflowInstance.target_type)
+        ).all()
+        return {
+            WorkflowTargetType(target_type): count
+            for target_type, count in rows
+        }
     effective_assignment = exists(
         select(UserAssignment.id)
         .join(UserAssignment.organization)
@@ -1431,6 +1499,7 @@ def _complete_task(
     if action == WorkflowAction.RETURN and not task.node.allow_reject:
         raise WorkflowValidationError("workflow_return_not_allowed", "This workflow node cannot be returned.")
     actor = db.get(User, actor_id)
+    enabled_superuser = bool(actor and actor.is_active and actor.is_superuser)
     if action == WorkflowAction.SUBMIT:
         assignment = (
             _resubmission_assignment(db, task, actor, completed_at.date())
@@ -1443,8 +1512,9 @@ def _complete_task(
             if actor
             else None
         )
-    if assignment is None:
+    if assignment is None and not enabled_superuser:
         raise WorkflowValidationError("workflow_task_not_actionable", "The actor is not authorized for this task.")
+    actor_snapshot = _workflow_actor_snapshot(actor, assignment)
 
     instance = task.instance
     next_status = (
@@ -1540,10 +1610,10 @@ def _complete_task(
         action=action,
         actor_id=actor.id,
         actor_name=actor.full_name,
-        organization_code=assignment.organization.code,
-        organization_name=assignment.organization.name,
-        position_code=assignment.position.code,
-        position_name=assignment.position.name,
+        organization_code=actor_snapshot.organization_code,
+        organization_name=actor_snapshot.organization_name,
+        position_code=actor_snapshot.position_code,
+        position_name=actor_snapshot.position_name,
         comment=comment,
         signature_snapshot=actor.signature,
         returned_to_sequence=returned_to_sequence,
