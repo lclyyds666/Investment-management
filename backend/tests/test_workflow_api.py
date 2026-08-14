@@ -1424,6 +1424,75 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
             WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
         ))
 
+    def add_other_handler_form(self, contract_no):
+        form = ApprovalForm(
+            form_type=ContractType.BUSINESS,
+            contract_no=contract_no,
+            business_desc="Other handler form",
+            status=ContractStatus.DRAFT,
+            created_by=self.other_handler.id,
+        )
+        self.db.add(form)
+        self.db.commit()
+        return form
+
+    def listed_form_ids(self):
+        response = self.client.get("/api/v1/approval-forms")
+        self.assertEqual(response.status_code, 200, response.text)
+        return {item["id"] for item in response.json()["data"]}
+
+    def test_list_forms_pure_handler_sees_only_own_forms(self):
+        other_form = self.add_other_handler_form("WF-FORM-OTHER-HANDLER")
+
+        listed_ids = self.listed_form_ids()
+
+        self.assertEqual(listed_ids, {self.payment.id, self.business.id})
+        self.assertNotIn(other_form.id, listed_ids)
+
+    def test_list_forms_handler_and_executive_uses_view_grant_union(self):
+        other_form = self.add_other_handler_form("WF-FORM-HANDLER-EXECUTIVE")
+        self.assign(
+            self.handler,
+            "investment",
+            "investment.executive.general_manager",
+        )
+        self.db.commit()
+
+        listed_ids = self.listed_form_ids()
+
+        self.assertEqual(
+            listed_ids,
+            {self.payment.id, self.business.id, other_form.id},
+        )
+
+    def test_list_forms_handler_and_reviewer_uses_view_grant_union(self):
+        other_form = self.add_other_handler_form("WF-FORM-HANDLER-REVIEWER")
+        self.assign(
+            self.handler,
+            "supplymanagement",
+            "supply.business_reviewer",
+        )
+        self.db.commit()
+
+        listed_ids = self.listed_form_ids()
+
+        self.assertEqual(
+            listed_ids,
+            {self.payment.id, self.business.id, other_form.id},
+        )
+
+    def test_list_forms_superuser_with_handler_assignment_sees_all_forms(self):
+        other_form = self.add_other_handler_form("WF-FORM-HANDLER-SUPERUSER")
+        self.handler.is_superuser = True
+        self.db.commit()
+
+        listed_ids = self.listed_form_ids()
+
+        self.assertEqual(
+            listed_ids,
+            {self.payment.id, self.business.id, other_form.id},
+        )
+
     def test_payment_and_business_require_two_designations_and_materialize_confirmed_chains(self):
         missing_payment = self.add_form(ContractType.PAYMENT, "WF-FORM-MISSING-PAYMENT")
         missing_business = self.add_form(ContractType.BUSINESS, "WF-FORM-MISSING-BUSINESS")

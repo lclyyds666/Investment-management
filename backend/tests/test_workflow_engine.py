@@ -7,7 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, func, select, update
+from sqlalchemy import create_engine, event, func, select, update
+from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -2203,13 +2204,18 @@ class WorkflowConcurrencyTest(unittest.TestCase):
         ))
         self.next_task_version = self.db.get(WorkflowTask, self.next_task_id).version
         self.actor_ids = (self.reviewer_a.id, self.reviewer_b.id)
+        self.handler_id = self.handler.id
+        self.leader_id = self.leader.id
+        self.legal_id = self.legal.id
+        self.governance_id = self.governance.id
+        self.reviewer_a_id = self.reviewer_a.id
         self.db.close()
 
     def tearDown(self):
         self.engine.dispose()
         self.temp_dir.cleanup()
 
-    def test_two_shared_actors_can_only_complete_once(self):
+    def race_task(self, task_id, actor_ids, action):
         barrier = threading.Barrier(2)
         results = []
 
@@ -2220,13 +2226,13 @@ class WorkflowConcurrencyTest(unittest.TestCase):
                 try:
                     complete_task(
                         session,
-                        self.task_id,
+                        task_id,
                         actor,
-                        WorkflowAction.APPROVE,
+                        action,
                         "",
                     )
                     session.commit()
-                    results.append(("approved", actor.full_name))
+                    results.append(("completed", actor.full_name))
                 except WorkflowTaskConflict as error:
                     results.append((
                         "conflict",
@@ -2234,19 +2240,198 @@ class WorkflowConcurrencyTest(unittest.TestCase):
                         error.action,
                         error.completed_at,
                     ))
+                except Exception as error:
+                    results.append(("error", type(error).__name__, str(error)))
 
-        threads = [threading.Thread(target=act, args=(user_id,)) for user_id in self.actor_ids]
+        threads = [threading.Thread(target=act, args=(user_id,)) for user_id in actor_ids]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
+        return results
 
-        self.assertCountEqual([item[0] for item in results], ["approved", "conflict"])
-        winner = next(item for item in results if item[0] == "approved")
+    def assert_single_completion_and_conflict(self, results, action):
+        self.assertFalse([item for item in results if item[0] == "error"], results)
+        self.assertCountEqual([item[0] for item in results], ["completed", "conflict"])
+        winner = next(item for item in results if item[0] == "completed")
         conflict = next(item for item in results if item[0] == "conflict")
         self.assertEqual(conflict[1], winner[1])
-        self.assertEqual(conflict[2], WorkflowAction.APPROVE.value)
+        self.assertEqual(conflict[2], action.value)
         self.assertIsInstance(conflict[3], datetime)
+
+    def prepare_final_task(self):
+        with Session(self.engine) as session:
+            actor = session.get(User, self.reviewer_a_id)
+            complete_task(
+                session,
+                self.task_id,
+                actor,
+                WorkflowAction.APPROVE,
+                "risk approved",
+            )
+            session.commit()
+            return session.scalar(select(WorkflowTask.id).where(
+                WorkflowTask.instance_id == self.instance_id,
+                WorkflowTask.sequence == 4,
+            ))
+
+    def prepare_leader_task(self):
+        with Session(self.engine) as session:
+            for sequence, user_id in (
+                (3, self.reviewer_a_id),
+                (2, self.legal_id),
+            ):
+                task_id = session.scalar(select(WorkflowTask.id).where(
+                    WorkflowTask.instance_id == self.instance_id,
+                    WorkflowTask.sequence == sequence,
+                ))
+                actor = session.get(User, user_id)
+                complete_task(
+                    session,
+                    task_id,
+                    actor,
+                    WorkflowAction.RETURN,
+                    "return toward handler",
+                )
+                session.commit()
+            return session.scalar(select(WorkflowTask.id).where(
+                WorkflowTask.instance_id == self.instance_id,
+                WorkflowTask.sequence == 1,
+            ))
+
+    def prepare_submit_task(self):
+        leader_task_id = self.prepare_leader_task()
+        with Session(self.engine) as session:
+            actor = session.get(User, self.leader_id)
+            complete_task(
+                session,
+                leader_task_id,
+                actor,
+                WorkflowAction.RETURN,
+                "return to handler",
+            )
+            session.commit()
+            return session.scalar(select(WorkflowTask.id).where(
+                WorkflowTask.instance_id == self.instance_id,
+                WorkflowTask.sequence == 0,
+            ))
+
+    def assert_stale_loser_detects_task_cas(
+        self,
+        task_id,
+        actor_id,
+        action,
+        winner_task_status,
+        winner_target_status,
+    ):
+        original_target_loader = workflow_engine._workflow_target_for_instance
+
+        def simulate_winner(db, instance):
+            target = original_target_loader(db, instance)
+            db.execute(
+                update(WorkflowTask)
+                .where(WorkflowTask.id == task_id)
+                .values(
+                    status=winner_task_status,
+                    completed_at=datetime.now(),
+                    version=WorkflowTask.version + 1,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            target.status = winner_target_status
+            db.flush()
+            return target
+
+        with Session(self.engine) as session:
+            with patch(
+                "app.services.workflow_engine._workflow_target_for_instance",
+                side_effect=simulate_winner,
+            ):
+                with self.assertRaises(workflow_engine._WorkflowTaskCASFailed):
+                    workflow_engine._complete_task(
+                        session,
+                        task_id,
+                        actor_id,
+                        action,
+                        "stale loser",
+                        datetime.now(),
+                    )
+            session.rollback()
+
+    def test_completion_current_reads_lock_target_task_instance_for_mysql(self):
+        locked_statements = []
+
+        def record_locked_statement(execute_state):
+            statement = execute_state.statement
+            if getattr(statement, "_for_update_arg", None) is not None:
+                locked_statements.append(statement)
+
+        event.listen(Session, "do_orm_execute", record_locked_statement)
+        try:
+            with Session(self.engine) as session:
+                actor = session.get(User, self.reviewer_a_id)
+                complete_task(
+                    session,
+                    self.task_id,
+                    actor,
+                    WorkflowAction.RETURN,
+                    "lock order",
+                )
+                session.rollback()
+        finally:
+            event.remove(Session, "do_orm_execute", record_locked_statement)
+
+        self.assertEqual(
+            [statement.column_descriptions[0]["entity"] for statement in locked_statements],
+            [Contract, WorkflowTask, WorkflowInstance],
+        )
+        for statement in locked_statements:
+            self.assertIn(
+                "FOR UPDATE",
+                str(statement.compile(dialect=mysql.dialect())).upper(),
+            )
+
+    def test_stale_final_approval_checks_task_cas_before_target_state(self):
+        final_task_id = self.prepare_final_task()
+
+        self.assert_stale_loser_detects_task_cas(
+            final_task_id,
+            self.governance_id,
+            WorkflowAction.APPROVE,
+            WorkflowTaskStatus.APPROVED,
+            ContractStatus.APPROVED,
+        )
+
+    def test_stale_return_checks_task_cas_before_target_state(self):
+        leader_task_id = self.prepare_leader_task()
+
+        self.assert_stale_loser_detects_task_cas(
+            leader_task_id,
+            self.leader_id,
+            WorkflowAction.RETURN,
+            WorkflowTaskStatus.RETURNED,
+            ContractStatus.REJECTED,
+        )
+
+    def test_stale_resubmission_checks_task_cas_before_target_state(self):
+        submit_task_id = self.prepare_submit_task()
+
+        self.assert_stale_loser_detects_task_cas(
+            submit_task_id,
+            self.handler_id,
+            WorkflowAction.SUBMIT,
+            WorkflowTaskStatus.APPROVED,
+            ContractStatus.PENDING,
+        )
+
+    def test_two_shared_actors_can_only_complete_once(self):
+        results = self.race_task(
+            self.task_id,
+            self.actor_ids,
+            WorkflowAction.APPROVE,
+        )
+
+        self.assert_single_completion_and_conflict(results, WorkflowAction.APPROVE)
         with Session(self.engine) as session:
             count = session.scalar(
                 select(func.count())
@@ -2266,6 +2451,64 @@ class WorkflowConcurrencyTest(unittest.TestCase):
             self.assertEqual(instance.current_sequence, next_task.sequence)
             self.assertEqual(contract.status, ContractStatus.PENDING)
             self.assertEqual(contract.current_step, next_task.sequence)
+
+    def test_concurrent_final_approval_loser_reports_conflict(self):
+        final_task_id = self.prepare_final_task()
+
+        results = self.race_task(
+            final_task_id,
+            (self.governance_id, self.governance_id),
+            WorkflowAction.APPROVE,
+        )
+
+        self.assert_single_completion_and_conflict(results, WorkflowAction.APPROVE)
+        with Session(self.engine) as session:
+            self.assertEqual(
+                session.get(WorkflowInstance, self.instance_id).status,
+                WorkflowInstanceStatus.APPROVED,
+            )
+            self.assertEqual(
+                session.get(Contract, self.contract_id).status,
+                ContractStatus.APPROVED,
+            )
+
+    def test_concurrent_return_loser_reports_conflict(self):
+        results = self.race_task(
+            self.task_id,
+            self.actor_ids,
+            WorkflowAction.RETURN,
+        )
+
+        self.assert_single_completion_and_conflict(results, WorkflowAction.RETURN)
+        with Session(self.engine) as session:
+            self.assertEqual(
+                session.get(WorkflowInstance, self.instance_id).status,
+                WorkflowInstanceStatus.ACTIVE,
+            )
+            self.assertEqual(
+                session.get(Contract, self.contract_id).status,
+                ContractStatus.PENDING,
+            )
+
+    def test_concurrent_resubmission_loser_reports_conflict(self):
+        submit_task_id = self.prepare_submit_task()
+
+        results = self.race_task(
+            submit_task_id,
+            (self.handler_id, self.handler_id),
+            WorkflowAction.SUBMIT,
+        )
+
+        self.assert_single_completion_and_conflict(results, WorkflowAction.SUBMIT)
+        with Session(self.engine) as session:
+            self.assertEqual(
+                session.get(WorkflowInstance, self.instance_id).status,
+                WorkflowInstanceStatus.ACTIVE,
+            )
+            self.assertEqual(
+                session.get(Contract, self.contract_id).status,
+                ContractStatus.PENDING,
+            )
 
 
 class WorkflowPublicationContinuationTest(unittest.TestCase):

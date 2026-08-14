@@ -48,7 +48,11 @@ from app.services import approval_print as print_svc
 from app.services import approval_proofread as proof_svc
 from app.services import customer_research as research_svc
 from app.services.num_cn import amount_to_cn
-from app.services.assignment_permissions import PermissionContext, has_permission, has_position
+from app.services.assignment_permissions import (
+    PermissionContext,
+    has_permission,
+    permission_grants,
+)
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
@@ -211,9 +215,22 @@ def list_forms(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """业务经办仅见本人；其余角色（审批/监督方）见全部。"""
+    """仅由业务经办岗位获得查看权限时仅见本人；其他授权来源见全部。"""
     stmt = select(ApprovalForm).order_by(ApprovalForm.id.desc())
-    if has_position(db, current_user.id, "supply.business_handler"):
+    view_grants = tuple(
+        grant
+        for grant in permission_grants(db, current_user.id)
+        if grant.code == "supply.approval.view"
+    )
+    handler_only_view = (
+        not current_user.is_superuser
+        and bool(view_grants)
+        and all(
+            grant.position_code == "supply.business_handler"
+            for grant in view_grants
+        )
+    )
+    if handler_only_view:
         stmt = stmt.where(ApprovalForm.created_by == current_user.id)
     rows = db.scalars(stmt).all()
     names = _names_map(db, {f.created_by for f in rows})

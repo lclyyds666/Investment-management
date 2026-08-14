@@ -1570,13 +1570,36 @@ def _complete_task(
         raise WorkflowValidationError("workflow_task_not_actionable", "The actor is not authorized for this task.")
     actor_snapshot = _workflow_actor_snapshot(actor, assignment)
     instance = task.instance
-    if instance.status != WorkflowInstanceStatus.ACTIVE:
+    expected_task_version = task.version
+    instance_id = instance.id
+    target = _workflow_target_for_instance(db, instance)
+    task = db.scalar(
+        select(WorkflowTask)
+        .where(WorkflowTask.id == task_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        task is None
+        or task.status != WorkflowTaskStatus.ACTIVE
+        or task.version != expected_task_version
+    ):
+        raise _WorkflowTaskCASFailed()
+    instance = db.scalar(
+        select(WorkflowInstance)
+        .where(WorkflowInstance.id == instance_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if instance is None or instance.status != WorkflowInstanceStatus.ACTIVE:
         raise WorkflowValidationError(
             "workflow_instance_not_active",
             "Only active workflow instances can accept task actions.",
-            {"instance_id": instance.id, "status": instance.status.value},
+            {
+                "instance_id": instance_id,
+                "status": instance.status.value if instance is not None else "missing",
+            },
         )
-    target = _workflow_target_for_instance(db, instance)
     required_target_status = (
         ContractStatus.REJECTED
         if action == WorkflowAction.SUBMIT
