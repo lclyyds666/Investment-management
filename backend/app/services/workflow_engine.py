@@ -624,15 +624,17 @@ def _validate_start_assignments(
         (item for item in submitter_assignments if item.position.code == submit_node.position_code),
         None,
     )
-    if submit_assignment is None and not (
-        submitter.is_active and submitter.is_superuser
-    ):
+    enabled_superuser = bool(submitter.is_active and submitter.is_superuser)
+    if submit_assignment is None and not enabled_superuser:
         raise WorkflowValidationError(
             "ineligible_workflow_submitter",
             "The submitter is not eligible for the submit node.",
             {"node_code": submit_node.code, "user_id": submitter_id},
         )
-    if any(item.position.code != submit_node.position_code for item in submitter_assignments):
+    if not enabled_superuser and any(
+        item.position.code != submit_node.position_code
+        for item in submitter_assignments
+    ):
         raise WorkflowValidationError(
             "duplicate_workflow_actor",
             "One person cannot occupy two nodes in the same workflow.",

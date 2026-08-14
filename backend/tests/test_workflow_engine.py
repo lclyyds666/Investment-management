@@ -553,6 +553,81 @@ class WorkflowStartTest(unittest.TestCase):
             UserAssignment.user_id == admin.id,
         )))
 
+    def test_enabled_superuser_with_workflow_assignment_can_start_own_draft(self):
+        admin_assignment = self.add_assignment(
+            "assigned-admin-submitter",
+            "Assigned Admin Submitter",
+            "investment.duty.supply_risk_review",
+        )
+        admin = admin_assignment.user
+        admin.is_superuser = True
+        admin.signature = "assigned-admin-signature"
+        contract = Contract(
+            contract_no="TASK3-ASSIGNED-ADMIN",
+            title="Assigned Admin Contract",
+            created_by=admin.id,
+        )
+        self.db.add(contract)
+        self.db.commit()
+        assignment_id = admin_assignment.id
+
+        instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            contract.id,
+            admin,
+            self.designated_users(),
+        )
+
+        submit_task = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.sequence == 0,
+        ))
+        action = self.db.scalar(select(WorkflowTaskAction).where(
+            WorkflowTaskAction.task_id == submit_task.id,
+        ))
+        persisted_assignment = self.db.get(UserAssignment, assignment_id)
+        self.assertEqual(action.actor_id, admin.id)
+        self.assertEqual(action.organization_code, "system.governance")
+        self.assertEqual(action.organization_name, "系统治理")
+        self.assertEqual(action.position_code, "system.superuser")
+        self.assertEqual(action.position_name, "超级管理员")
+        self.assertEqual(action.signature_snapshot, admin.signature)
+        self.assertEqual(persisted_assignment.user_id, admin.id)
+        self.assertEqual(
+            persisted_assignment.position.code,
+            "investment.duty.supply_risk_review",
+        )
+        self.assertEqual(persisted_assignment.status, AssignmentStatus.ACTIVE)
+        self.assertEqual(
+            self.db.query(UserAssignment).filter_by(user_id=admin.id).count(),
+            1,
+        )
+
+    def test_ordinary_submitter_with_other_workflow_assignment_remains_duplicate(self):
+        extra_assignment = self.add_assignment(
+            "handler",
+            "Handler",
+            "investment.duty.supply_risk_review",
+        )
+        self.db.commit()
+
+        with self.assertRaises(WorkflowValidationError) as raised:
+            start_workflow(
+                self.db,
+                WorkflowTargetType.CONTRACT,
+                self.contract.id,
+                self.handler,
+                self.designated_users(),
+            )
+
+        self.assertEqual(raised.exception.code, "duplicate_workflow_actor")
+        self.assertEqual(
+            self.db.get(UserAssignment, extra_assignment.id).status,
+            AssignmentStatus.ACTIVE,
+        )
+        self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
+
     def test_disabled_superuser_cannot_start_own_draft_without_assignment(self):
         admin = self.add_user("disabled-admin-submitter", "Disabled Admin")
         admin.is_superuser = True
