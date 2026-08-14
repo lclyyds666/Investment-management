@@ -39,6 +39,7 @@ from app.models.workflow import (
     WorkflowTaskAction,
     WorkflowVersion,
 )
+from app.services import workflow_engine
 from app.services.workflow_catalog import WORKFLOW_CATALOG
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
@@ -858,6 +859,136 @@ class WorkflowStartTest(unittest.TestCase):
         self.db.rollback()
         self.assertEqual(self.db.query(WorkflowInstance).count(), 0)
         self.assertIsNone(self.db.get(Contract, target_id).workflow_instance_id)
+
+
+class WorkflowCancellationTest(unittest.TestCase):
+    add_user = WorkflowStartTest.add_user
+    add_assignment = WorkflowStartTest.add_assignment
+    designated_users = WorkflowStartTest.designated_users
+
+    def setUp(self):
+        WorkflowStartTest.setUp(self)
+        self.admin = self.add_user("cancellation-admin", "Cancellation Admin")
+        self.admin.is_superuser = True
+        self.original_signature = "data:image/png;base64,original-signature"
+        self.handler.signature = self.original_signature
+        self.db.commit()
+
+    def tearDown(self):
+        WorkflowStartTest.tearDown(self)
+
+    def start_instance(self):
+        instance = start_workflow(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+            self.handler,
+            self.designated_users(),
+        )
+        self.db.commit()
+        return instance
+
+    def test_cancel_active_workflow_skips_open_tasks_and_preserves_history(self):
+        instance = self.start_instance()
+        tasks = list(self.db.scalars(
+            select(WorkflowTask)
+            .where(WorkflowTask.instance_id == instance.id)
+            .order_by(WorkflowTask.sequence)
+        ))
+        approved, active, returned, awaiting, pending = tasks[:5]
+        returned.status = WorkflowTaskStatus.RETURNED
+        returned.completed_at = datetime(2026, 8, 14, 9, 0)
+        awaiting.status = WorkflowTaskStatus.AWAITING_REASSIGNMENT
+        original_versions = {task.id: task.version for task in tasks}
+        action = approved.actions[0]
+        original_actor_id = action.actor_id
+        self.db.commit()
+
+        cancelled = workflow_engine.cancel_active_workflow_for_target(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+        )
+
+        self.assertIs(cancelled, instance)
+        self.assertEqual(instance.status, WorkflowInstanceStatus.CANCELLED)
+        self.assertIsNotNone(instance.completed_at)
+        self.assertEqual(active.status, WorkflowTaskStatus.SKIPPED)
+        self.assertEqual(pending.status, WorkflowTaskStatus.SKIPPED)
+        self.assertEqual(awaiting.status, WorkflowTaskStatus.SKIPPED)
+        self.assertEqual(returned.status, WorkflowTaskStatus.RETURNED)
+        self.assertEqual(approved.status, WorkflowTaskStatus.APPROVED)
+        self.assertEqual(active.completed_at, instance.completed_at)
+        self.assertEqual(pending.completed_at, instance.completed_at)
+        self.assertEqual(awaiting.completed_at, instance.completed_at)
+        self.assertEqual(active.version, original_versions[active.id] + 1)
+        self.assertEqual(pending.version, original_versions[pending.id] + 1)
+        self.assertEqual(awaiting.version, original_versions[awaiting.id] + 1)
+        self.assertEqual(returned.version, original_versions[returned.id])
+        self.assertEqual(approved.version, original_versions[approved.id])
+        self.assertEqual(action.actor_id, original_actor_id)
+        self.assertEqual(action.signature_snapshot, self.original_signature)
+        self.assertEqual(actionable_active_task_counts(self.db, self.admin), {})
+
+    def test_cancel_active_workflow_is_idempotent_for_missing_and_cancelled_instances(self):
+        self.assertIsNone(workflow_engine.cancel_active_workflow_for_target(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+        ))
+        instance = self.start_instance()
+        instance.status = WorkflowInstanceStatus.CANCELLED
+        instance.completed_at = datetime(2026, 8, 14, 10, 0)
+        active = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        ))
+        original_version = active.version
+        self.db.commit()
+
+        cancelled = workflow_engine.cancel_active_workflow_for_target(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+        )
+
+        self.assertIs(cancelled, instance)
+        self.assertEqual(instance.completed_at, datetime(2026, 8, 14, 10, 0))
+        self.assertEqual(active.status, WorkflowTaskStatus.ACTIVE)
+        self.assertEqual(active.version, original_version)
+
+    def test_cancel_active_workflow_rolls_back_with_callers_transaction(self):
+        instance = self.start_instance()
+        active = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.status == WorkflowTaskStatus.ACTIVE,
+        ))
+        pending = self.db.scalar(select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.status == WorkflowTaskStatus.PENDING,
+        ))
+        active_version = active.version
+        pending_version = pending.version
+
+        workflow_engine.cancel_active_workflow_for_target(
+            self.db,
+            WorkflowTargetType.CONTRACT,
+            self.contract.id,
+        )
+        self.assertEqual(instance.status, WorkflowInstanceStatus.CANCELLED)
+        self.assertEqual(active.status, WorkflowTaskStatus.SKIPPED)
+        self.assertEqual(pending.status, WorkflowTaskStatus.SKIPPED)
+        self.db.rollback()
+        self.db.expire_all()
+
+        self.assertEqual(instance.status, WorkflowInstanceStatus.ACTIVE)
+        self.assertIsNone(instance.completed_at)
+        self.assertEqual(active.status, WorkflowTaskStatus.ACTIVE)
+        self.assertIsNone(active.completed_at)
+        self.assertEqual(active.version, active_version)
+        self.assertEqual(pending.status, WorkflowTaskStatus.PENDING)
+        self.assertIsNone(pending.completed_at)
+        self.assertEqual(pending.version, pending_version)
 
 
 class ActiveWorkflowMigrationTest(unittest.TestCase):

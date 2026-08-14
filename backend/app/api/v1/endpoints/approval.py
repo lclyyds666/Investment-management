@@ -52,6 +52,7 @@ from app.services.assignment_permissions import PermissionContext, has_permissio
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
+    cancel_active_workflow_for_target,
     complete_task,
     my_active_tasks,
     start_workflow,
@@ -353,6 +354,12 @@ def delete_form(
         raise HTTPException(status_code=403, detail="只能删除本人创建的审批单")
     if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="仅草稿或被驳回的审批单可删除")
+    target_type = (
+        WorkflowTargetType.PAYMENT_APPROVAL
+        if form.form_type == ContractType.PAYMENT
+        else WorkflowTargetType.BUSINESS_APPROVAL
+    )
+    cancel_active_workflow_for_target(db, target_type, form.id)
     db.delete(form)
     db.commit()
     return Response.ok({"id": form_id}, message="审批单已删除")

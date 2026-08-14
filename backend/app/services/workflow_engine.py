@@ -788,6 +788,48 @@ def _start_workflow(
     return instance.id
 
 
+def cancel_active_workflow_for_target(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+) -> WorkflowInstance | None:
+    target_type = WorkflowTargetType(target_type)
+    instance = db.scalar(
+        select(WorkflowInstance)
+        .where(
+            WorkflowInstance.target_type == target_type,
+            WorkflowInstance.target_id == target_id,
+        )
+        .with_for_update()
+    )
+    if instance is None:
+        return None
+    tasks = list(db.scalars(
+        select(WorkflowTask)
+        .where(WorkflowTask.instance_id == instance.id)
+        .order_by(WorkflowTask.id)
+        .with_for_update()
+    ))
+    if instance.status != WorkflowInstanceStatus.ACTIVE:
+        return instance
+
+    cancelled_at = datetime.now()
+    instance.status = WorkflowInstanceStatus.CANCELLED
+    instance.completed_at = cancelled_at
+    cancellable_statuses = {
+        WorkflowTaskStatus.PENDING,
+        WorkflowTaskStatus.ACTIVE,
+        WorkflowTaskStatus.AWAITING_REASSIGNMENT,
+    }
+    for task in tasks:
+        if task.status in cancellable_statuses:
+            task.status = WorkflowTaskStatus.SKIPPED
+            task.completed_at = cancelled_at
+            task.version += 1
+    db.flush()
+    return instance
+
+
 def _is_duplicate_workflow_target(error: IntegrityError) -> bool:
     message = " ".join(
         str(part).lower()
