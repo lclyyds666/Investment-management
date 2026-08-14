@@ -171,9 +171,6 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
         self.add_assignment(
             self.legacy_user, "supplymanagement", "governance.supply_leader"
         )
-        self.add_assignment(
-            self.admin, "supplymanagement", "supply.business_handler"
-        )
 
     def tearDown(self):
         self.db.close()
@@ -264,6 +261,9 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
                 )
 
     def test_superuser_snapshot_projects_all_registered_permissions_and_resources(self):
+        self.add_assignment(
+            self.admin, "supplymanagement", "supply.business_handler"
+        )
         snapshot = permission_snapshot_for_user(self.db, self.admin)
 
         self.assertTrue(snapshot.is_superuser)
@@ -278,6 +278,9 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
         )
 
     def test_disabled_superuser_snapshot_is_empty_with_assignment(self):
+        self.add_assignment(
+            self.admin, "supplymanagement", "supply.business_handler"
+        )
         self.admin.is_active = False
         self.db.commit()
 

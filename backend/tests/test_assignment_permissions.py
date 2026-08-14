@@ -410,6 +410,15 @@ class AssignmentPermissionServiceTest(unittest.TestCase):
                 ))
 
     def test_disabled_superuser_has_no_permission_bypass(self):
+        self.add_assignment(
+            self.admin,
+            "supplymanagement",
+            "supply.business_handler",
+        )
+        self.assertIn(
+            "supply.contract.view",
+            {grant.code for grant in permission_grants(self.db, self.admin.id)},
+        )
         self.admin.is_active = False
         self.db.commit()
         self.assertFalse(has_permission(
