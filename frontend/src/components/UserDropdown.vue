@@ -104,13 +104,22 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, User, Lock, EditPen, Stamp, SwitchButton, UploadFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
 import { roleLabel as toRoleLabel, ROLES } from '@/constants/business'
 import { getMe, updateSignature, changeMyPassword, changeMyUsername } from '@/api/user'
 import { logout as logoutAudit } from '@/api/audit'
+import { currentAssignmentLabel } from '@/utils/assignmentDisplay'
 
 const router = useRouter()
 const userStore = useUserStore()
-const roleLabel = computed(() => userStore.roleLabel || toRoleLabel(userStore.role))
+const portalStore = usePortalStore()
+const roleLabel = computed(() => currentAssignmentLabel({
+  portalAssignments: portalStore.assignments,
+  portalLoaded: portalStore.isLoaded,
+  userAssignments: userStore.userInfo?.assignment_summaries || [],
+  isSuperuser: Boolean(userStore.userInfo?.is_superuser || portalStore.isSuperuser),
+  superuserLabel: userStore.roleLabel || toRoleLabel(userStore.role)
+}))
 const signatureDisabled = computed(() => userStore.role === ROLES.INFO_MAINTAINER)
 
 const info = ref(userStore.userInfo)
