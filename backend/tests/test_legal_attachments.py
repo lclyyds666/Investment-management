@@ -21,6 +21,13 @@ from app.services.legal_permissions import LegalAccessContext, LegalCapability
 
 
 class LegalAttachmentSecurityTest(unittest.TestCase):
+    def test_nginx_accepts_the_documented_attachment_limit(self):
+        nginx_config = (
+            Path(__file__).resolve().parents[2] / "deploy" / "nginx.conf"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("client_max_body_size 50m;", nginx_config)
+
     def _context(self, *capabilities: LegalCapability) -> LegalAccessContext:
         return LegalAccessContext(
             user_id=7,
