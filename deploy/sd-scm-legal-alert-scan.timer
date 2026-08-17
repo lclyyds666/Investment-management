@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SD SCM legal risk alert scan at 09:00 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Asia/Shanghai
+Persistent=true
+Unit=sd-scm-legal-alert-scan.service
+
+[Install]
+WantedBy=timers.target

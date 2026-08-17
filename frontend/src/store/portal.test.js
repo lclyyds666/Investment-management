@@ -103,7 +103,8 @@ describe('portal store', () => {
       is_superuser: false,
       assignments: [],
       permissions: [],
-      resources: []
+      resources: [],
+      company_roles: {}
     })
     expect(portalStore.isLoaded).toBe(false)
   })

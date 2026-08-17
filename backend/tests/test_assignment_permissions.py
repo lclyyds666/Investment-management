@@ -146,6 +146,9 @@ class AuthorizationCatalogTest(unittest.TestCase):
             {
                 ("supply.contract.view", "assigned", ""),
                 ("supply.contract.review", "assigned", ""),
+                ("investment.portal.enter", "platform", "investment"),
+                ("investment.legal.cases.view", "company", "investment"),
+                ("investment.legal.alerts.view", "company", "investment"),
             },
         )
 
@@ -185,6 +188,10 @@ class AuthorizationCatalogTest(unittest.TestCase):
                 if item["code"].startswith("supply.")
                 and item["code"].endswith((".view", ".export"))
             },
+            "investment.legal.dashboard.view",
+            "investment.legal.cases.view",
+            "investment.legal.alerts.view",
+            "investment.legal.statistics.view",
         }
         forbidden_actions = {
             "create", "update", "delete", "submit", "review",
@@ -215,6 +222,8 @@ class AuthorizationCatalogTest(unittest.TestCase):
                         self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("platform", "supplymanagement"))
                     elif code == "fund.portal.enter":
                         self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("platform", "fundmanagement"))
+                    elif code.startswith("investment.legal."):
+                        self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("company", "investment"))
                     else:
                         self.assertEqual((grant["data_scope"], grant["scope_ref"]), ("company", "supplymanagement"))
 

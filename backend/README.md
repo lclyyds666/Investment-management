@@ -17,6 +17,7 @@
 backend/
 ├── app/
 │   ├── main.py              # 应用入口
+│   ├── jobs/                # 法务预警扫描、失败重试和导入清理任务
 │   ├── core/
 │   │   └── config.py        # 全局配置（读取 .env）
 │   ├── db/
@@ -29,6 +30,7 @@ backend/
 │           ├── router.py    # v1 路由汇总
 │           └── endpoints/   # 各业务端点
 ├── requirements.txt
+├── migrations/              # MySQL 增量迁移脚本
 └── .env.example
 ```
 
@@ -62,6 +64,20 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - 接口文档（Swagger）：http://localhost:8000/docs
 - 健康检查：http://localhost:8000/api/v1/health
+
+## 法务风控
+
+法务接口统一位于 `/api/v1/legal-risk`，包含案件、八类业务明细、附件、五类预警、统计和标准 Excel 导入导出。案件主状态固定为“审查立案、审理中、已判决、执行中、终本、已结案”，裁判结果类型包含“一审、二审、再审、调解、和解”。
+
+升级已有数据库时按顺序执行：
+
+```bash
+mysql -u root -p sd_publish_scm < migrations/20260814_legal_risk_foundation.sql
+mysql -u root -p sd_publish_scm < migrations/20260814_legal_risk_domain.sql
+mysql -u root -p sd_publish_scm < migrations/20260814_legal_risk_hardening.sql
+```
+
+钉钉群机器人使用 `DINGTALK_LEGAL_ALERT_ENABLED`、`DINGTALK_LEGAL_ALERT_WEBHOOK`、`DINGTALK_LEGAL_ALERT_SECRET` 和 `LEGAL_ALERT_TIMEZONE`。生产环境还需启用预警扫描、失败重试和导入预检清理三个定时器，详见 `../docs/legal-risk-operations.md`。
 
 ## 角色与权限（RBAC）
 

@@ -24,6 +24,23 @@ from app.models.customer import Customer
 from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 建表
 from app.models.invoice import Invoice
 from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
+from app.models.legal_risk import (  # noqa: F401 确保 create_all 建表
+    LegalAlertDelivery,
+    LegalAttachment,
+    LegalCase,
+    LegalCaseActivity,
+    LegalCaseAlert,
+    LegalCaseAsset,
+    LegalCaseCollaborator,
+    LegalCaseDeadline,
+    LegalCaseImportBatch,
+    LegalCaseImportRow,
+    LegalCaseJudgment,
+    LegalCaseParty,
+    LegalCaseProgress,
+    LegalCaseRecovery,
+    LegalCaseSequence,
+)
 from app.models.operation import OperationData
 from app.models.organization import (
     ExternalAssignment,
@@ -242,8 +259,11 @@ def init() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        from app.services.legacy_assignment_migration import migrate_legacy_assignments
+
         seed_authorization_catalog(db)
         seed_users(db)
+        migrate_legacy_assignments(db, dry_run=False)
         seed_operation(db)
         seed_customers(db)
         seed_channels(db)

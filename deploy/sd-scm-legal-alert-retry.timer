@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry SD SCM legal risk deliveries every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=sd-scm-legal-alert-retry.service
+
+[Install]
+WantedBy=timers.target

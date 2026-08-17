@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { portalGuard } from './permission'
+import { LEGAL_CAPABILITIES } from '@/utils/legalCapabilities'
 
 vi.mock('element-plus', () => ({ ElMessage: { error: vi.fn() } }))
 
@@ -15,14 +16,21 @@ function authenticatedContext({
   isSuperuser = false,
   applications = [],
   permissions = [],
-  resources = []
+  resources = [],
+  companyRoles = {}
 } = {}) {
   const userStore = useUserStore()
   userStore.token = 'test-token'
   userStore.userInfo = { id: 1, is_superuser: isSuperuser }
   const portalStore = usePortalStore()
   portalStore.applications = applications
-  portalStore.permissions = { is_superuser: isSuperuser, assignments: [], permissions, resources }
+  portalStore.permissions = {
+    is_superuser: isSuperuser,
+    assignments: [],
+    permissions,
+    resources,
+    company_roles: companyRoles
+  }
   portalStore.isLoaded = true
   return { portalStore, userStore }
 }
@@ -111,5 +119,20 @@ describe('portal permission guard', () => {
     }))).resolves.toEqual({ path: '/' })
     expect(hasCompany).toHaveBeenCalledWith('supplymanagement')
     expect(hasResource).not.toHaveBeenCalled()
+  })
+
+  it('keeps investment management users out of legal edit routes', async () => {
+    authenticatedContext({
+      applications: [{ code: 'investment', accessible: true }],
+      resources: ['invest.legal.cases'],
+      companyRoles: { investment: 'invest_director' }
+    })
+
+    await expect(portalGuard(route('/investment/legal-risk/cases/8/edit', {
+      company: 'investment',
+      resource: 'invest.legal.cases',
+      legalCapability: LEGAL_CAPABILITIES.EDIT_CASE
+    }))).resolves.toEqual({ path: '/investment/legal-risk/cases' })
+    expect(ElMessage.error).toHaveBeenCalledWith('权限不足，无法执行该法务操作')
   })
 })

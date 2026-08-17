@@ -7,6 +7,7 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, require_superuser
@@ -165,6 +166,8 @@ def create_user(
         full_name=payload.full_name,
         role=Role.UNASSIGNED,
         department="",
+        mobile=payload.mobile,
+        legal_alert_enabled=payload.legal_alert_enabled,
         is_superuser=False,
         is_active=True,
         hashed_password=hash_password(payload.password),
@@ -246,7 +249,14 @@ def delete_user(
     if user.is_superuser and _superuser_count(db) <= 1:
         raise HTTPException(status_code=400, detail="必须至少保留一个超级管理员")
     db.delete(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="该用户已关联业务数据，不能物理删除，请改为停用账号",
+        ) from exc
     return Response.ok({"id": uid}, message="用户已删除")
 
 

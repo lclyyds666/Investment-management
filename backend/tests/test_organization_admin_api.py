@@ -435,6 +435,21 @@ class OrganizationAdminApiTest(unittest.TestCase):
         self.assertTrue(position["is_active"])
         self.assertEqual(position["permissions"], [
             {
+                "permission_code": "investment.legal.alerts.view",
+                "data_scope": "company",
+                "scope_ref": "investment",
+            },
+            {
+                "permission_code": "investment.legal.cases.view",
+                "data_scope": "company",
+                "scope_ref": "investment",
+            },
+            {
+                "permission_code": "investment.portal.enter",
+                "data_scope": "platform",
+                "scope_ref": "investment",
+            },
+            {
                 "permission_code": "supply.contract.review",
                 "data_scope": "assigned",
                 "scope_ref": "",

@@ -24,6 +24,7 @@
 | --- | --- | --- | --- |
 | 认证安全 | P0 | ✅ | 密码登录 + JWT + 图形验证码 + 防爆破(Redis/内存兜底)。缺:忘记密码、Token 刷新 |
 | 用户与权限 | P0 | ✅ | 统一账号 + 组织/岗位/人员任职 + 岗位授权;一人多任职时权限取并集;本人改密改名 + 手机号脱敏;投资公司董事长、总经理、副总经理跨平台只读(查看/下载/导出);已启用超管为全功能测试账号 |
+| 投资公司法务风控 | P0 | ✅ | 固定六状态、八类业务明细、附件鉴权、五类预警、钉钉群提醒与手机号 @、统计报表、标准 Excel 两阶段导入、独立权限矩阵 |
 | 电子签名 | P0 | ✅ | 上传 / 审批快照附签 / 打印渲染。缺:水印、超管重置签名 |
 | 合同全生命周期 | P0 | ✅ | 5 节点审批流 + 附件真实上传下载 + 台账导出 CSV + 「法律文件审批表」打印。缺:撤回/转交/加签/会签/时限/归档 |
 | 业务审批(双工作流) | P0 | ✅ | 付款审批单(7 节点,金额大小写转换)+ 业务审批单(5 节点)+ 按模板打印 + **AI 合同校对** |
@@ -54,6 +55,7 @@
 | 日期 | 本轮内容 | 部署 |
 | --- | --- | --- |
 | 2026-08-13 | **高管跨平台只读 + 超管全功能测试 + 系统界面修复** | 生产 ✅ |
+| 2026-08-14 | **投资公司法务风控模块**：案件全生命周期、固定六状态、八类明细、附件鉴权、五类预警、钉钉提醒与补偿、统计报表、标准 Excel 两阶段导入、组织任职权限接入 | 待部署 🟡 |
 | 2026-08-13 | **统一组织岗位权限**(统一账号、组织/岗位/人员任职、岗位授权、多任职权限并集)+ **v2 岗位工作流**(共享岗位抢办 `shared_position`、提交时指定人 `designated_user`、超管仅治理改派)+ 审批动作保留组织/岗位/办理人历史快照 | 生产 ✅ |
 | 2026-07-10 | 商用数据打通(签名/审批快照、渠道联动、真实 DeepSeek、财务/项目看板) | 生产 ✅ |
 | 2026-07-13 | 大屏地图数据驱动 + 上传即上屏;生产库补齐 schema | 生产 ✅ |
@@ -235,6 +237,9 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260804_ledger_co_investme
 mysql -u root -p sd_publish_scm < backend/migrations/20260813_authorization_audit_context.sql       # 授权审计组织/岗位/前后快照上下文
 mysql -u root -p sd_publish_scm < backend/migrations/20260813_unified_organization_permissions.sql  # 组织/岗位/任职/岗位权限模型
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_position_workflow_engine.sql           # v2 岗位工作流持久化表、实例、任务与动作快照
+mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_foundation.sql             # 用户手机号、法务权限目录和钉钉提醒开关
+mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_domain.sql                 # 法务风控独立数据域
+mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_hardening.sql              # 预警投递并发领取加固（幂等）
 ```
 
 ### 统一权限与活动流程生产迁移顺序
@@ -366,6 +371,10 @@ git push
 | `CAPTCHA_ENABLED` / `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_MINUTES` | 认证安全开关 |
 | `DEEPSEEK_API_KEY` / `DEEPSEEK_*` | AI 分析(无 Key 回退规则引擎) |
 | `SEARCH_API_KEY` | 博查 Web 搜索(无 Key 外部舆情降级) |
+| `UPLOAD_DIR` | 上传文件根目录；生产建议使用后端账号可写的绝对路径 |
+| `DINGTALK_LEGAL_ALERT_ENABLED` | 是否启用法务钉钉群提醒 |
+| `DINGTALK_LEGAL_ALERT_WEBHOOK` / `DINGTALK_LEGAL_ALERT_SECRET` | 钉钉自定义机器人 Webhook 与加签密钥 |
+| `LEGAL_ALERT_TIMEZONE` | 法务预警时区，默认 `Asia/Shanghai` |
 
 > 真实 `*.xlsx`/`*.csv`(对账单、项目统计表)不在仓库,需单独拷贝到项目根目录。
 

@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -19,7 +20,7 @@ from app.api.v1.endpoints.contract import (
     _visible_contract_ids,
     list_todo as list_contract_todo,
 )
-from app.api.v1.endpoints.user import create_user, update_user
+from app.api.v1.endpoints.user import create_user, delete_user, update_user
 from app.core.enums import (
     AssignmentStatus, CompanyCode, ContractStatus, DataScope, PermissionAction,
     PositionCategory, ResourceCode, Role,
@@ -39,6 +40,7 @@ from app.models.user import User
 from app.schemas.user import UserCreate, UserOut, UserUpdate
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.permissions import (
+    COMPANY_RESOURCE_PERMISSIONS,
     RESOURCE_VIEW_PERMISSIONS,
     allowed_resources,
     get_company_role,
@@ -126,7 +128,7 @@ class CompanyPermissionServiceTest(unittest.TestCase):
         user = self.add_user("admin", Role.INFO_MAINTAINER, is_superuser=True)
         self.assertEqual(
             allowed_resources(self.db, user, CompanyCode.SUPPLY_MANAGEMENT),
-            frozenset(RESOURCE_VIEW_PERMISSIONS),
+            frozenset(COMPANY_RESOURCE_PERMISSIONS[CompanyCode.SUPPLY_MANAGEMENT]),
         )
 
     def test_disabled_superuser_has_no_resources_with_assignment(self):
@@ -150,6 +152,42 @@ class CompanyPermissionServiceTest(unittest.TestCase):
                 ResourceCode.SCENIC_ANALYTICS,
             )
         )
+
+    def test_business_and_legal_positions_share_full_legal_resources(self):
+        for index, (organization_code, position_code) in enumerate((
+            ("supplymanagement", "supply.business_handler"),
+            ("investment.legal_risk", "investment.department.junior_manager"),
+            ("investment.legal_risk", "investment.duty.supply_risk_review"),
+        )):
+            with self.subTest(position_code=position_code):
+                user = self.add_user(f"legal-business-{index}", Role.UNASSIGNED)
+                self.add_assignment(user, organization_code, position_code)
+                resources = allowed_resources(self.db, user, CompanyCode.INVESTMENT)
+                self.assertEqual(
+                    get_company_role(self.db, user, CompanyCode.INVESTMENT),
+                    Role.BUSINESS_HANDLER,
+                )
+                self.assertIn(ResourceCode.INVEST_LEGAL_CASES, resources)
+                self.assertIn(ResourceCode.INVEST_LEGAL_STATISTICS, resources)
+                self.assertNotIn(ResourceCode.INVEST_LEGAL_ADMIN, resources)
+
+    def test_chairman_general_manager_and_deputy_share_management_profile(self):
+        for index, position_code in enumerate((
+            "investment.executive.chairman",
+            "investment.executive.general_manager",
+            "investment.executive.deputy_general_manager",
+        )):
+            with self.subTest(position_code=position_code):
+                user = self.add_user(f"legal-executive-{index}", Role.UNASSIGNED)
+                self.add_assignment(user, "investment", position_code)
+                self.assertEqual(
+                    get_company_role(self.db, user, CompanyCode.INVESTMENT),
+                    Role.INVEST_DIRECTOR,
+                )
+                self.assertIn(
+                    ResourceCode.INVEST_LEGAL_STATISTICS,
+                    allowed_resources(self.db, user, CompanyCode.INVESTMENT),
+                )
 
 
 class CompanyPermissionDependencyTest(unittest.TestCase):
@@ -348,6 +386,22 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["total"], 0)
+
+    def test_legal_cases_api_denies_after_resource_permission_revoked(self):
+        self._add_current_user()
+        self._assign_supply_role(self.current_user.id, Role.RISK_AUDITOR)
+
+        allowed = self.client.get("/api/v1/legal-risk/cases")
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+
+        permission = self.db.scalar(select(Permission).where(
+            Permission.code == "investment.legal.cases.view"
+        ))
+        permission.is_active = False
+        self.db.commit()
+
+        denied = self.client.get("/api/v1/legal-risk/cases")
+        self.assertEqual(denied.status_code, 403, denied.text)
 
     def test_investment_executive_can_read_and_download_but_cannot_mutate(self):
         self._add_current_user()
@@ -666,6 +720,11 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
 
 class UserAccountSchemaTest(unittest.TestCase):
+    def test_mobile_fields_are_validated(self):
+        payload = UserUpdate(mobile="13800138000", legal_alert_enabled=True)
+        self.assertEqual(payload.mobile, "13800138000")
+        with self.assertRaises(ValueError):
+            UserUpdate(mobile="123")
     def test_account_requests_reject_authorization_inputs(self):
         for payload in (
             {"username": "worker", "password": "123456", "company_roles": []},
@@ -731,7 +790,13 @@ class UserAccountEndpointTest(unittest.TestCase):
 
     def test_create_account_is_unassigned_without_company_roles(self):
         response = create_user(
-            UserCreate(username="new-worker", full_name="New", password="123456"),
+            UserCreate(
+                username="new-worker",
+                full_name="New",
+                password="123456",
+                mobile="13800138000",
+                legal_alert_enabled=True,
+            ),
             self.db,
             self.admin,
         )
@@ -739,6 +804,9 @@ class UserAccountEndpointTest(unittest.TestCase):
         self.assertEqual(response.data.role, Role.UNASSIGNED)
         self.assertEqual(response.data.company_roles, [])
         self.assertEqual(response.data.assignment_summaries, [])
+        created = self.db.get(User, response.data.id)
+        self.assertEqual(created.mobile, "13800138000")
+        self.assertTrue(created.legal_alert_enabled)
 
     def test_update_changes_account_fields_without_authorization_mutation(self):
         response = update_user(
@@ -755,6 +823,18 @@ class UserAccountEndpointTest(unittest.TestCase):
         self.assertEqual(persisted.role, Role.UNASSIGNED)
         self.assertFalse(persisted.is_superuser)
         self.assertEqual(persisted.company_roles, [])
+
+    def test_user_with_business_references_returns_controlled_delete_conflict(self):
+        db = Mock()
+        db.get.return_value = self.worker
+        db.commit.side_effect = IntegrityError("DELETE", {}, RuntimeError("foreign key"))
+
+        with self.assertRaises(HTTPException) as raised:
+            delete_user(self.worker.id, db, self.admin)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("不能物理删除", raised.exception.detail)
+        db.rollback.assert_called_once_with()
 
 
 if __name__ == "__main__":

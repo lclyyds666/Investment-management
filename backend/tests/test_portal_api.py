@@ -87,7 +87,7 @@ class PortalRegistryTest(unittest.TestCase):
         )
         self.assertEqual(
             [item.status for item in apps],
-            ["construction", "online", "construction"],
+            ["online", "online", "construction"],
         )
         self.assertEqual([item.accessible for item in apps], [True, True, True])
 
@@ -241,7 +241,10 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
     def test_snapshot_projects_an_unambiguous_migrated_legacy_role(self):
         snapshot = permission_snapshot_for_user(self.db, self.legacy_user)
 
-        self.assertEqual(snapshot.company_roles, {"supplymanagement": "invest_director"})
+        self.assertEqual(snapshot.company_roles, {
+            "investment": "invest_director",
+            "supplymanagement": "invest_director",
+        })
 
     def test_each_investment_executive_snapshot_has_exact_read_only_boundary(self):
         for index, position_code in enumerate(INVESTMENT_EXECUTIVE_POSITION_CODES):
@@ -257,7 +260,11 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     set(snapshot.resources),
-                    {resource.value for resource in RESOURCE_VIEW_PERMISSIONS},
+                    {
+                        resource.value
+                        for resource, permission_code in RESOURCE_VIEW_PERMISSIONS.items()
+                        if permission_code in INVESTMENT_EXECUTIVE_READ_PERMISSIONS
+                    },
                 )
 
     def test_superuser_snapshot_projects_all_registered_permissions_and_resources(self):

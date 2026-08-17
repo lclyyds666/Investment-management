@@ -48,6 +48,8 @@ PERMISSION_CODES = (
     "supply.approval.view", "supply.approval.create", "supply.approval.update", "supply.approval.delete", "supply.approval.submit", "supply.approval.review", "supply.approval.approve", "supply.approval.return", "supply.approval.export",
     "supply.customer.view", "supply.customer.create", "supply.customer.update", "supply.customer.delete", "supply.customer.export",
     "supply.channel.view", "supply.channel.configure", "organization.directory.view", "investment.portal.enter", "fund.portal.enter",
+    "investment.legal.dashboard.view", "investment.legal.cases.view", "investment.legal.alerts.view",
+    "investment.legal.statistics.view", "investment.legal.admin.view",
 )
 
 
@@ -73,17 +75,63 @@ INVESTMENT_EXECUTIVE_POSITION_CODES = (
     "investment.executive.deputy_general_manager",
 )
 
+LEGAL_BUSINESS_VIEW_PERMISSIONS = frozenset({
+    "investment.legal.dashboard.view",
+    "investment.legal.cases.view",
+    "investment.legal.alerts.view",
+    "investment.legal.statistics.view",
+})
+LEGAL_COUNSEL_VIEW_PERMISSIONS = frozenset({
+    "investment.legal.cases.view",
+    "investment.legal.alerts.view",
+})
+
+LEGAL_BUSINESS_POSITION_CODES = (
+    "investment.department.director",
+    "investment.department.deputy_director",
+    "investment.department.senior_manager",
+    "investment.department.middle_manager",
+    "investment.department.junior_manager",
+    "supply.business_handler",
+    "supply.business_reviewer",
+    "supply.finance_handler",
+    "supply.company_leader",
+    "investment.duty.supply_risk_review",
+    "investment.duty.supply_finance_review",
+)
+LEGAL_MANAGEMENT_POSITION_CODES = (
+    *INVESTMENT_EXECUTIVE_POSITION_CODES,
+    "governance.supply_leader",
+)
+LEGAL_COUNSEL_POSITION_CODES = ("external.legal_counsel",)
+LEGAL_ACCESS_POSITION_CODES = tuple(dict.fromkeys(
+    (*LEGAL_BUSINESS_POSITION_CODES, *LEGAL_MANAGEMENT_POSITION_CODES, *LEGAL_COUNSEL_POSITION_CODES)
+))
+
 INVESTMENT_EXECUTIVE_READ_PERMISSIONS = frozenset({
     "investment.portal.enter",
     "supply.portal.enter",
     "fund.portal.enter",
     "organization.directory.view",
-}) | SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS
+}) | SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | LEGAL_BUSINESS_VIEW_PERMISSIONS
 
 
 def _supply_grants(position_code: str, permission_codes: set[str] | frozenset[str]):
     return tuple(
         {"position_code": position_code, "permission_code": code, "data_scope": "company", "scope_ref": "supplymanagement"}
+        for code in sorted(permission_codes)
+    )
+
+
+def _legal_view_grants(position_codes, permission_codes):
+    return tuple(
+        {
+            "position_code": position_code,
+            "permission_code": code,
+            "data_scope": "company",
+            "scope_ref": "investment",
+        }
+        for position_code in position_codes
         for code in sorted(permission_codes)
     )
 
@@ -164,6 +212,19 @@ POSITION_GRANTS = (
     {"position_code": "external.legal_counsel", "permission_code": "supply.contract.view", "data_scope": "assigned", "scope_ref": ""},
     {"position_code": "external.legal_counsel", "permission_code": "supply.contract.review", "data_scope": "assigned", "scope_ref": ""},
     *_investment_executive_grants(),
+    *(
+        {
+            "position_code": position_code,
+            "permission_code": "investment.portal.enter",
+            "data_scope": "platform",
+            "scope_ref": "investment",
+        }
+        for position_code in LEGAL_ACCESS_POSITION_CODES
+        if position_code not in INVESTMENT_EXECUTIVE_POSITION_CODES
+    ),
+    *_legal_view_grants(LEGAL_BUSINESS_POSITION_CODES, LEGAL_BUSINESS_VIEW_PERMISSIONS),
+    *_legal_view_grants(LEGAL_MANAGEMENT_POSITION_CODES, LEGAL_BUSINESS_VIEW_PERMISSIONS),
+    *_legal_view_grants(LEGAL_COUNSEL_POSITION_CODES, LEGAL_COUNSEL_VIEW_PERMISSIONS),
     {"position_code": "fund.chairman", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     {"position_code": "fund.general_manager", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     *(

@@ -35,6 +35,12 @@ class User(Base):
         comment="角色（7 级权限）",
     )
     department: Mapped[str] = mapped_column(String(64), default="", comment="所属部门")
+    mobile: Mapped[str | None] = mapped_column(
+        String(11), nullable=True, comment="法务钉钉提醒手机号"
+    )
+    legal_alert_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, comment="是否接收法务钉钉@提醒"
+    )
     # 纸质签名图片（Mock：存 data-URI 或附件路径），审批时作为电子签章附加
     signature: Mapped[str | None] = mapped_column(SignatureText, nullable=True, comment="电子签名(图片data-uri或路径)")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")

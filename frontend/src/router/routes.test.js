@@ -53,7 +53,7 @@ describe('unified portal routes', () => {
     expect(router.resolve({ name: 'Screen' }).path).toBe('/supplymanagement/screen')
   })
 
-  it('registers both construction applications under the shared portal shell', () => {
+  it('registers the investment application and the remaining construction application', () => {
     const investment = router.resolve({ name: 'Investment' })
     const fund = router.resolve({ name: 'FundManagement' })
 
@@ -63,6 +63,23 @@ describe('unified portal routes', () => {
     expect(fund.path).toBe('/fundmanagement')
     expect(fund.meta.company).toBe('fundmanagement')
     expect(fund.meta.companyName).toBe('山东出版股权基金管理有限公司')
+  })
+
+  it('registers the complete legal-risk route surface under investment', () => {
+    const expected = [
+      ['LegalRiskDashboard', '/investment/legal-risk/dashboard', 'invest.legal.dashboard'],
+      ['LegalRiskCases', '/investment/legal-risk/cases', 'invest.legal.cases'],
+      ['LegalRiskAlerts', '/investment/legal-risk/alerts', 'invest.legal.alerts'],
+      ['LegalRiskStatistics', '/investment/legal-risk/statistics', 'invest.legal.statistics']
+    ]
+    for (const [name, path, resource] of expected) {
+      const resolved = router.resolve({ name })
+      expect(resolved.path).toBe(path)
+      expect(resolved.meta.company).toBe('investment')
+      expect(resolved.meta.resource).toBe(resource)
+    }
+    expect(router.resolve({ name: 'LegalRiskCaseCreate' }).meta.legalCapability).toBe('edit_case')
+    expect(router.resolve({ name: 'LegalRiskUsers' }).meta.requiresSuperuser).toBe(true)
   })
 
   it.each(supplyRoutes)(

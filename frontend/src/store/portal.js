@@ -8,7 +8,8 @@ export const usePortalStore = defineStore('portal', () => {
     is_superuser: false,
     assignments: [],
     permissions: [],
-    resources: []
+    resources: [],
+    company_roles: {}
   })
   const isLoaded = ref(false)
   const isSuperuser = computed(() => permissions.value.is_superuser)
@@ -35,6 +36,10 @@ export const usePortalStore = defineStore('portal', () => {
       || (permissions.value.permissions || []).some(item => item.code === permissionCode)
   }
 
+  function companyRole(companyCode) {
+    return permissions.value.company_roles?.[companyCode] || ''
+  }
+
   function clearPortalContext() {
     contextVersion += 1
     inFlightPromise = null
@@ -43,7 +48,8 @@ export const usePortalStore = defineStore('portal', () => {
       is_superuser: false,
       assignments: [],
       permissions: [],
-      resources: []
+      resources: [],
+      company_roles: {}
     }
     isLoaded.value = false
   }
@@ -63,7 +69,8 @@ export const usePortalStore = defineStore('portal', () => {
         is_superuser: false,
         assignments: [],
         permissions: [],
-        resources: []
+        resources: [],
+        company_roles: {}
       }
       isLoaded.value = true
     }).finally(() => {
@@ -84,6 +91,7 @@ export const usePortalStore = defineStore('portal', () => {
     hasResource,
     hasPosition,
     hasPermission,
+    companyRole,
     loadPortalContext,
     clearPortalContext
   }

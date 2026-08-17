@@ -1,0 +1,10 @@
+[Unit]
+Description=Delete expired SD SCM legal import previews daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+Persistent=true
+Unit=sd-scm-legal-import-cleanup.service
+
+[Install]
+WantedBy=timers.target

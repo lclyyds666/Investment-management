@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { COMPANY_CODES, RESOURCE_CODES } from '@/constants/business'
 import { legacySupplyRedirects } from './legacyRedirects'
+import { LEGAL_CAPABILITIES } from '@/utils/legalCapabilities'
 
 export { ROLES } from '@/constants/business'
 
@@ -24,16 +25,6 @@ const routes = [
         meta: { title: 'AI 助手' }
       },
       {
-        path: 'investment',
-        name: 'Investment',
-        component: () => import('@/views/portal/ConstructionView.vue'),
-        meta: {
-          title: '山东出版投资有限公司',
-          company: COMPANY_CODES.INVESTMENT,
-          companyName: '山东出版投资有限公司'
-        }
-      },
-      {
         path: 'fundmanagement',
         name: 'FundManagement',
         component: () => import('@/views/portal/ConstructionView.vue'),
@@ -41,6 +32,101 @@ const routes = [
           title: '山东出版股权基金管理有限公司',
           company: COMPANY_CODES.FUND_MANAGEMENT,
           companyName: '山东出版股权基金管理有限公司'
+        }
+      }
+    ]
+  },
+  {
+    path: '/investment',
+    name: 'Investment',
+    component: () => import('@/layout/InvestmentLayout.vue'),
+    redirect: '/investment/legal-risk/dashboard',
+    meta: {
+      company: COMPANY_CODES.INVESTMENT,
+      companyName: '山东出版投资有限公司'
+    },
+    children: [
+      {
+        path: 'legal-risk/dashboard',
+        name: 'LegalRiskDashboard',
+        component: () => import('@/views/legal-risk/DashboardView.vue'),
+        meta: {
+          title: '法务工作台',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_DASHBOARD
+        }
+      },
+      {
+        path: 'legal-risk/cases',
+        name: 'LegalRiskCases',
+        component: () => import('@/views/legal-risk/CaseListView.vue'),
+        meta: {
+          title: '案件管理',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_CASES
+        }
+      },
+      {
+        path: 'legal-risk/cases/new',
+        name: 'LegalRiskCaseCreate',
+        component: () => import('@/views/legal-risk/CaseEditorView.vue'),
+        meta: {
+          title: '新建案件草稿',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
+          legalCapability: LEGAL_CAPABILITIES.EDIT_CASE
+        }
+      },
+      {
+        path: 'legal-risk/cases/:caseId/edit',
+        name: 'LegalRiskCaseEdit',
+        component: () => import('@/views/legal-risk/CaseEditorView.vue'),
+        meta: {
+          title: '编辑案件',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
+          legalCapability: LEGAL_CAPABILITIES.EDIT_CASE
+        }
+      },
+      {
+        path: 'legal-risk/cases/:caseId',
+        name: 'LegalRiskCaseDetail',
+        component: () => import('@/views/legal-risk/CaseDetailView.vue'),
+        meta: {
+          title: '案件详情',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_CASES
+        }
+      },
+      {
+        path: 'legal-risk/alerts',
+        name: 'LegalRiskAlerts',
+        component: () => import('@/views/legal-risk/AlertsView.vue'),
+        meta: {
+          title: '预警任务',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_ALERTS
+        }
+      },
+      {
+        path: 'legal-risk/statistics',
+        name: 'LegalRiskStatistics',
+        component: () => import('@/views/legal-risk/StatisticsView.vue'),
+        meta: {
+          title: '统计分析',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_STATISTICS
+        }
+      },
+      {
+        path: 'legal-risk/users',
+        name: 'LegalRiskUsers',
+        component: () => import('@/views/system/users.vue'),
+        meta: {
+          title: '通知人员',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_ADMIN,
+          requiresSuperuser: true
         }
       }
     ]

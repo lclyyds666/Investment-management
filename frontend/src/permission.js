@@ -3,10 +3,16 @@ import router from './router'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { COMPANY_CODES } from '@/constants/business'
+import { hasLegalCapability } from '@/utils/legalCapabilities'
 
 const TITLE = import.meta.env.VITE_APP_TITLE || '山东出版投资有限公司工作平台'
 const SUPPLY_DASHBOARD_PATH = '/supplymanagement/dashboard'
 const SUPPLY_CONTRACT_PATH = '/supplymanagement/contract'
+const INVESTMENT_CASES_PATH = '/investment/legal-risk/cases'
+
+const companyFallback = (company) => company === COMPANY_CODES.INVESTMENT
+  ? INVESTMENT_CASES_PATH
+  : SUPPLY_DASHBOARD_PATH
 
 export const portalGuard = async (to) => {
   document.title = to.meta?.title ? `${to.meta.title} - ${TITLE}` : TITLE
@@ -56,7 +62,17 @@ export const portalGuard = async (to) => {
 
   if (to.meta?.resource && !portalStore.hasResource(to.meta.resource)) {
     ElMessage.error('权限不足，无法访问该页面')
-    return { path: SUPPLY_DASHBOARD_PATH }
+    return { path: companyFallback(to.meta?.company) }
+  }
+
+  if (to.meta?.legalCapability && !hasLegalCapability(
+    portalStore.companyRole(COMPANY_CODES.INVESTMENT),
+    to.meta.legalCapability,
+    portalStore.isSuperuser,
+    portalStore.assignments
+  )) {
+    ElMessage.error('权限不足，无法执行该法务操作')
+    return { path: INVESTMENT_CASES_PATH }
   }
 
   return true

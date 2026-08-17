@@ -13,14 +13,17 @@ from app.schemas.portal import (
 )
 from app.services.assignment_permissions import active_assignments, permission_grants
 from app.services.legacy_assignment_migration import LEGACY_TARGETS
-from app.services.permissions import RESOURCE_VIEW_PERMISSIONS
+from app.services.permissions import (
+    RESOURCE_VIEW_PERMISSIONS,
+    investment_role_for_assignments,
+)
 
 APPLICATIONS = (
     (
         "investment",
         "山东出版投资有限公司",
         "/investment",
-        "construction",
+        "online",
         "investment.portal.enter",
     ),
     (
@@ -80,11 +83,15 @@ def _legacy_company_roles(assignments) -> dict[str, str]:
             role.value
         )
 
-    return {
+    result = {
         company_code: next(iter(roles))
         for company_code, roles in roles_by_company.items()
         if len(roles) == 1
     }
+    investment_role = investment_role_for_assignments(assignments)
+    if investment_role is not None:
+        result[CompanyCode.INVESTMENT.value] = investment_role.value
+    return result
 
 
 def permission_snapshot_for_user(

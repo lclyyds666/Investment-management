@@ -17,6 +17,12 @@ WorkingDirectory=/opt/sd-scm/backend
 EnvironmentFile=/opt/sd-scm/backend/.env
 Environment="PATH=/opt/sd-scm/backend/.venv/bin"
 Environment="AI_SHARED_STORE_REQUIRED=true"
+# 法务预警配置写入 EnvironmentFile，不要把真实密钥写进 unit 文件：
+# DINGTALK_LEGAL_ALERT_ENABLED=true
+# DINGTALK_LEGAL_ALERT_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME
+# DINGTALK_LEGAL_ALERT_SECRET=SEC_REPLACE_ME
+# LEGAL_ALERT_TIMEZONE=Asia/Shanghai
+# UPLOAD_DIR=/opt/sd-scm/backend/uploads
 # 多进程守护；仅监听本机，由 Nginx 对外代理
 ExecStart=/opt/sd-scm/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always

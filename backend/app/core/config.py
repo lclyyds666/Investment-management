@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # 上传的准入资料原始文件存放目录（相对后端工作目录；已 gitignore）。
     UPLOAD_DIR: str = "uploads"
 
+    # 投资公司法务预警（固定钉钉群机器人）。
+    DINGTALK_LEGAL_ALERT_ENABLED: bool = False
+    DINGTALK_LEGAL_ALERT_WEBHOOK: str = ""
+    DINGTALK_LEGAL_ALERT_SECRET: str = ""
+    LEGAL_ALERT_TIMEZONE: str = "Asia/Shanghai"
+
     @property
     def AI_ENABLED(self) -> bool:
         """是否具备调用真实大模型的条件。"""

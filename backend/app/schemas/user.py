@@ -1,5 +1,12 @@
 """用户相关 Pydantic schema。"""
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.config import settings
 from app.core.enums import CompanyCode, Role, role_label
@@ -26,6 +33,13 @@ class UserCreate(BaseModel):
     username: str
     full_name: str = ""
     password: str = Field(..., min_length=settings.PASSWORD_MIN_LENGTH)
+    mobile: str | None = None
+    legal_alert_enabled: bool = False
+
+    @field_validator("mobile")
+    @classmethod
+    def validate_mobile(cls, value: str | None) -> str | None:
+        return _normalize_mobile(value)
 
 
 class UserUpdate(BaseModel):
@@ -36,6 +50,13 @@ class UserUpdate(BaseModel):
     full_name: str | None = None
     department: str | None = None
     is_active: bool | None = None
+    mobile: str | None = None
+    legal_alert_enabled: bool | None = None
+
+    @field_validator("mobile")
+    @classmethod
+    def validate_mobile(cls, value: str | None) -> str | None:
+        return _normalize_mobile(value)
 
 
 class ActiveUpdate(BaseModel):
@@ -76,6 +97,8 @@ class UserOut(UserBase):
     )
     assignment_summaries: list[AssignmentOut] = Field(default_factory=list)
     signature: str | None = None
+    mobile: str | None = Field(default=None, exclude=True)
+    legal_alert_enabled: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -92,8 +115,15 @@ class UserOut(UserBase):
             "is_superuser": value.is_superuser,
             "company_roles": value.company_roles,
             "signature": value.signature,
+            "mobile": value.mobile,
+            "legal_alert_enabled": value.legal_alert_enabled,
             "assignment_summaries": _assignment_summaries(value.assignments),
         }
+
+    @computed_field
+    @property
+    def mobile_masked(self) -> str | None:
+        return _mask_mobile(self.mobile)
 
     @computed_field
     @property
@@ -123,6 +153,8 @@ class UserBrief(BaseModel):
         deprecated=True,
     )
     assignment_summaries: list[AssignmentOut] = Field(default_factory=list)
+    mobile: str | None = None
+    legal_alert_enabled: bool = False
     # 参与 has_signature 计算，但不序列化到列表输出（避免返回大体积签名）
     signature: str | None = Field(default=None, exclude=True)
 
@@ -141,6 +173,8 @@ class UserBrief(BaseModel):
             "is_superuser": value.is_superuser,
             "company_roles": value.company_roles,
             "signature": value.signature,
+            "mobile": value.mobile,
+            "legal_alert_enabled": value.legal_alert_enabled,
             "assignment_summaries": _assignment_summaries(value.assignments),
         }
 
@@ -159,6 +193,26 @@ class SignatureUpdate(BaseModel):
     """纸质签名上传（Mock）：传图片的 data-URI 或附件路径。"""
 
     signature: str
+
+
+def _normalize_mobile(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    if (
+        len(normalized) != 11
+        or not normalized.isdigit()
+        or normalized[0] != "1"
+        or normalized[1] not in "3456789"
+    ):
+        raise ValueError("请输入 11 位中国大陆手机号")
+    return normalized
+
+
+def _mask_mobile(value: str | None) -> str | None:
+    if not value:
+        return None
+    return f"{value[:3]}****{value[-4:]}"
 
 
 def _assignment_summaries(assignments) -> list[dict]:

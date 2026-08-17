@@ -7,6 +7,11 @@ export const COMPANY_CODES = {
 }
 
 export const RESOURCE_CODES = {
+  INVEST_LEGAL_DASHBOARD: 'invest.legal.dashboard',
+  INVEST_LEGAL_CASES: 'invest.legal.cases',
+  INVEST_LEGAL_ALERTS: 'invest.legal.alerts',
+  INVEST_LEGAL_STATISTICS: 'invest.legal.statistics',
+  INVEST_LEGAL_ADMIN: 'invest.legal.admin',
   SUPPLY_DASHBOARD: 'supply.dashboard',
   SUPPLY_OPERATION: 'supply.operation',
   SCENIC_ANALYTICS: 'supply.scenic.analytics',
