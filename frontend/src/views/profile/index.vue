@@ -8,8 +8,8 @@
           <el-descriptions :column="1" border>
             <el-descriptions-item label="姓名">{{ info?.full_name || '—' }}</el-descriptions-item>
             <el-descriptions-item label="登录账号">{{ info?.username }}</el-descriptions-item>
-            <el-descriptions-item label="角色">
-              <el-tag type="warning" size="small">{{ info?.role_label }}</el-tag>
+            <el-descriptions-item label="当前任职">
+              <el-tag type="warning" size="small">{{ assignmentLabel }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="所属部门">{{ info?.department || '—' }}</el-descriptions-item>
             <el-descriptions-item label="超级管理员">
@@ -128,16 +128,26 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
+import { usePortalStore } from '@/store/portal'
 import { ROLES } from '@/constants/business'
 import { getMe, updateSignature, changeMyPassword, changeMyUsername } from '@/api/user'
+import { currentAssignmentLabel } from '@/utils/assignmentDisplay'
 
 const userStore = useUserStore()
+const portalStore = usePortalStore()
 const info = ref(null)
 const preview = ref('')
 const saving = ref(false)
 const hasSig = computed(() => !!preview.value)
 // 「信息维护」角色无电子签名权限：隐藏签名卡片（与后端接口拦截保持一致）
 const signatureDisabled = computed(() => userStore.role === ROLES.INFO_MAINTAINER)
+const assignmentLabel = computed(() => currentAssignmentLabel({
+  portalAssignments: portalStore.assignments,
+  portalLoaded: portalStore.isLoaded,
+  userAssignments: info.value?.assignment_summaries || [],
+  isSuperuser: Boolean(info.value?.is_superuser || portalStore.isSuperuser),
+  superuserLabel: info.value?.role_label || '信息维护'
+}))
 
 // 修改密码
 const pwdRef = ref()
