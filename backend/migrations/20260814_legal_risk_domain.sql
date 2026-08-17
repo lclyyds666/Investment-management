@@ -286,7 +286,7 @@ CREATE TABLE IF NOT EXISTS legal_case_import_row (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     batch_id BIGINT NOT NULL,
     sheet_name VARCHAR(64) NOT NULL,
-    row_number INT NOT NULL,
+    `row_number` INT NOT NULL,
     normalized_data JSON NOT NULL,
     validation_status VARCHAR(16) NOT NULL,
     warnings JSON NOT NULL,
@@ -294,7 +294,7 @@ CREATE TABLE IF NOT EXISTS legal_case_import_row (
     imported_case_id BIGINT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_legal_import_row (batch_id, sheet_name, row_number),
+    UNIQUE KEY uq_legal_import_row (batch_id, sheet_name, `row_number`),
     KEY ix_legal_import_row_status (validation_status),
     CONSTRAINT fk_legal_import_row_batch FOREIGN KEY (batch_id) REFERENCES legal_case_import_batch(id) ON DELETE CASCADE,
     CONSTRAINT fk_legal_import_row_case FOREIGN KEY (imported_case_id) REFERENCES legal_case(id)
