@@ -11,14 +11,15 @@ describe('legal risk fixed business dictionaries', () => {
     ])
   })
 
-  it('includes settlement in the five judgment/result types', () => {
+  it('includes all seven judgment/result types', () => {
     expect(JUDGMENT_TYPE_OPTIONS.map((item) => item.label)).toEqual([
-      '一审', '二审', '再审', '调解', '和解'
+      '一审', '二审', '再审', '调解', '和解', '执行', '其他'
     ])
   })
 
-  it('defines the five deadline alert rules and eight detail tabs', () => {
-    expect(ALERT_TYPE_OPTIONS).toHaveLength(5)
+  it('defines the six deadline alert rules and eight detail tabs', () => {
+    expect(ALERT_TYPE_OPTIONS).toHaveLength(6)
+    expect(ALERT_TYPE_OPTIONS).toContainEqual({ value: 'custom', label: '其他期限' })
     expect(CASE_DETAIL_TABS.map((item) => item.label)).toEqual([
       '基本信息', '裁判结果', '查扣冻资产', '清回止损',
       '进展风险', '期限事件', '案件材料', '操作记录'

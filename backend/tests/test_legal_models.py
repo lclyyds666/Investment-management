@@ -11,10 +11,13 @@ class LegalModelContractTest(unittest.TestCase):
             ["review_filing", "in_trial", "judged", "enforcement", "terminal", "closed"],
         )
 
-    def test_judgment_types_include_settlement(self):
+    def test_judgment_types_include_execution_and_other(self):
         self.assertEqual(
             [item.value for item in LegalJudgmentType],
-            ["first_instance", "second_instance", "retrial", "mediation", "settlement"],
+            [
+                "first_instance", "second_instance", "retrial", "mediation",
+                "settlement", "execution", "other",
+            ],
         )
 
     def test_case_has_no_risk_level_or_major_case_field(self):

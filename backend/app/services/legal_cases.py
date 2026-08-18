@@ -5,10 +5,11 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.enums import CompanyCode
 from app.models.legal_risk import (
     LegalAlertStatus,
     LegalCase,
@@ -24,6 +25,7 @@ from app.models.legal_risk import (
     LegalPartyType,
     LegalRecoveryType,
 )
+from app.models.portal import UserCompanyRole
 from app.models.user import User
 from app.schemas.legal_risk import LegalMoneySummary
 from app.services.legal_clock import legal_now, legal_today
@@ -39,6 +41,28 @@ CASE_DETAIL_OPTIONS = (
     selectinload(LegalCase.progress_records),
     selectinload(LegalCase.deadlines),
 )
+
+
+def resolve_investment_user_name(db: Session, name: str) -> User:
+    normalized = name.strip()
+    rows = db.scalars(
+        select(User)
+        .join(UserCompanyRole, UserCompanyRole.user_id == User.id)
+        .where(
+            or_(
+                User.full_name == normalized,
+                and_(User.full_name == "", User.username == normalized),
+            ),
+            User.is_active.is_(True),
+            UserCompanyRole.company_code == CompanyCode.INVESTMENT.value,
+        )
+        .order_by(User.id.asc())
+    ).all()
+    if not rows:
+        raise HTTPException(status_code=422, detail="未找到姓名对应的启用投资公司账号")
+    if len(rows) > 1:
+        raise HTTPException(status_code=422, detail="该姓名对应多个账号，请先确保账号姓名唯一")
+    return rows[0]
 
 
 def get_case_or_403(
@@ -281,7 +305,7 @@ def calculate_case_money(db: Session, case_id: int) -> LegalMoneySummary:
     ) or Decimal("0")
     subject = Decimal(case.subject_amount or 0)
     executable = Decimal(basis.executable_amount) if basis and basis.executable_amount is not None else None
-    outstanding = max((executable if executable is not None else subject) - Decimal(recovered), Decimal("0"))
+    outstanding = max((executable or Decimal("0")) - Decimal(recovered), Decimal("0"))
     return LegalMoneySummary(
         subject_amount=subject,
         executable_amount=executable,

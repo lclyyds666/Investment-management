@@ -67,6 +67,8 @@ class LegalJudgmentType(str, Enum):
     RETRIAL = "retrial"
     MEDIATION = "mediation"
     SETTLEMENT = "settlement"
+    EXECUTION = "execution"
+    OTHER = "other"
 
 
 class LegalRecoveryType(str, Enum):
@@ -90,6 +92,7 @@ class LegalAlertType(str, Enum):
     ENFORCEMENT_APPLICATION = "enforcement_application"
     HEARING = "hearing"
     PAYMENT_MATERIAL = "payment_material"
+    CUSTOM = "custom"
     TERMINAL_MONITORING = "terminal_monitoring"
 
 
@@ -318,7 +321,7 @@ class LegalCaseAlert(Base):
     __tablename__ = "legal_case_alert"
     __table_args__ = (
         UniqueConstraint(
-            "case_id", "source_type", "source_id", "alert_type", "cycle_key",
+            "case_id", "source_type", "source_id", "alert_type", "cycle_key", "generation",
             name="uq_legal_case_alert_cycle",
         ),
     )
@@ -329,6 +332,7 @@ class LegalCaseAlert(Base):
     source_id: Mapped[int] = mapped_column(Integer, nullable=False)
     alert_type: Mapped[LegalAlertType] = enum_column(LegalAlertType, nullable=False, index=True)
     cycle_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     trigger_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     level: Mapped[str] = mapped_column(String(16), default="normal", nullable=False, index=True)

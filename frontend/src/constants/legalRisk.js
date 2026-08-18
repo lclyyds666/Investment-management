@@ -12,7 +12,9 @@ export const JUDGMENT_TYPE_OPTIONS = Object.freeze([
   { value: 'second_instance', label: '二审' },
   { value: 'retrial', label: '再审' },
   { value: 'mediation', label: '调解' },
-  { value: 'settlement', label: '和解' }
+  { value: 'settlement', label: '和解' },
+  { value: 'execution', label: '执行' },
+  { value: 'other', label: '其他' }
 ])
 
 export const PARTY_TYPE_OPTIONS = Object.freeze([
@@ -42,6 +44,7 @@ export const ALERT_TYPE_OPTIONS = Object.freeze([
   { value: 'enforcement_application', label: '申请执行期限' },
   { value: 'hearing', label: '开庭期限' },
   { value: 'payment_material', label: '缴费/材料期限' },
+  { value: 'custom', label: '其他期限' },
   { value: 'terminal_monitoring', label: '终本案件跟踪' }
 ])
 

@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.core.enums import Role
+from app.core.enums import CompanyCode, Role
 from app.db.base import Base
 from app.models.legal_risk import (
     LegalCase,
@@ -32,6 +32,7 @@ from app.services.legal_cases import (
     change_case_status,
     ensure_formal_case_fields,
     reserve_case_version,
+    resolve_investment_user_name,
 )
 
 
@@ -103,6 +104,35 @@ class LegalCaseServiceTest(unittest.TestCase):
         self.assertEqual(summary.recovered_amount, Decimal("300.00"))
         self.assertEqual(summary.avoided_loss_amount, Decimal("200.00"))
         self.assertEqual(summary.outstanding_amount, Decimal("500.00"))
+
+    def test_money_without_current_basis_does_not_fall_back_to_subject_amount(self):
+        case = self._complete_draft()
+        activate_case(self.db, case, self.actor)
+        self.db.commit()
+
+        summary = calculate_case_money(self.db, case.id)
+
+        self.assertIsNone(summary.executable_amount)
+        self.assertEqual(summary.outstanding_amount, Decimal("0"))
+
+    def test_resolve_investment_user_name_requires_active_exact_match(self):
+        target = User(
+            username="owner", full_name="案件负责人", hashed_password="x",
+            role=Role.BUSINESS_HANDLER, is_active=True,
+        )
+        self.db.add(target)
+        self.db.flush()
+        self.db.add(UserCompanyRole(
+            user_id=target.id,
+            company_code=CompanyCode.INVESTMENT.value,
+            role=Role.BUSINESS_HANDLER,
+        ))
+        self.db.commit()
+
+        self.assertEqual(resolve_investment_user_name(self.db, "案件负责人").id, target.id)
+        with self.assertRaises(HTTPException) as raised:
+            resolve_investment_user_name(self.db, "不存在")
+        self.assertEqual(raised.exception.status_code, 422)
 
     def test_stale_case_version_is_rejected_by_database_update(self):
         case = self._complete_draft()

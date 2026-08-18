@@ -11,7 +11,10 @@ from app.api.v1.endpoints.legal_risk import _import_batch_for_user
 from app.core.enums import AssignmentStatus, Role
 from app.db.base import Base
 from app.models.legal_risk import (
+    LegalAlertDelivery,
+    LegalAlertType,
     LegalCase,
+    LegalCaseAlert,
     LegalCaseImportBatch,
     LegalCaseImportRow,
     LegalImportStatus,
@@ -71,6 +74,9 @@ class LegalImportTest(unittest.TestCase):
             "进展风险", "期限事件", "填写说明与枚举值",
         ])
         self.assertEqual(workbook["填写说明与枚举值"]["B1"].value, "legal-case-v1")
+        headers = [cell.value for cell in workbook["裁判结果"][1]]
+        self.assertIn("判决金额", headers)
+        self.assertNotIn("可执行金额", headers)
 
     def test_preview_and_confirm_are_transactional_and_idempotent(self):
         batch = preview_import(self.db, self._filled_template(), "cases.xlsx", self.user)
@@ -89,6 +95,28 @@ class LegalImportTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             confirm_import(self.db, batch, self.user, list(warning_ids))
         self.assertEqual(raised.exception.status_code, 409)
+
+    def test_imported_future_custom_deadline_creates_task_without_delivery(self):
+        workbook = load_workbook(BytesIO(self._filled_template()))
+        workbook["期限事件"].append([
+            "EXT-1", "custom", "custom deadline", date(2026, 12, 31), 7, None,
+        ])
+        buffer = BytesIO(); workbook.save(buffer)
+        batch = preview_import(self.db, buffer.getvalue(), "deadline.xlsx", self.user)
+        self.db.commit()
+        warning_ids = self.db.scalars(
+            self.db.query(LegalCaseImportRow.id).filter(
+                LegalCaseImportRow.batch_id == batch.id,
+                LegalCaseImportRow.validation_status == "warning",
+            ).statement
+        ).all()
+
+        confirm_import(self.db, batch, self.user, list(warning_ids))
+        self.db.commit()
+
+        alert = self.db.query(LegalCaseAlert).filter_by(source_type="deadline").one()
+        self.assertEqual(alert.alert_type, LegalAlertType.CUSTOM)
+        self.assertEqual(self.db.query(LegalAlertDelivery).count(), 0)
 
     def test_preview_rejects_formal_case_without_both_party_sides(self):
         workbook = load_workbook(build_import_template())

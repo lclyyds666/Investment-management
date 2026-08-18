@@ -52,6 +52,7 @@ def build_alert_message(
         "enforcement_application": "申请执行",
         "hearing": "开庭提醒",
         "payment_material": "缴费/材料期限",
+        "custom": "其他期限",
         "terminal_monitoring": "终本持续监控",
     }
     alert_type = alert.alert_type.value if hasattr(alert.alert_type, "value") else str(alert.alert_type)

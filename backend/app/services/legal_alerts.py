@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.legal_risk import (
@@ -46,6 +47,14 @@ def _level(due_date: date, today: date) -> str:
     return "normal"
 
 
+def _deadline_alert_rule(deadline_type: LegalDeadlineType) -> tuple[LegalAlertType, int]:
+    if deadline_type == LegalDeadlineType.HEARING:
+        return LegalAlertType.HEARING, 45
+    if deadline_type == LegalDeadlineType.PAYMENT_MATERIAL:
+        return LegalAlertType.PAYMENT_MATERIAL, 7
+    return LegalAlertType.CUSTOM, 7
+
+
 def _ensure_alert(
     db: Session,
     *,
@@ -58,13 +67,16 @@ def _ensure_alert(
     due_date: date,
     responsible_user_id: int | None,
     today: date,
+    allow_new_generation: bool = False,
 ) -> tuple[LegalCaseAlert, bool]:
     old_rows = db.scalars(select(LegalCaseAlert).where(
         LegalCaseAlert.case_id == case.id,
         LegalCaseAlert.source_type == source_type,
         LegalCaseAlert.source_id == source_id,
-        LegalCaseAlert.alert_type == alert_type,
-        LegalCaseAlert.cycle_key != cycle_key,
+        or_(
+            LegalCaseAlert.alert_type != alert_type,
+            LegalCaseAlert.cycle_key != cycle_key,
+        ),
         LegalCaseAlert.status.in_(ACTIVE_ALERT_STATUSES),
     )).all()
     for old in old_rows:
@@ -73,33 +85,56 @@ def _ensure_alert(
         old.closed_reason = "来源日期已变更"
         old.completed_at = legal_now()
 
-    existing = db.scalar(select(LegalCaseAlert).where(
+    matching = db.scalars(select(LegalCaseAlert).where(
         LegalCaseAlert.case_id == case.id,
         LegalCaseAlert.source_type == source_type,
         LegalCaseAlert.source_id == source_id,
         LegalCaseAlert.alert_type == alert_type,
         LegalCaseAlert.cycle_key == cycle_key,
-    ))
+    ).order_by(LegalCaseAlert.generation.desc())).all()
+    existing = next((row for row in matching if row.status in ACTIVE_ALERT_STATUSES), None)
     if existing is not None:
         existing.trigger_date = trigger_date
         existing.due_date = due_date
         existing.responsible_user_id = responsible_user_id
         existing.level = _level(due_date, today)
         return existing, False
+    if matching and not allow_new_generation:
+        return matching[0], False
+    generation = matching[0].generation + 1 if matching else 1
     row = LegalCaseAlert(
         case_id=case.id,
         source_type=source_type,
         source_id=source_id,
         alert_type=alert_type,
         cycle_key=cycle_key,
+        generation=generation,
         trigger_date=trigger_date,
         due_date=due_date,
         level=_level(due_date, today),
         responsible_user_id=responsible_user_id,
         status=LegalAlertStatus.PENDING,
     )
-    db.add(row)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        existing = db.scalar(select(LegalCaseAlert).where(
+            LegalCaseAlert.case_id == case.id,
+            LegalCaseAlert.source_type == source_type,
+            LegalCaseAlert.source_id == source_id,
+            LegalCaseAlert.alert_type == alert_type,
+            LegalCaseAlert.cycle_key == cycle_key,
+            LegalCaseAlert.generation == generation,
+        ).with_for_update())
+        if existing is None:
+            raise
+        existing.trigger_date = trigger_date
+        existing.due_date = due_date
+        existing.responsible_user_id = responsible_user_id
+        existing.level = _level(due_date, today)
+        return existing, False
     return row, True
 
 
@@ -109,24 +144,49 @@ def scan_case_alerts(db: Session, case: LegalCase, today: date) -> list[LegalCas
     active_sources = {}
     for asset in case.assets:
         if asset.deleted_at is None and asset.expiry_date is not None:
-            active_sources[("asset", asset.id)] = asset.expiry_date.isoformat()
+            active_sources[("asset", asset.id)] = (
+                LegalAlertType.ASSET_EXPIRY,
+                asset.expiry_date.isoformat(),
+            )
     outstanding = calculate_case_money(db, case.id).outstanding_amount
     for judgment in case.judgments:
         if (judgment.deleted_at is None and judgment.is_current_enforcement_basis
                 and judgment.performance_deadline is not None and outstanding > 0):
-            active_sources[("judgment", judgment.id)] = judgment.performance_deadline.isoformat()
+            active_sources[("judgment", judgment.id)] = (
+                LegalAlertType.ENFORCEMENT_APPLICATION,
+                judgment.performance_deadline.isoformat(),
+            )
     for deadline in case.deadlines:
         if deadline.deleted_at is None and not deadline.is_completed:
-            active_sources[("deadline", deadline.id)] = deadline.event_date.isoformat()
+            alert_type, _ = _deadline_alert_rule(deadline.deadline_type)
+            active_sources[("deadline", deadline.id)] = (
+                alert_type,
+                deadline.event_date.isoformat(),
+            )
     if case.status == LegalCaseStatus.TERMINAL:
-        active_sources[("case", case.id)] = f"{today.year:04d}-{today.month:02d}"
-    existing_alerts = db.scalars(select(LegalCaseAlert).where(
+        active_sources[("case", case.id)] = (
+            LegalAlertType.TERMINAL_MONITORING,
+            f"{today.year:04d}-{today.month:02d}",
+        )
+    source_alerts = db.scalars(select(LegalCaseAlert).where(
         LegalCaseAlert.case_id == case.id,
-        LegalCaseAlert.status.in_(ACTIVE_ALERT_STATUSES),
-    )).all()
+    ).order_by(LegalCaseAlert.id.desc())).all()
+    latest_by_source = {}
+    for alert in source_alerts:
+        latest_by_source.setdefault((alert.source_type, alert.source_id), alert)
+
+    changed_sources = {
+        source
+        for source, expected in active_sources.items()
+        if source in latest_by_source
+        and (latest_by_source[source].alert_type, latest_by_source[source].cycle_key) != expected
+    }
+    existing_alerts = [
+        alert for alert in source_alerts if alert.status in ACTIVE_ALERT_STATUSES
+    ]
     for alert in existing_alerts:
-        expected_cycle = active_sources.get((alert.source_type, alert.source_id))
-        if expected_cycle != alert.cycle_key:
+        expected_source = active_sources.get((alert.source_type, alert.source_id))
+        if expected_source != (alert.alert_type, alert.cycle_key):
             alert.status = LegalAlertStatus.CLOSED
             alert.result = "来源日期已变更或事项已完成"
             alert.closed_reason = alert.result
@@ -143,6 +203,7 @@ def scan_case_alerts(db: Session, case: LegalCase, today: date) -> list[LegalCas
                 alert_type=LegalAlertType.ASSET_EXPIRY, cycle_key=asset.expiry_date.isoformat(),
                 trigger_date=trigger, due_date=asset.expiry_date,
                 responsible_user_id=case.responsible_user_id, today=today,
+                allow_new_generation=("asset", asset.id) in changed_sources,
             )
             generated.append(row)
 
@@ -157,26 +218,24 @@ def scan_case_alerts(db: Session, case: LegalCase, today: date) -> list[LegalCas
                 cycle_key=judgment.performance_deadline.isoformat(),
                 trigger_date=judgment.performance_deadline, due_date=judgment.performance_deadline,
                 responsible_user_id=case.responsible_user_id, today=today,
+                allow_new_generation=("judgment", judgment.id) in changed_sources,
             )
             generated.append(row)
 
     for deadline in case.deadlines:
         if deadline.deleted_at is not None or deadline.is_completed: continue
-        if deadline.deadline_type == LegalDeadlineType.HEARING:
-            alert_type, default_days = LegalAlertType.HEARING, 45
-        else:
-            alert_type, default_days = LegalAlertType.PAYMENT_MATERIAL, 7
+        alert_type, default_days = _deadline_alert_rule(deadline.deadline_type)
         days = deadline.reminder_days if deadline.reminder_days is not None else default_days
         trigger = deadline.event_date - timedelta(days=days)
-        if today >= trigger:
-            row, _ = _ensure_alert(
-                db, case=case, source_type="deadline", source_id=deadline.id,
-                alert_type=alert_type, cycle_key=deadline.event_date.isoformat(),
-                trigger_date=trigger, due_date=deadline.event_date,
-                responsible_user_id=deadline.responsible_user_id or case.responsible_user_id,
-                today=today,
-            )
-            generated.append(row)
+        row, _ = _ensure_alert(
+            db, case=case, source_type="deadline", source_id=deadline.id,
+            alert_type=alert_type, cycle_key=deadline.event_date.isoformat(),
+            trigger_date=trigger, due_date=deadline.event_date,
+            responsible_user_id=deadline.responsible_user_id or case.responsible_user_id,
+            today=today,
+            allow_new_generation=("deadline", deadline.id) in changed_sources,
+        )
+        generated.append(row)
 
     if case.status == LegalCaseStatus.TERMINAL:
         month_start = today.replace(day=1)
@@ -186,6 +245,7 @@ def scan_case_alerts(db: Session, case: LegalCase, today: date) -> list[LegalCas
             alert_type=LegalAlertType.TERMINAL_MONITORING,
             cycle_key=f"{today.year:04d}-{today.month:02d}", trigger_date=trigger,
             due_date=trigger, responsible_user_id=case.responsible_user_id, today=today,
+            allow_new_generation=("case", case.id) in changed_sources,
         )
         generated.append(row)
     return generated
@@ -252,6 +312,21 @@ def scan_alerts(db: Session, today: date | None = None) -> AlertScanResult:
     return AlertScanResult(len(cases), len(after_ids - before_ids), deliveries)
 
 
+def sync_case_alerts(
+    db: Session,
+    case: LegalCase,
+    today: date | None = None,
+) -> list[LegalCaseAlert]:
+    db.info.setdefault("legal_alert_case_ids", set()).add(case.id)
+    db.flush()
+    db.expire(case, ["assets", "judgments", "recoveries", "deadlines"])
+    current = today or legal_today()
+    alerts = scan_case_alerts(db, case, current)
+    for alert in alerts:
+        ensure_due_deliveries(db, alert, current)
+    return alerts
+
+
 def complete_source_alerts(db: Session, source_type: str, source_id: int, result: str) -> None:
     rows = db.scalars(select(LegalCaseAlert).where(
         LegalCaseAlert.source_type == source_type,
@@ -261,6 +336,19 @@ def complete_source_alerts(db: Session, source_type: str, source_id: int, result
     for row in rows:
         row.status = LegalAlertStatus.COMPLETED
         row.result = result
+        row.completed_at = legal_now()
+
+
+def close_source_alerts(db: Session, source_type: str, source_id: int, reason: str) -> None:
+    rows = db.scalars(select(LegalCaseAlert).where(
+        LegalCaseAlert.source_type == source_type,
+        LegalCaseAlert.source_id == source_id,
+        LegalCaseAlert.status.in_(ACTIVE_ALERT_STATUSES),
+    )).all()
+    for row in rows:
+        row.status = LegalAlertStatus.CLOSED
+        row.result = reason
+        row.closed_reason = reason
         row.completed_at = legal_now()
 
 

@@ -46,7 +46,7 @@ class LegalCaseBase(BaseModel):
 
 
 class LegalCaseCreate(LegalCaseBase):
-    pass
+    responsible_user_name: str | None = Field(default=None, max_length=64, exclude=True)
 
 
 class LegalCaseUpdate(BaseModel):
@@ -57,6 +57,7 @@ class LegalCaseUpdate(BaseModel):
     court_case_no: str | None = None
     subject_amount: Decimal | None = Field(default=None, ge=0)
     responsible_user_id: int | None = None
+    responsible_user_name: str | None = Field(default=None, max_length=64, exclude=True)
     confidentiality_level: str | None = None
     law_firm: str | None = None
     attorney_name: str | None = None
@@ -127,14 +128,18 @@ class LegalPartyOut(LegalPartyIn):
 
 
 class LegalCollaboratorIn(BaseModel):
-    user_id: int
+    user_id: int | None = None
+    user_name: str | None = Field(default=None, max_length=64, exclude=True)
     collaborator_type: LegalCollaboratorType
     expires_at: datetime | None = None
 
 
-class LegalCollaboratorOut(LegalCollaboratorIn):
+class LegalCollaboratorOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    user_id: int
+    collaborator_type: LegalCollaboratorType
+    expires_at: datetime | None = None
     effective_at: datetime
 
 

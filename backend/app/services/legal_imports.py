@@ -35,6 +35,7 @@ from app.models.legal_risk import (
 )
 from app.models.user import User
 from app.services.legal_cases import next_case_no, record_activity, set_current_enforcement_basis
+from app.services.legal_alerts import sync_case_alerts
 from app.services.legal_clock import legal_now
 from app.services.permissions import get_company_role
 
@@ -42,7 +43,7 @@ TEMPLATE_VERSION = "legal-case-v1"
 SHEET_HEADERS = {
     "案件基本信息": ["外部案件编号", "案件名称", "主状态", "案由", "受理法院", "法院案号", "标的额", "负责人用户ID", "案情简介", "诉讼请求"],
     "当事人": ["外部案件编号", "当事人类型", "名称", "身份类型", "证件或统一社会信用代码", "联系方式", "地址"],
-    "裁判结果": ["外部案件编号", "类型", "摘要", "裁判或达成日期", "生效日期", "履行期限", "可执行金额", "当前执行依据"],
+    "裁判结果": ["外部案件编号", "类型", "摘要", "裁判或达成日期", "生效日期", "履行期限", "判决金额", "当前执行依据"],
     "查扣冻资产": ["外部案件编号", "资产类型", "资产名称或位置", "措施类型", "顺位", "开始日期", "到期日期", "提前天数", "处置状态", "说明"],
     "清回止损": ["外部案件编号", "记录类型", "日期", "金额", "来源说明"],
     "进展风险": ["外部案件编号", "记录类型", "内容", "风险点", "下一步计划", "责任人用户ID", "计划完成日"],
@@ -63,13 +64,15 @@ PARTY_VALUES = {"原告": LegalPartyType.PLAINTIFF, "被告": LegalPartyType.DEF
                 **{item.value: item for item in LegalPartyType}}
 JUDGMENT_VALUES = {"一审": LegalJudgmentType.FIRST_INSTANCE, "二审": LegalJudgmentType.SECOND_INSTANCE,
                    "再审": LegalJudgmentType.RETRIAL, "调解": LegalJudgmentType.MEDIATION,
-                   "和解": LegalJudgmentType.SETTLEMENT, **{item.value: item for item in LegalJudgmentType}}
+                   "和解": LegalJudgmentType.SETTLEMENT, "执行": LegalJudgmentType.EXECUTION,
+                   "其他": LegalJudgmentType.OTHER, **{item.value: item for item in LegalJudgmentType}}
 RECOVERY_VALUES = {"回款": LegalRecoveryType.RECOVERY, "避免损失": LegalRecoveryType.AVOIDED_LOSS,
                    **{item.value: item for item in LegalRecoveryType}}
 PROGRESS_VALUES = {"进展": LegalProgressType.PROGRESS, "法律意见": LegalProgressType.LEGAL_OPINION,
                    **{item.value: item for item in LegalProgressType}}
 DEADLINE_VALUES = {"开庭": LegalDeadlineType.HEARING, "缴费/材料": LegalDeadlineType.PAYMENT_MATERIAL,
-                   "自定义": LegalDeadlineType.CUSTOM, **{item.value: item for item in LegalDeadlineType}}
+                   "其他期限": LegalDeadlineType.CUSTOM, "自定义": LegalDeadlineType.CUSTOM,
+                   **{item.value: item for item in LegalDeadlineType}}
 
 
 def build_import_template() -> BytesIO:
@@ -88,9 +91,10 @@ def build_import_template() -> BytesIO:
     instructions.append(["模板版本", TEMPLATE_VERSION])
     instructions.append(["关联规则", "所有子表通过外部案件编号关联案件基本信息；附件请在案件导入后上传。"])
     instructions.append(["主状态", "审查立案、审理中、已判决、执行中、终本、已结案"])
-    instructions.append(["裁判类型", "一审、二审、再审、调解、和解"])
+    instructions.append(["裁判类型", "一审、二审、再审、调解、和解、执行、其他"])
     instructions.append(["当事人类型", "原告、被告、第三人"])
     instructions.append(["记录类型", "回款、避免损失；进展、法律意见"])
+    instructions.append(["期限类型", "开庭、缴费/材料、其他期限"])
     buffer = BytesIO()
     workbook.save(buffer)
     buffer.seek(0)
@@ -115,8 +119,11 @@ def _date(value, label: str, errors: list[str]) -> str | None:
     try:
         return date.fromisoformat(text).isoformat()
     except ValueError:
-        errors.append(f"{label}必须为日期")
-        return None
+        try:
+            return datetime.fromisoformat(text).date().isoformat()
+        except ValueError:
+            errors.append(f"{label}必须为日期")
+            return None
 
 
 def _decimal(value, label: str, errors: list[str], *, required: bool = False) -> str | None:
@@ -218,7 +225,10 @@ def _validate_row(sheet_name: str, data: dict, known_keys: set[str], db: Session
             "judgment_date": _date(data.get("裁判或达成日期"), "裁判或达成日期", errors),
             "effective_date": _date(data.get("生效日期"), "生效日期", errors),
             "performance_deadline": _date(data.get("履行期限"), "履行期限", errors),
-            "executable_amount": _decimal(data.get("可执行金额"), "可执行金额", errors),
+            "executable_amount": _decimal(
+                data.get("判决金额") if data.get("判决金额") not in (None, "") else data.get("可执行金额"),
+                "判决金额", errors,
+            ),
             "is_current_enforcement_basis": normalize_text(data.get("当前执行依据")).lower() in {"是", "true", "1", "yes"},
         })
     elif sheet_name == "查扣冻资产":
@@ -415,6 +425,7 @@ def confirm_import(
                     responsible_user_id=item["responsible_user_id"]))
             row.imported_case_id = case.id
         if current_basis_id is not None: set_current_enforcement_basis(db, case.id, current_basis_id)
+        sync_case_alerts(db, case)
         record_activity(db, case.id, "import", actor, summary=f"导入批次 {batch.id}，外部编号 {external_id}")
         imported += 1
     batch.status = LegalImportStatus.IMPORTED

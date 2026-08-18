@@ -6,19 +6,25 @@ from types import SimpleNamespace
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.core.enums import Role
+from app.core.enums import CompanyCode, Role
 from app.db.base import Base
 from app.models.legal_risk import (
     LegalAlertDelivery,
     LegalAlertStatus,
+    LegalAlertType,
     LegalCase,
     LegalCaseAlert,
     LegalCaseAsset,
+    LegalCaseDeadline,
     LegalCaseStage,
     LegalCaseStatus,
+    LegalDeadlineType,
     LegalDeliveryStatus,
 )
+from app.models.portal import UserCompanyRole
 from app.models.user import User
+from app.schemas.legal_risk import LegalDeadlineIn
+from app.api.v1.endpoints.legal_risk import create_deadline, delete_detail
 from app.services.dingtalk import DeliveryResult
 from app.services.legal_alerts import dispatch_pending_deliveries, scan_alerts
 
@@ -35,6 +41,11 @@ class LegalAlertDatabaseTest(unittest.TestCase):
         )
         self.db.add(self.user)
         self.db.flush()
+        self.db.add(UserCompanyRole(
+            user_id=self.user.id,
+            company_code=CompanyCode.INVESTMENT.value,
+            role=Role.RISK_AUDITOR,
+        ))
         self.case = LegalCase(
             stage=LegalCaseStage.FORMAL, case_no="FL-2026-0001",
             case_name="预警数据库测试", cause_of_action="合同纠纷",
@@ -77,6 +88,98 @@ class LegalAlertDatabaseTest(unittest.TestCase):
         alerts = self.db.query(LegalCaseAlert).order_by(LegalCaseAlert.id).all()
         self.assertEqual(alerts[0].status, LegalAlertStatus.CLOSED)
         self.assertEqual(alerts[1].status, LegalAlertStatus.PENDING)
+
+    def test_future_custom_deadline_creates_task_without_delivery(self):
+        self.asset.deleted_at = datetime(2026, 8, 14, 8, 0, 0)
+        deadline = LegalCaseDeadline(
+            case_id=self.case.id,
+            deadline_type=LegalDeadlineType.CUSTOM,
+            title="补充专项材料",
+            event_date=date(2026, 12, 31),
+            reminder_days=7,
+        )
+        self.db.add(deadline)
+        self.db.commit()
+
+        result = scan_alerts(self.db, date(2026, 8, 14))
+        self.db.commit()
+
+        alert = self.db.query(LegalCaseAlert).filter_by(source_type="deadline").one()
+        self.assertEqual(alert.alert_type, LegalAlertType.CUSTOM)
+        self.assertEqual(result.alerts_created, 1)
+        self.assertEqual(result.deliveries_created, 0)
+
+    def test_deadline_endpoints_sync_alerts_immediately(self):
+        self.asset.deleted_at = datetime.now()
+        self.user.is_superuser = True
+        self.db.commit()
+
+        response = create_deadline(
+            self.case.id,
+            LegalDeadlineIn(
+                deadline_type=LegalDeadlineType.CUSTOM,
+                title="其他期限任务",
+                event_date=date(2026, 12, 31),
+                reminder_days=7,
+            ),
+            self.db,
+            self.user,
+        )
+        alert = self.db.query(LegalCaseAlert).filter_by(
+            source_type="deadline", source_id=response.data.id,
+        ).one()
+        self.assertEqual(alert.status, LegalAlertStatus.PENDING)
+        self.assertEqual(alert.alert_type, LegalAlertType.CUSTOM)
+
+        delete_detail(
+            self.case.id,
+            "deadlines",
+            response.data.id,
+            self.db,
+            self.user,
+        )
+        self.assertEqual(alert.status, LegalAlertStatus.CLOSED)
+        self.assertEqual(alert.closed_reason, "来源期限已删除")
+
+    def test_deadline_revert_after_intermediate_completion_creates_generation(self):
+        self.asset.deleted_at = datetime(2026, 8, 14, 8, 0, 0)
+        deadline = LegalCaseDeadline(
+            case_id=self.case.id,
+            deadline_type=LegalDeadlineType.CUSTOM,
+            title="补充专项材料",
+            event_date=date(2026, 12, 31),
+            reminder_days=7,
+        )
+        self.db.add(deadline)
+        self.db.commit()
+        scan_alerts(self.db, date(2026, 8, 14))
+        self.db.commit()
+        first = self.db.query(LegalCaseAlert).filter_by(source_type="deadline").one()
+
+        deadline.deadline_type = LegalDeadlineType.HEARING
+        deadline.event_date = date(2027, 1, 15)
+        scan_alerts(self.db, date(2026, 8, 15))
+        self.db.commit()
+        intermediate = self.db.query(LegalCaseAlert).filter_by(
+            source_type="deadline", status=LegalAlertStatus.PENDING,
+        ).one()
+        intermediate.status = LegalAlertStatus.COMPLETED
+        intermediate.result = "人工完成"
+        intermediate.completed_at = datetime(2026, 8, 15, 9, 0, 0)
+        self.db.commit()
+
+        deadline.deadline_type = LegalDeadlineType.CUSTOM
+        deadline.event_date = date(2026, 12, 31)
+        scan_alerts(self.db, date(2026, 8, 16))
+        self.db.commit()
+
+        reverted = self.db.query(LegalCaseAlert).filter_by(
+            source_type="deadline", status=LegalAlertStatus.PENDING,
+        ).one()
+        self.assertEqual(first.status, LegalAlertStatus.CLOSED)
+        self.assertEqual(intermediate.status, LegalAlertStatus.COMPLETED)
+        self.assertEqual(reverted.cycle_key, "2026-12-31")
+        self.assertEqual(reverted.generation, 2)
 
     def test_failed_dingtalk_delivery_uses_bounded_retry_schedule(self):
         scan_alerts(self.db, date(2026, 8, 14))

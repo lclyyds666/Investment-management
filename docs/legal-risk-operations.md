@@ -5,7 +5,7 @@
 ## 1. 固定业务口径
 
 - 案件主状态固定为：`审查立案`、`审理中`、`已判决`、`执行中`、`终本`、`已结案`。
-- 裁判/结果类型固定为：`一审`、`二审`、`再审`、`调解`、`和解`。
+- 裁判/结果类型固定为：`一审`、`二审`、`再审`、`调解`、`和解`、`执行`、`其他`。
 - 案件不维护风险等级，不统计“重大案件”。
 - 业务人员与法务风控人员拥有相同的法务业务权限。
 - 董事长、总经理、副总经理使用管理层只读权限，可查看案件、统计和管理报表。
@@ -20,9 +20,10 @@ mysqldump -u root -p sd_publish_scm > /opt/sd-scm/backups/legal-risk-before.sql
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_foundation.sql
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_domain.sql
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_hardening.sql
+mysql -u root -p sd_publish_scm < backend/migrations/20260818_legal_alert_generation.sql
 ```
 
-三个迁移均可重复执行。`foundation` 为用户补充手机号和钉钉提醒开关；`domain` 创建法务独立数据表；`hardening` 为已有法务数据域补充预警投递并发领取字段和索引。新环境也应按上述顺序完整执行。
+四个迁移均可重复执行。`foundation` 为用户补充手机号和钉钉提醒开关；`domain` 创建法务独立数据表；`hardening` 为已有法务数据域补充预警投递并发领取字段和索引；`legal_alert_generation` 允许期限日期改回历史值时生成新的活动预警。新环境也应按上述顺序完整执行。
 
 准备附件目录并限制访问权限：
 
@@ -65,7 +66,7 @@ systemctl list-timers 'sd-scm-legal-*'
 
 ## 4. 预警与处置
 
-系统扫描查冻扣到期、申请执行、开庭、缴费/材料期限和终本持续监控五类预警。修改来源日期时，旧预警会自动关闭并按新日期生成；重复扫描不会重复创建相同周期预警。
+系统扫描查冻扣到期、申请执行、开庭、缴费/材料期限、其他期限和终本持续监控六类预警。期限任务新增后立即进入预警任务列表，提醒窗口前不发送通知；修改来源日期或类型时，旧预警会自动关闭并按新周期生成；删除来源期限后关联预警自动关闭，重复扫描不会重复创建相同周期预警。
 
 手工检查命令：
 
@@ -94,7 +95,7 @@ journalctl -u sd-scm-legal-alert-scan.service -u sd-scm-legal-alert-retry.servic
 
 ## 6. 验收与回退
 
-上线后至少验证：六个固定状态、草稿转正式案件、八个明细页签、附件上传下载、五类预警、钉钉测试、统计导出、模板预检和权限矩阵。
+上线后至少验证：六个固定状态、草稿转正式案件、八个明细页签、附件上传下载、六类预警、钉钉测试、统计导出、模板预检和权限矩阵。
 
 出现严重故障时先停止定时器，避免继续生成投递：
 

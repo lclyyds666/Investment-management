@@ -78,6 +78,7 @@ from app.services.legal_cases import (
     get_case_or_403,
     record_activity,
     reserve_case_version,
+    resolve_investment_user_name,
     set_current_enforcement_basis,
     unarchive_case,
 )
@@ -92,11 +93,11 @@ from app.services.legal_attachments import (
 )
 from app.services.dingtalk import DingTalkClient
 from app.services.legal_alerts import (
+    close_source_alerts,
     complete_source_alerts,
     dispatch_pending_deliveries,
-    ensure_due_deliveries,
     scan_alerts,
-    scan_case_alerts,
+    sync_case_alerts,
 )
 from app.services.legal_permissions import (
     LegalCapability,
@@ -162,10 +163,13 @@ def _commit(db: Session) -> None:
 
 
 def _sync_case_alerts(db: Session, case: LegalCase) -> None:
-    db.info.setdefault("legal_alert_case_ids", set()).add(case.id)
-    today = legal_today()
-    for alert in scan_case_alerts(db, case, today):
-        ensure_due_deliveries(db, alert, today)
+    sync_case_alerts(db, case)
+
+
+def _apply_alert_status_filter(stmt, status: LegalAlertStatus | None):
+    if status is not None:
+        return stmt.where(LegalCaseAlert.status == status)
+    return stmt.where(LegalCaseAlert.status != LegalAlertStatus.CLOSED)
 
 
 def _pending_case_delivery_ids(db: Session, case_id: int) -> list[int]:
@@ -294,8 +298,12 @@ def create_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_legal_capability(LegalCapability.EDIT_CASE)),
 ):
+    data = payload.model_dump(exclude={"responsible_user_name"})
+    if "responsible_user_name" in payload.model_fields_set:
+        name = (payload.responsible_user_name or "").strip()
+        data["responsible_user_id"] = resolve_investment_user_name(db, name).id if name else None
     case = LegalCase(
-        **payload.model_dump(),
+        **data,
         stage=LegalCaseStage.DRAFT,
         status=None,
         created_by=current_user.id,
@@ -329,7 +337,13 @@ def update_case(
     context = access_context(db, current_user)
     case = get_case_or_403(db, case_id, context)
     ensure_writable(case)
-    data = payload.model_dump(exclude_unset=True, exclude={"version"})
+    data = payload.model_dump(
+        exclude_unset=True,
+        exclude={"version", "responsible_user_name"},
+    )
+    if "responsible_user_name" in payload.model_fields_set:
+        name = (payload.responsible_user_name or "").strip()
+        data["responsible_user_id"] = resolve_investment_user_name(db, name).id if name else None
     ensure_formal_case_fields(case, data)
     reserve_case_version(db, case, payload.version)
     for field, value in data.items():
@@ -487,11 +501,23 @@ def create_collaborator(
     current_user: User = Depends(require_legal_capability(LegalCapability.MANAGE_DETAIL)),
 ):
     case = _case_for_detail_write(db, case_id, current_user)
-    target = db.get(User, payload.user_id)
-    if target is None or not target.is_active:
-        raise HTTPException(status_code=422, detail="协同用户不存在或已停用")
+    if payload.user_name is not None:
+        name = payload.user_name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="请输入协同人员姓名")
+        target = resolve_investment_user_name(db, name)
+    elif payload.user_id is not None:
+        target = db.get(User, payload.user_id)
+        if target is None or not target.is_active:
+            raise HTTPException(status_code=422, detail="协同用户不存在或已停用")
+    else:
+        raise HTTPException(status_code=422, detail="请输入协同人员姓名")
     row = LegalCaseCollaborator(
-        case_id=case.id, assigned_by=current_user.id, **payload.model_dump()
+        case_id=case.id,
+        user_id=target.id,
+        collaborator_type=payload.collaborator_type,
+        expires_at=payload.expires_at,
+        assigned_by=current_user.id,
     )
     db.add(row); db.flush()
     record_activity(db, case.id, "assign_collaborator", current_user, object_type="collaborator", object_id=row.id)
@@ -765,6 +791,8 @@ def delete_detail(
     row = db.scalar(select(model).where(model.id == row_id, model.case_id == case.id, model.deleted_at.is_(None)))
     if row is None: raise HTTPException(status_code=404, detail="明细不存在")
     row.deleted_at = legal_now()
+    if detail_type == "deadlines":
+        close_source_alerts(db, "deadline", row_id, "来源期限已删除")
     _sync_case_alerts(db, case)
     record_activity(db, case.id, f"delete_{detail_type}", current_user, object_type=detail_type, object_id=row_id)
     _commit(db)
@@ -939,7 +967,7 @@ def list_alerts(
         LegalCase.deleted_at.is_(None),
         accessible_case_predicate(context),
     )
-    if status is not None: stmt = stmt.where(LegalCaseAlert.status == status)
+    stmt = _apply_alert_status_filter(stmt, status)
     if alert_type: stmt = stmt.where(LegalCaseAlert.alert_type == alert_type)
     if level: stmt = stmt.where(LegalCaseAlert.level == level)
     if responsible_user_id is not None:

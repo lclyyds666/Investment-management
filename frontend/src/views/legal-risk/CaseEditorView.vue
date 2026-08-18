@@ -19,10 +19,10 @@
       </section>
 
       <section class="form-section">
-        <h2>金额与承办</h2>
+        <h2>诉讼标的额</h2>
         <div class="form-grid">
           <el-form-item label="标的额（元）" prop="subject_amount"><el-input-number v-model="form.subject_amount" :min="0" :precision="2" :controls="false" /></el-form-item>
-          <el-form-item label="案件负责人"><el-select v-model="form.responsible_user_id" clearable filterable placeholder="可稍后配置"><el-option v-for="user in users" :key="user.id" :label="user.name" :value="user.id" /></el-select></el-form-item>
+          <el-form-item label="案件负责人"><el-input v-model="form.responsible_user_name" clearable maxlength="64" placeholder="请输入与账号姓名一致的姓名" @input="responsibleNameDirty = true" /></el-form-item>
           <el-form-item label="律师事务所"><el-input v-model="form.law_firm" /></el-form-item>
           <el-form-item label="承办律师"><el-input v-model="form.attorney_name" /></el-form-item>
         </div>
@@ -59,6 +59,7 @@ import { ArrowLeft, Check } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { createCase, getCase, listLegalUserOptions, updateCase } from '@/api/legalRisk'
+import { responsibleUserPatch } from '@/utils/legalCaseForm'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,10 +68,11 @@ const loading = ref(false)
 const saving = ref(false)
 const caseData = reactive({})
 const users = ref([])
+const responsibleNameDirty = ref(false)
 const isEdit = computed(() => Boolean(route.params.caseId))
 const form = reactive({
   case_name: '', cause_of_action: '', court: '', court_case_no: '', subject_amount: 0,
-  responsible_user_id: null, confidentiality_level: 'internal', law_firm: '', attorney_name: '',
+  responsible_user_name: '', confidentiality_level: 'internal', law_firm: '', attorney_name: '',
   case_summary: '', claims: '', enforcement_property_status: '', closed_date: null, closure_summary: ''
 })
 const rules = { case_name: [{ required: true, message: '请输入案件名称', trigger: 'blur' }] }
@@ -83,6 +85,10 @@ onMounted(async () => {
     const data = await getCase(route.params.caseId)
     Object.assign(caseData, data)
     Object.keys(form).forEach((key) => { form[key] = data[key] ?? form[key] })
+    form.responsible_user_name = data.responsible_user_name || users.value.find(
+      (user) => Number(user.id) === Number(data.responsible_user_id)
+    )?.name || ''
+    responsibleNameDirty.value = false
   } finally { loading.value = false }
 })
 
@@ -91,6 +97,12 @@ async function save() {
   saving.value = true
   try {
     const payload = { ...form }
+    delete payload.responsible_user_name
+    Object.assign(payload, responsibleUserPatch({
+      isEdit: isEdit.value,
+      dirty: responsibleNameDirty.value,
+      name: form.responsible_user_name
+    }))
     if (!isEdit.value) {
       delete payload.closed_date
       delete payload.closure_summary

@@ -83,7 +83,7 @@
           <el-table-column prop="summary" label="结果摘要" min-width="240" show-overflow-tooltip />
           <el-table-column prop="judgment_date" label="裁判日期" width="110" />
           <el-table-column prop="performance_deadline" label="履行期限" width="110" />
-          <el-table-column label="执行金额" width="140" align="right"><template #default="{ row }">{{ money(row.executable_amount) }}</template></el-table-column>
+          <el-table-column label="判决金额" width="140" align="right"><template #default="{ row }">{{ money(row.executable_amount) }}</template></el-table-column>
           <el-table-column label="当前执行依据" width="120"><template #default="{ row }"><el-tag v-if="row.is_current_enforcement_basis" type="success">是</el-tag><span v-else>-</span></template></el-table-column>
           <el-table-column v-if="canManage && !readonly" label="操作" width="120"><template #default="{ row }"><el-button link type="primary" @click="openDialog('judgment', row)">编辑</el-button><el-button link type="danger" @click="removeDetail('judgments', row)">删除</el-button></template></el-table-column>
         </el-table>
@@ -173,7 +173,7 @@
           <el-form-item label="地址"><el-input v-model="entryDialog.form.address" /></el-form-item>
         </template>
         <template v-else-if="entryDialog.type === 'collaborator'">
-          <el-form-item label="协同人员" required><el-select v-model="entryDialog.form.user_id" filterable><el-option v-for="user in users" :key="user.id" :label="`${user.name}（${roleLabel(user.role)}）`" :value="user.id" /></el-select></el-form-item>
+          <el-form-item label="协同人员" required><el-input v-model="entryDialog.form.user_name" clearable maxlength="64" placeholder="请输入与账号姓名一致的姓名" /></el-form-item>
           <el-form-item label="协同类型"><el-select v-model="entryDialog.form.collaborator_type"><el-option label="协同人员" value="collaborator" /><el-option label="外聘法律顾问" value="legal_counsel" /></el-select></el-form-item>
           <el-form-item label="授权到期时间"><el-date-picker v-model="entryDialog.form.expires_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
         </template>
@@ -181,7 +181,7 @@
           <el-form-item label="裁判/结果类型" required><el-select v-model="entryDialog.form.judgment_type"><el-option v-for="item in JUDGMENT_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
           <el-form-item label="结果摘要"><el-input v-model="entryDialog.form.summary" type="textarea" :rows="4" /></el-form-item>
           <div class="dialog-grid"><el-form-item label="裁判日期"><el-date-picker v-model="entryDialog.form.judgment_date" value-format="YYYY-MM-DD" /></el-form-item><el-form-item label="生效日期"><el-date-picker v-model="entryDialog.form.effective_date" value-format="YYYY-MM-DD" /></el-form-item></div>
-          <div class="dialog-grid"><el-form-item label="履行期限"><el-date-picker v-model="entryDialog.form.performance_deadline" value-format="YYYY-MM-DD" /></el-form-item><el-form-item label="可执行金额"><el-input-number v-model="entryDialog.form.executable_amount" :min="0" :precision="2" :controls="false" /></el-form-item></div>
+          <div class="dialog-grid"><el-form-item label="履行期限"><el-date-picker v-model="entryDialog.form.performance_deadline" value-format="YYYY-MM-DD" /></el-form-item><el-form-item label="判决金额"><el-input-number v-model="entryDialog.form.executable_amount" :min="0" :precision="2" :controls="false" /></el-form-item></div>
           <el-checkbox v-model="entryDialog.form.is_current_enforcement_basis">设为当前执行依据</el-checkbox>
         </template>
         <template v-else-if="entryDialog.type === 'asset'">
@@ -320,7 +320,7 @@ async function load() {
 function defaultForm(type) {
   const defaults = {
     party: { party_type: 'plaintiff', name: '', identity_type: 'organization', identity_no: '', contact: '', address: '', sort_order: 0 },
-    collaborator: { user_id: null, collaborator_type: 'collaborator', expires_at: null },
+    collaborator: { user_name: '', collaborator_type: 'collaborator', expires_at: null },
     judgment: { judgment_type: 'first_instance', summary: '', judgment_date: null, effective_date: null, performance_deadline: null, executable_amount: null, is_current_enforcement_basis: false, sort_order: 0 },
     asset: { asset_type: '', asset_name: '', measure_type: '', priority_type: '', start_date: null, expiry_date: null, reminder_days: 30, disposal_status: '', notes: '' },
     recovery: { recovery_type: 'recovery', recovery_date: new Date().toISOString().slice(0, 10), amount: null, source_description: '' },
@@ -346,7 +346,7 @@ function openDialog(type, row = null) {
 function validateEntry() {
   const f = entryDialog.form
   const ok = {
-    party: f.name, collaborator: f.user_id, judgment: f.judgment_type,
+    party: f.name, collaborator: f.user_name?.trim(), judgment: f.judgment_type,
     asset: f.asset_type && f.asset_name && f.measure_type,
     recovery: f.recovery_date && Number(f.amount) > 0,
     progress: f.content, deadline: f.title && f.event_date, attachment: f.file
@@ -367,7 +367,10 @@ async function submitEntry() {
     } else if (entryDialog.rowId) {
       await updateFuncs[entryDialog.type](caseId, entryDialog.rowId, entryDialog.form)
     } else {
-      await createFuncs[entryDialog.type](caseId, entryDialog.form)
+      const payload = entryDialog.type === 'collaborator'
+        ? { ...entryDialog.form, user_name: entryDialog.form.user_name.trim() }
+        : entryDialog.form
+      await createFuncs[entryDialog.type](caseId, payload)
     }
     entryDialog.visible = false
     ElMessage.success('记录已保存')
