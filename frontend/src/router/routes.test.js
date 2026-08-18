@@ -82,6 +82,14 @@ describe('unified portal routes', () => {
     expect(router.resolve({ name: 'LegalRiskUsers' }).meta.requiresSuperuser).toBe(true)
   })
 
+  it('registers contract management for the legal-risk workspace', () => {
+    const route = router.resolve({ name: 'LegalRiskContracts' })
+
+    expect(route.path).toBe('/investment/legal-risk/contracts')
+    expect(route.meta.resource).toBe('invest.legal.cases')
+    expect(route.meta.permission).toBe('supply.contract.view')
+  })
+
   it.each(supplyRoutes)(
     'mounts %s under the supply namespace with authoritative metadata',
     (name, path, resource) => {

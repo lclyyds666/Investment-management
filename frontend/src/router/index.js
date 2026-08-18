@@ -67,6 +67,17 @@ const routes = [
         }
       },
       {
+        path: 'legal-risk/contracts',
+        name: 'LegalRiskContracts',
+        component: () => import('@/views/contract/index.vue'),
+        meta: {
+          title: '合同管理',
+          company: COMPANY_CODES.INVESTMENT,
+          resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
+          permission: 'supply.contract.view'
+        }
+      },
+      {
         path: 'legal-risk/cases/new',
         name: 'LegalRiskCaseCreate',
         component: () => import('@/views/legal-risk/CaseEditorView.vue'),

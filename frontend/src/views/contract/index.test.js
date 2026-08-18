@@ -171,3 +171,24 @@ describe('contract active-task actions', () => {
     expect(contractApi.approveContract).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('contract AI review output', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    contractApi.listContracts.mockResolvedValue([])
+  })
+
+  it('renders AI markdown without executable or link markup', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.aiResult = {
+      markdown: '**风险提示** <img src=x onerror=alert(1)> [恶意链接](https://evil.example)'
+    }
+    await wrapper.vm.$nextTick()
+
+    const html = wrapper.find('.md-body').html()
+    expect(html).toContain('风险提示')
+    expect(html).toContain('<strong>风险提示</strong>')
+    expect(html).not.toMatch(/<img|onerror|href=/i)
+  })
+})

@@ -312,12 +312,12 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download, MagicStick, Collection, CopyDocument } from '@element-plus/icons-vue'
-import { marked } from 'marked'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { STATUS_META } from '@/constants/business'
 import { canUsePermission } from '@/utils/businessAuthorization'
+import { renderSafeMarkdown } from '@/utils/safeMarkdown'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import ContractDetailDrawer from '@/components/ContractDetailDrawer.vue'
 import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFields.vue'
@@ -671,7 +671,7 @@ const aiVisible = ref(false)
 const aiLoading = ref(false)
 const aiResult = ref(null)
 const aiCurrent = ref(null)
-const aiHtml = computed(() => (aiResult.value ? marked.parse(aiResult.value.markdown || '') : ''))
+const aiHtml = computed(() => renderSafeMarkdown(aiResult.value?.markdown || ''))
 function openAiReview(row) {
   aiCurrent.value = row
   aiResult.value = null
