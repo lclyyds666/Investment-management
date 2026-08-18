@@ -48,11 +48,29 @@ _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 router = APIRouter()
 
 _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
-_view_guard = require_permission("supply.contract.view", _supply_context)
+
+
+def _contract_permission_guard(permission_code: str):
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        context = PermissionContext(
+            company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
+            assigned_user_id=current_user.id,
+        )
+        if not has_permission(db, current_user, permission_code, context):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        return current_user
+
+    return checker
+
+
+_view_guard = _contract_permission_guard("supply.contract.view")
 _create_guard = require_permission("supply.contract.create", _supply_context)
 _update_guard = require_permission("supply.contract.update", _supply_context)
 _submit_guard = require_permission("supply.contract.submit", _supply_context)
-_export_guard = require_permission("supply.contract.export", _supply_context)
+_export_guard = _contract_permission_guard("supply.contract.export")
 
 # 合同附件允许的扩展名（与前端 accept 对齐）
 _ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
@@ -508,9 +526,10 @@ _contract_dl_guard = _export_guard
 def download_attachment(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(_contract_dl_guard),
+    current_user: User = Depends(_contract_dl_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     if not contract.attachment_stored:
         raise HTTPException(status_code=404, detail="该合同暂无附件")
     path = _attachment_dir(contract_id) / contract.attachment_stored
@@ -526,9 +545,10 @@ def download_attachment(
 def download_legal_doc(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(_contract_dl_guard),
+    current_user: User = Depends(_contract_dl_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     creator = _names_map(db, {contract.created_by}).get(contract.created_by, "")
 
     approvals = db.scalars(
@@ -604,9 +624,10 @@ def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
 def ai_review_contract(
     contract_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(_view_guard),
+    current_user: User = Depends(_view_guard),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     contract_text, has_attachment = _contract_text_for_review(contract)
     kb_text, kb_titles = review_svc.aggregate_kb_text(db)
     result = review_svc.review(contract_text, kb_text)

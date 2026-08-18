@@ -1,7 +1,7 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -23,7 +23,9 @@ from app.api.v1.endpoints.contract import (
 from app.api.v1.endpoints.user import create_user, delete_user, update_user
 from app.core.enums import (
     AssignmentStatus, CompanyCode, ContractStatus, DataScope, PermissionAction,
-    PositionCategory, ResourceCode, Role,
+    PositionCategory, ResourceCode, Role, WorkflowAssigneeMode,
+    WorkflowInstanceStatus, WorkflowTargetType, WorkflowTaskStatus,
+    WorkflowVersionStatus,
 )
 from app.db.base import Base
 from app.models.organization import (
@@ -37,6 +39,7 @@ from app.models.invoice import Invoice
 from app.models.operation import OperationData
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
+from app.models.workflow import WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion
 from app.schemas.user import UserCreate, UserOut, UserUpdate
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.permissions import (
@@ -642,6 +645,98 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             {item["contract_no"] for item in response.json()["data"]},
             {"OWN", "OTHER"},
         )
+
+    def test_assigned_contract_scope_covers_review_and_download_endpoints(self):
+        self._add_current_user()
+        self.current_user.role = Role.LEGAL_COUNSEL
+        counsel_position = self.db.scalar(
+            select(Position).where(Position.code == "external.legal_counsel")
+        )
+        self.db.add(UserAssignment(
+            user_id=self.current_user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == "external.legal")
+            ),
+            position_id=counsel_position.id,
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        self.db.add(PositionPermission(
+            position_id=counsel_position.id,
+            permission_id=self.db.scalar(
+                select(Permission.id).where(Permission.code == "supply.contract.export")
+            ),
+            data_scope=DataScope.ASSIGNED,
+            scope_ref="",
+        ))
+        hidden = Contract(contract_no="HIDDEN", title="Hidden", created_by=self.current_user.id)
+        assigned = Contract(contract_no="ASSIGNED", title="Assigned", created_by=self.current_user.id)
+        self.db.add_all([hidden, assigned])
+        self.db.flush()
+
+        definition = WorkflowDefinition(
+            code="test.contract.scope", name="Contract scope", target_type=WorkflowTargetType.CONTRACT
+        )
+        self.db.add(definition)
+        self.db.flush()
+        version = WorkflowVersion(
+            definition_id=definition.id, version=1, status=WorkflowVersionStatus.DRAFT
+        )
+        self.db.add(version)
+        self.db.flush()
+        node = WorkflowNode(
+            version_id=version.id,
+            sequence=1,
+            code="legal",
+            name="Legal counsel",
+            position_code="external.legal_counsel",
+            assignee_mode=WorkflowAssigneeMode.DESIGNATED_USER,
+        )
+        self.db.add(node)
+        self.db.flush()
+        instance = WorkflowInstance(
+            definition_id=definition.id,
+            version_id=version.id,
+            target_type=WorkflowTargetType.CONTRACT,
+            target_id=assigned.id,
+            status=WorkflowInstanceStatus.ACTIVE,
+            submitted_by=self.current_user.id,
+            submitted_at=datetime(2026, 8, 18),
+        )
+        self.db.add(instance)
+        self.db.flush()
+        self.db.add(WorkflowTask(
+            instance_id=instance.id,
+            node_id=node.id,
+            sequence=1,
+            status=WorkflowTaskStatus.PENDING,
+            required_position_code="external.legal_counsel",
+            assignee_mode=WorkflowAssigneeMode.DESIGNATED_USER,
+            designated_user_id=self.current_user.id,
+        ))
+        self.db.commit()
+
+        for method, suffix in (
+            ("POST", "ai-review"),
+            ("GET", "attachment"),
+            ("GET", "legal-doc"),
+        ):
+            with self.subTest(contract="hidden", endpoint=suffix):
+                response = self.client.request(method, f"/api/v1/contracts/{hidden.id}/{suffix}")
+                self.assertEqual(response.status_code, 403, response.text)
+
+        with self.subTest(contract="assigned", endpoint="attachment"):
+            response = self.client.get(f"/api/v1/contracts/{assigned.id}/attachment")
+            self.assertEqual(response.status_code, 404, response.text)
+        with patch(
+            "app.api.v1.endpoints.contract.review_svc.review",
+            return_value={"markdown": "Review", "engine": "test"},
+        ):
+            response = self.client.post(f"/api/v1/contracts/{assigned.id}/ai-review")
+        self.assertEqual(response.status_code, 200, response.text)
+        with self.subTest(contract="assigned", endpoint="legal-doc"):
+            response = self.client.get(f"/api/v1/contracts/{assigned.id}/legal-doc")
+            self.assertEqual(response.status_code, 200, response.text)
 
     def test_superuser_without_business_assignment_has_zero_pending_tasks(self):
         user = User(
