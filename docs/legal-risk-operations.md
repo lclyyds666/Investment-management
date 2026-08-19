@@ -41,6 +41,28 @@ DINGTALK_LEGAL_ALERT_SECRET=SEC实际加签密钥
 LEGAL_ALERT_TIMEZONE=Asia/Shanghai
 ```
 
+合同 AI 审查和生产钉钉预警还需要在服务器本地 `.env` 中补充以下配置示例。以下值均为占位符，请由运维人员通过安全渠道填入实际值，严禁提交到 Git、构建产物或日志：
+
+```dotenv
+DEEPSEEK_API_KEY=实际密钥
+DINGTALK_LEGAL_ALERT_ENABLED=true
+DINGTALK_LEGAL_ALERT_WEBHOOK=实际Webhook
+DINGTALK_LEGAL_ALERT_SECRET=实际Secret
+```
+
+部署前先备份数据库、上传文件和环境文件；至少覆盖以下路径（按实际部署目录替换 `/opt/sd-scm`）：
+
+```bash
+backup_dir="/opt/sd-scm/backups/legal-contract-$(date +%Y%m%d%H%M%S)"
+mkdir -p "$backup_dir"
+cp -a /opt/sd-scm/backend/uploads/contract_* "$backup_dir/" 2>/dev/null || true
+cp -a /opt/sd-scm/backend/uploads/knowledge_base "$backup_dir/"
+cp -a /opt/sd-scm/backend/uploads/legal-risk "$backup_dir/"
+cp -a /opt/sd-scm/backend/.env "$backup_dir/.env"
+```
+
+备份目录需限制为仅服务账号和运维管理员可读。
+
 复制并启用定时任务：
 
 ```bash
@@ -104,3 +126,19 @@ systemctl disable --now sd-scm-legal-alert-scan.timer sd-scm-legal-alert-retry.t
 ```
 
 然后回退应用版本并恢复数据库/附件备份。不要直接删除法务表；需要保留审计、导入批次和投递历史用于追溯。
+
+## 7. 合同 AI 与生产验收
+
+完成部署后按以下顺序验收，并保存脱敏后的命令输出：
+
+1. 登录具有 `invest.legal.cases` 资源和 `supply.contract.view` 权限的账号，访问法务合同路由 `/investment/legal-risk/contracts`；确认合同列表、详情和权限控制均可用。
+2. 使用现有合同发起一次 AI 审查，检查接口响应中的 `engine=deepseek`（或等价 JSON 字段 `engine: "deepseek"`），不得在输出中打印 API Key。
+3. 在后端环境中调用 `DingTalkClient.send_test`，确认返回 `status=sent`；若返回 `channel_unconfigured` 或签名错误，检查开关、Webhook、Secret 和服务器时钟后重试。
+4. 检查服务健康和定时器状态：
+
+   ```bash
+   curl -fsS http://127.0.0.1/api/v1/health
+   systemctl is-active sd-scm-backend nginx sd-scm-legal-alert-scan.timer sd-scm-legal-alert-retry.timer
+   ```
+
+5. 验收通过后核对当前 `REVISION` 与发布的 `main` 版本一致；任一步失败时先按本页回退步骤停用定时器，再恢复应用、数据库和上述上传目录备份。
