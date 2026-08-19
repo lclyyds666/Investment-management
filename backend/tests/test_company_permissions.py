@@ -1,5 +1,7 @@
+import tempfile
 import unittest
 from datetime import date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -36,6 +38,7 @@ from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
 from app.models.customer import Customer
 from app.models.invoice import Invoice
+from app.models.knowledge import KnowledgeDoc
 from app.models.operation import OperationData
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
@@ -737,6 +740,38 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         with self.subTest(contract="assigned", endpoint="legal-doc"):
             response = self.client.get(f"/api/v1/contracts/{assigned.id}/legal-doc")
             self.assertEqual(response.status_code, 200, response.text)
+
+    def test_assigned_counsel_can_read_shared_knowledge_library_only(self):
+        self._add_current_user()
+        self.current_user.role = Role.LEGAL_COUNSEL
+        self._set_permission("supply.contract.view", DataScope.ASSIGNED, "")
+        doc = KnowledgeDoc(
+            title="法规依据",
+            category="法律规范",
+            filename="assigned-counsel.txt",
+            stored_name="assigned-counsel.txt",
+            file_type="txt",
+            char_count=4,
+            content="测试法规",
+            uploaded_by="admin",
+        )
+        self.db.add(doc)
+        self.db.commit()
+
+        with tempfile.TemporaryDirectory() as upload_dir:
+            knowledge_dir = Path(upload_dir) / "knowledge_base"
+            knowledge_dir.mkdir()
+            (knowledge_dir / doc.stored_name).write_text("法规原件", encoding="utf-8")
+            with patch("app.api.v1.endpoints.knowledge.settings.UPLOAD_DIR", upload_dir):
+                listed = self.client.get("/api/v1/knowledge")
+                downloaded = self.client.get(f"/api/v1/knowledge/{doc.id}/download")
+
+            self.assertEqual(listed.status_code, 200, listed.text)
+            self.assertEqual([item["id"] for item in listed.json()["data"]], [doc.id])
+            self.assertEqual(downloaded.status_code, 200, downloaded.text)
+            self.assertEqual(downloaded.content, "法规原件".encode())
+
+        self.assertEqual(self.client.delete(f"/api/v1/knowledge/{doc.id}").status_code, 403)
 
     def test_superuser_without_business_assignment_has_zero_pending_tasks(self):
         user = User(
