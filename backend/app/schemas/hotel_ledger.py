@@ -10,6 +10,7 @@ class ParsedPlatform(BaseModel):
     """单平台解析结果（上传即算，不落库）。"""
 
     platform: str = ""
+    hotel_name: str = ""
     room_nights: int = 0
     order_count: int = 0
     positive_count: int = 0                        # 结算/实收为正数的订单数(核销率分子)

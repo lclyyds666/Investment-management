@@ -42,6 +42,8 @@ DEFAULT_COMMISSION_RATE = CALC_DEFAULT_COMMISSION_RATE  # 抖音服务商佣金�
 
 # 平台识别（按 sheet 标题前缀）
 PLATFORMS = ("抖音", "美团", "携程")
+HOTEL_BRANDS = ("海洋", "骑士", "长颈鹿")
+BRANDED_PLATFORM_ORDER = ("携程", "美团", "抖音")
 
 # 列别名（跨期/跨平台容错）
 COL_DY_SHISHOU = {"订单实收金额"}
@@ -107,12 +109,15 @@ def _idx(header: list, names: set[str]) -> int:
     return -1
 
 
+def _hotel_brand_of(title: str) -> str:
+    return next((brand for brand in HOTEL_BRANDS if (title or "").startswith(brand)), "")
+
+
 def _platform_of(title: str) -> str | None:
-    t = title or ""
-    for p in PLATFORMS:
-        if t.startswith(p) or p in t[:4]:
-            return p
-    return None
+    brand = _hotel_brand_of(title)
+    candidate = (title or "")[len(brand):] if brand else (title or "")
+    return next((platform for platform in PLATFORMS
+                 if candidate.startswith(platform) or platform in candidate[:4]), None)
 
 
 def _year_from_filename(filename: str) -> int | None:
@@ -286,7 +291,7 @@ def parse_hotel_file(
     """解析一份酒店对账明细，按平台聚合。**按日期分组 → 逐日计算舍入 → 累加**。"""
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
     year = _year_from_filename(filename)
-    agg: dict[str, dict] = {}
+    agg: dict[tuple[str, str], dict] = {}
     warnings: list[str] = []
 
     try:
@@ -294,9 +299,11 @@ def parse_hotel_file(
             plat = _platform_of(ws.title)
             if plat is None:
                 continue
+            hotel_name = _hotel_brand_of(ws.title)
             header, rows = _header_row(ws.iter_rows(values_only=True))
-            d = agg.setdefault(plat, {
-                "platform": plat, "room_nights": 0, "order_count": 0, "positive_count": 0,
+            d = agg.setdefault((hotel_name, plat), {
+                "hotel_name": hotel_name, "platform": plat,
+                "room_nights": 0, "order_count": 0, "positive_count": 0,
                 "base_received": Decimal("0"), "daily": {}, "pstart": None, "pend": None,
             })
             s0, e0 = _dates_from_title(ws.title, year)
@@ -378,10 +385,15 @@ def parse_hotel_file(
         wb.close()
 
     out = []
-    for plat in PLATFORMS:
-        if plat not in agg:
+    keys = [
+        (brand, platform)
+        for brand in HOTEL_BRANDS
+        for platform in BRANDED_PLATFORM_ORDER
+    ] + [("", platform) for platform in PLATFORMS]
+    for hotel_name, plat in keys:
+        if (hotel_name, plat) not in agg:
             continue
-        d = agg[plat]
+        d = agg[(hotel_name, plat)]
         base_received = _q(d["base_received"])
         defs = daily_defaults(
             plat,
@@ -398,6 +410,7 @@ def parse_hotel_file(
         if d["order_count"] == 0:
             warnings.append(f"{plat}：未解析到有效明细")
         out.append({
+            "hotel_name": hotel_name,
             "platform": plat,
             "room_nights": d["room_nights"],
             "order_count": d["order_count"],
