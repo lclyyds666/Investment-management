@@ -109,6 +109,7 @@ def _recover_daily_json(row: HotelLedger) -> str:
         (
             item for item in info.get("platforms", [])
             if item.get("platform") == row.platform
+            and (item.get("hotel_name") or "") == (row.hotel_name or "")
         ),
         None,
     )
