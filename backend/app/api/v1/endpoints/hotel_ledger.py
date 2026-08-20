@@ -105,14 +105,23 @@ def _recover_daily_json(row: HotelLedger) -> str:
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=409, detail=f"恢复逐日明细失败：{exc}") from exc
+    platform_candidates = [
+        item for item in info.get("platforms", [])
+        if item.get("platform") == row.platform
+    ]
     platform_info = next(
         (
-            item for item in info.get("platforms", [])
-            if item.get("platform") == row.platform
-            and (item.get("hotel_name") or "") == (row.hotel_name or "")
+            item for item in platform_candidates
+            if (item.get("hotel_name") or "") == (row.hotel_name or "")
         ),
         None,
     )
+    if (
+        platform_info is None
+        and len(platform_candidates) == 1
+        and not (platform_candidates[0].get("hotel_name") or "")
+    ):
+        platform_info = platform_candidates[0]
     daily_json = (platform_info or {}).get("daily_json") or ""
     if not daily_json:
         raise HTTPException(status_code=409, detail="原始文件未解析出逐日明细，无法精确重算")

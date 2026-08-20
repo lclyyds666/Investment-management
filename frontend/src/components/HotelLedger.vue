@@ -450,7 +450,7 @@ async function onFileChange(file) {
     const res = await parseHotelFile(props.scenicId, raw)
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
     draftRows.value = createHotelDraftRows(res, DEFAULT_HOTEL_NAME, DEFAULT_FEE_PER_NIGHT)
-    ElMessage.success(`解析完成：本期 ${draftRows.value.length} 个平台`)
+    ElMessage.success(`解析完成：本期 ${draftRows.value.length} 个品牌平台组合`)
   } catch {
     ElMessage.error('解析失败，请检查文件内容')
   } finally {
