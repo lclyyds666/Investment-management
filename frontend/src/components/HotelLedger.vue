@@ -31,7 +31,9 @@
         </div>
       </template>
       <el-table :data="draftRows" border size="small" class="draft-table">
-        <el-table-column label="平台" width="70" prop="platform" />
+        <el-table-column label="平台" width="90">
+          <template #default="{ row }">{{ hotelPlatformLabel(row) }}</template>
+        </el-table-column>
         <el-table-column label="酒店名称" min-width="180">
           <template #default="{ row }"><el-input v-model="row.hotel_name" size="small" /></template>
         </el-table-column>
@@ -82,7 +84,7 @@
         <template #default="{ row }">{{ row.isTotal ? '' : scenicName }}</template>
       </el-table-column>
       <el-table-column label="平台" min-width="80">
-        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isGrandTotal ? '总合计' : row.isTotal ? '本期合计' : row.platform }}</span></template>
+        <template #default="{ row }"><span :class="{ 'total-label': row.isTotal }">{{ row.isGrandTotal ? '总合计' : row.isTotal ? '本期合计' : hotelPlatformLabel(row) }}</span></template>
       </el-table-column>
       <el-table-column label="酒店名称" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.isTotal ? '' : row.hotel_name }}</template>
@@ -252,7 +254,12 @@ import {
   uploadHotelConfirm, approveHotelConfirm, deleteHotelConfirm, fetchHotelConfirmBlob
 } from '@/api/hotelLedger'
 import { downloadBlob } from '@/utils/file'
-import { createHotelDraftRows, createHotelSaveRows } from '@/utils/hotelLedgerDraft'
+import {
+  compareHotelLedgerRows,
+  createHotelDraftRows,
+  createHotelSaveRows,
+  hotelPlatformLabel
+} from '@/utils/hotelLedgerDraft'
 import { getScenicById } from '@/constants/scenic'
 import { usePortalStore } from '@/store/portal'
 import { canUsePermission } from '@/utils/businessAuthorization'
@@ -338,8 +345,6 @@ function fmtMoney(n) {
 
 const periodCount = computed(() => new Set(savedRows.value.map((r) => r.source_file || r.detail_name || r.check_date_text)).size)
 
-// 平台展示顺序
-const PLAT_ORDER = { '抖音': 0, '美团': 1, '携程': 2 }
 // 期合计行的核对日期文案：取本期内各平台的最早起~最晚止
 function periodSpan(rows) {
   const starts = rows.map((r) => r.period_start).filter(Boolean).sort()
@@ -359,7 +364,7 @@ const displayRows = computed(() => {
   }
   // 每期排序键 = 期内最早 period_start
   const buckets = [...groups.values()].map((rows) => {
-    const rowsSorted = [...rows].sort((a, b) => (PLAT_ORDER[a.platform] ?? 9) - (PLAT_ORDER[b.platform] ?? 9))
+    const rowsSorted = [...rows].sort(compareHotelLedgerRows)
     const minStart = rows.map((r) => r.period_start).filter(Boolean).sort()[0] || ''
     return { rows: rowsSorted, minStart }
   })

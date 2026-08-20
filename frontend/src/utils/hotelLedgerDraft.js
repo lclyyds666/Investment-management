@@ -15,10 +15,29 @@ function requiredRate(value, field) {
   return parsed
 }
 
+export function hotelPlatformLabel(row) {
+  return `${row?.hotel_name || ''}${row?.platform || ''}` || '—'
+}
+
+export function compareHotelLedgerRows(left, right) {
+  const hotels = ['海洋', '骑士', '长颈鹿']
+  const brandedPlatforms = ['携程', '美团', '抖音']
+  const legacyPlatforms = ['抖音', '美团', '携程']
+  const leftHotel = hotels.indexOf(left?.hotel_name)
+  const rightHotel = hotels.indexOf(right?.hotel_name)
+  if (leftHotel >= 0 || rightHotel >= 0) {
+    if (leftHotel !== rightHotel) {
+      return (leftHotel < 0 ? hotels.length : leftHotel) - (rightHotel < 0 ? hotels.length : rightHotel)
+    }
+    return brandedPlatforms.indexOf(left?.platform) - brandedPlatforms.indexOf(right?.platform)
+  }
+  return legacyPlatforms.indexOf(left?.platform) - legacyPlatforms.indexOf(right?.platform)
+}
+
 export function createHotelDraftRows(parseResult, defaultHotelName, feePerNight = 44) {
   return (parseResult.platforms || []).map((platform) => ({
     platform: platform.platform,
-    hotel_name: defaultHotelName,
+    hotel_name: platform.hotel_name || defaultHotelName,
     check_date_text: platform.check_date_text,
     period_text: platform.period_text,
     period_start: platform.period_start,
