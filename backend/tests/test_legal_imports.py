@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, datetime, timedelta
+from inspect import Parameter, signature
 from io import BytesIO
 
 from fastapi import HTTPException
@@ -41,6 +42,9 @@ class LegalImportTest(unittest.TestCase):
         self.user = User(username="admin", full_name="管理员", hashed_password="x",
                          role=Role.INFO_MAINTAINER, is_superuser=True, is_active=True)
         self.db.add(self.user); self.db.commit()
+        self.ownership = resolve_legal_ownership(
+            self.db, self.user, "case", None, "investment.legal_risk"
+        )
 
     def tearDown(self):
         self.db.close(); self.engine.dispose()
@@ -80,8 +84,14 @@ class LegalImportTest(unittest.TestCase):
         self.assertIn("判决金额", headers)
         self.assertNotIn("可执行金额", headers)
 
+    def test_import_services_require_explicit_ownership(self):
+        self.assertIs(signature(preview_import).parameters["ownership"].default, Parameter.empty)
+        self.assertIs(signature(confirm_import).parameters["ownership"].default, Parameter.empty)
+
     def test_preview_and_confirm_are_transactional_and_idempotent(self):
-        batch = preview_import(self.db, self._filled_template(), "cases.xlsx", self.user)
+        batch = preview_import(
+            self.db, self._filled_template(), "cases.xlsx", self.user, self.ownership
+        )
         self.db.commit()
         self.assertEqual(batch.error_rows, 0)
         warning_ids = self.db.scalars(
@@ -90,12 +100,14 @@ class LegalImportTest(unittest.TestCase):
                 LegalCaseImportRow.validation_status == "warning",
             ).statement
         ).all()
-        result = confirm_import(self.db, batch, self.user, list(warning_ids))
+        result = confirm_import(
+            self.db, batch, self.user, list(warning_ids), self.ownership
+        )
         self.db.commit()
         self.assertEqual(result["imported_cases"], 1)
         self.assertEqual(self.db.query(LegalCase).count(), 1)
         with self.assertRaises(HTTPException) as raised:
-            confirm_import(self.db, batch, self.user, list(warning_ids))
+            confirm_import(self.db, batch, self.user, list(warning_ids), self.ownership)
         self.assertEqual(raised.exception.status_code, 409)
 
     def test_import_uses_the_same_validated_ownership_for_every_case(self):
@@ -157,7 +169,9 @@ class LegalImportTest(unittest.TestCase):
             "EXT-1", "custom", "custom deadline", date(2026, 12, 31), 7, None,
         ])
         buffer = BytesIO(); workbook.save(buffer)
-        batch = preview_import(self.db, buffer.getvalue(), "deadline.xlsx", self.user)
+        batch = preview_import(
+            self.db, buffer.getvalue(), "deadline.xlsx", self.user, self.ownership
+        )
         self.db.commit()
         warning_ids = self.db.scalars(
             self.db.query(LegalCaseImportRow.id).filter(
@@ -166,7 +180,7 @@ class LegalImportTest(unittest.TestCase):
             ).statement
         ).all()
 
-        confirm_import(self.db, batch, self.user, list(warning_ids))
+        confirm_import(self.db, batch, self.user, list(warning_ids), self.ownership)
         self.db.commit()
 
         alert = self.db.query(LegalCaseAlert).filter_by(source_type="deadline").one()
@@ -182,7 +196,9 @@ class LegalImportTest(unittest.TestCase):
         workbook["当事人"].append(["EXT-2", "原告", "原告公司", "organization", "", "", ""])
         buffer = BytesIO(); workbook.save(buffer)
 
-        batch = preview_import(self.db, buffer.getvalue(), "missing-party.xlsx", self.user)
+        batch = preview_import(
+            self.db, buffer.getvalue(), "missing-party.xlsx", self.user, self.ownership
+        )
 
         self.assertGreater(batch.error_rows, 0)
         basic = self.db.query(LegalCaseImportRow).filter(
@@ -197,7 +213,9 @@ class LegalImportTest(unittest.TestCase):
         buffer = BytesIO(); workbook.save(buffer)
 
         with self.assertRaises(HTTPException) as raised:
-            preview_import(self.db, buffer.getvalue(), "old-template.xlsx", self.user)
+            preview_import(
+                self.db, buffer.getvalue(), "old-template.xlsx", self.user, self.ownership
+            )
 
         self.assertEqual(raised.exception.status_code, 422)
         self.assertIn("模板版本不匹配", raised.exception.detail)
@@ -208,7 +226,9 @@ class LegalImportTest(unittest.TestCase):
         workbook["期限事件"].append(["EXT-1", "开庭", "测试开庭", "", 366, 999999])
         buffer = BytesIO(); workbook.save(buffer)
 
-        batch = preview_import(self.db, buffer.getvalue(), "invalid-details.xlsx", self.user)
+        batch = preview_import(
+            self.db, buffer.getvalue(), "invalid-details.xlsx", self.user, self.ownership
+        )
         rows = self.db.query(LegalCaseImportRow).filter(
             LegalCaseImportRow.batch_id == batch.id,
             LegalCaseImportRow.validation_status == "error",
@@ -234,7 +254,10 @@ class LegalImportTest(unittest.TestCase):
         for user in (owner, outsider):
             self._assign_legal_business_position(user)
         self.db.flush()
-        batch = preview_import(self.db, self._filled_template(), "private.xlsx", owner)
+        owner_ownership = resolve_legal_ownership(self.db, owner, "case", None, None)
+        batch = preview_import(
+            self.db, self._filled_template(), "private.xlsx", owner, owner_ownership
+        )
 
         self.assertIs(_import_batch_for_user(self.db, batch.id, owner), batch)
         self.assertIs(_import_batch_for_user(self.db, batch.id, self.user), batch)
@@ -260,12 +283,15 @@ class LegalImportTest(unittest.TestCase):
             self._filled_template(responsible.id),
             "normalized-responsible.xlsx",
             self.user,
+            self.ownership,
         )
 
         self.assertEqual(batch.error_rows, 0)
 
     def test_import_claim_prevents_stale_confirmation(self):
-        batch = preview_import(self.db, self._filled_template(), "claimed.xlsx", self.user)
+        batch = preview_import(
+            self.db, self._filled_template(), "claimed.xlsx", self.user, self.ownership
+        )
         self.db.flush()
         self.db.execute(
             update(LegalCaseImportBatch)
@@ -275,13 +301,15 @@ class LegalImportTest(unittest.TestCase):
         self.db.commit()
 
         with self.assertRaises(HTTPException) as raised:
-            confirm_import(self.db, batch, self.user, [])
+            confirm_import(self.db, batch, self.user, [], self.ownership)
 
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(self.db.query(LegalCase).count(), 0)
 
     def test_cleanup_physically_deletes_old_unconfirmed_batches_and_rows(self):
-        batch = preview_import(self.db, self._filled_template(), "expired.xlsx", self.user)
+        batch = preview_import(
+            self.db, self._filled_template(), "expired.xlsx", self.user, self.ownership
+        )
         now = datetime(2026, 8, 14, 9, 0, 0)
         batch.created_at = now - timedelta(days=8)
         batch_id = batch.id

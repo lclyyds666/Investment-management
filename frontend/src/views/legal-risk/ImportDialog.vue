@@ -8,14 +8,21 @@
 
     <div v-if="step === 0" class="import-step">
       <el-form label-position="top">
-        <el-form-item v-if="initiatorOptions.length" label="案件发起组织" required>
+        <el-form-item v-if="isSuperuser" label="代理发起组织编码" required>
+          <el-input v-model="organizationCode" :disabled="initiatorOptionsLoading" placeholder="超级管理员请输入发起组织编码" />
+        </el-form-item>
+        <el-form-item v-else-if="initiatorOptions.length" label="案件发起组织" required>
           <el-select v-model="initiatorAssignmentId" :loading="initiatorOptionsLoading" placeholder="请选择案件发起组织">
             <el-option v-for="option in initiatorOptions" :key="option.assignment_id" :value="option.assignment_id" :label="`${option.company_name} / ${option.organization_name} / ${option.position_name || option.position_code}`" />
           </el-select>
         </el-form-item>
-        <el-form-item v-else label="代理发起组织编码" required>
-          <el-input v-model="organizationCode" :disabled="initiatorOptionsLoading" placeholder="超级管理员请输入发起组织编码" />
-        </el-form-item>
+        <el-alert
+          v-else-if="initiatorOptionsLoaded"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="initiatorOptionsFailed ? '案件发起任职加载失败，请稍后重试' : '当前账号没有有效的案件发起任职'"
+        />
       </el-form>
       <el-upload drag :auto-upload="false" accept=".xlsx" :limit="1" :on-change="selectFile" :on-remove="removeFile">
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
@@ -70,14 +77,18 @@ import {
   confirmImport, downloadImportErrors, downloadImportTemplate,
   getImportBatch, listLegalInitiatorOptions, previewImport
 } from '@/api/legalRisk'
+import { usePortalStore } from '@/store/portal'
 
 const emit = defineEmits(['imported'])
+const portalStore = usePortalStore()
 const visible = ref(false)
 const step = ref(0)
 const loading = ref(false)
 const file = ref(null)
 const initiatorOptions = ref([])
 const initiatorOptionsLoading = ref(false)
+const initiatorOptionsLoaded = ref(false)
+const initiatorOptionsFailed = ref(false)
 const initiatorAssignmentId = ref(null)
 const organizationCode = ref('')
 const batch = reactive({ id: null, total_rows: 0, importable_rows: 0, warning_rows: 0, error_rows: 0, rows: [] })
@@ -87,13 +98,28 @@ const result = reactive({ imported_cases: 0 })
 const issueRows = computed(() => (batch.rows || []).filter((row) => row.errors?.length || row.warnings?.length))
 const warningRows = computed(() => issueRows.value.filter((row) => row.warnings?.length && !row.errors?.length))
 const canConfirm = computed(() => !batch.error_rows && warningRows.value.every((row) => confirmed[row.id]))
-const ownership = computed(() => ({
-  ...(initiatorAssignmentId.value !== null ? { initiator_assignment_id: initiatorAssignmentId.value } : {}),
-  ...(organizationCode.value ? { organization_code: organizationCode.value } : {})
-}))
-const canPreview = computed(() => file.value && !initiatorOptionsLoading.value && (
-  initiatorAssignmentId.value !== null || organizationCode.value.trim()
+const isSuperuser = computed(() => portalStore.isSuperuser)
+const ownership = computed(() => {
+  if (isSuperuser.value) {
+    return organizationCode.value.trim()
+      ? { organization_code: organizationCode.value.trim() }
+      : {}
+  }
+  return initiatorAssignmentId.value !== null
+    ? { initiator_assignment_id: initiatorAssignmentId.value }
+    : {}
+})
+const hasOwnership = computed(() => Object.keys(ownership.value).length > 0)
+const canPreview = computed(() => Boolean(
+  file.value && initiatorOptionsLoaded.value && !initiatorOptionsLoading.value && hasOwnership.value
 ))
+
+function initiatorWarning() {
+  if (isSuperuser.value) return '请输入代理发起组织编码'
+  if (initiatorOptionsFailed.value) return '案件发起任职加载失败，请稍后重试'
+  if (initiatorOptions.value.length) return '请选择有效的案件发起任职'
+  return '当前账号没有有效的案件发起任职'
+}
 
 const saveBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob)
@@ -105,14 +131,25 @@ const saveBlob = (blob, filename) => {
 }
 
 async function loadInitiatorOptions() {
+  initiatorOptionsLoaded.value = false
+  initiatorOptionsFailed.value = false
+  initiatorAssignmentId.value = null
+  if (isSuperuser.value) {
+    initiatorOptions.value = []
+    initiatorOptionsLoaded.value = true
+    return
+  }
   initiatorOptionsLoading.value = true
   try {
     initiatorOptions.value = await listLegalInitiatorOptions('case')
     if (initiatorOptions.value.length === 1) initiatorAssignmentId.value = initiatorOptions.value[0].assignment_id
   } catch {
     initiatorOptions.value = []
+    initiatorOptionsFailed.value = true
+    ElMessage.warning('案件发起任职加载失败，请稍后重试')
   } finally {
     initiatorOptionsLoading.value = false
+    initiatorOptionsLoaded.value = true
   }
 }
 
@@ -125,6 +162,14 @@ async function downloadTemplate() {
 }
 
 async function preview() {
+  if (!hasOwnership.value) {
+    ElMessage.warning(initiatorWarning())
+    return
+  }
+  if (!file.value) {
+    ElMessage.warning('请选择标准 Excel 文件')
+    return
+  }
   loading.value = true
   try {
     const data = new FormData()
@@ -163,6 +208,9 @@ function reset() {
   file.value = null
   initiatorAssignmentId.value = null
   organizationCode.value = ''
+  initiatorOptions.value = []
+  initiatorOptionsLoaded.value = false
+  initiatorOptionsFailed.value = false
   Object.assign(batch, { id: null, total_rows: 0, importable_rows: 0, warning_rows: 0, error_rows: 0, rows: [] })
   Object.keys(confirmed).forEach((key) => delete confirmed[key])
   result.imported_cases = 0

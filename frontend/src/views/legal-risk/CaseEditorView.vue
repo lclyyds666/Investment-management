@@ -10,14 +10,22 @@
       <section class="form-section">
         <h2>案件识别</h2>
         <div class="form-grid">
-          <el-form-item v-if="!isEdit && initiatorOptions.length" label="案件发起组织" prop="initiator_assignment_id" class="wide">
+          <el-form-item v-if="!isEdit && isSuperuser" label="代理发起组织编码" prop="organization_code" class="wide">
+            <el-input v-model="form.organization_code" :disabled="initiatorOptionsLoading" placeholder="超级管理员请输入发起组织编码" />
+          </el-form-item>
+          <el-form-item v-else-if="!isEdit && initiatorOptions.length" label="案件发起组织" prop="initiator_assignment_id" class="wide">
             <el-select v-model="form.initiator_assignment_id" :loading="initiatorOptionsLoading" placeholder="请选择案件发起组织">
               <el-option v-for="option in initiatorOptions" :key="option.assignment_id" :value="option.assignment_id" :label="`${option.company_name} / ${option.organization_name} / ${option.position_name || option.position_code}`" />
             </el-select>
           </el-form-item>
-          <el-form-item v-else-if="!isEdit" label="代理发起组织编码" prop="organization_code" class="wide">
-            <el-input v-model="form.organization_code" :disabled="initiatorOptionsLoading" placeholder="超级管理员请输入发起组织编码" />
-          </el-form-item>
+          <el-alert
+            v-else-if="!isEdit && initiatorOptionsLoaded"
+            class="wide"
+            type="warning"
+            :closable="false"
+            show-icon
+            :title="initiatorOptionsFailed ? '案件发起任职加载失败，请稍后重试' : '当前账号没有有效的案件发起任职'"
+          />
           <el-form-item label="案件名称" prop="case_name" class="wide"><el-input v-model="form.case_name" maxlength="255" show-word-limit /></el-form-item>
           <el-form-item label="案由"><el-input v-model="form.cause_of_action" /></el-form-item>
           <el-form-item label="受理法院"><el-input v-model="form.court" /></el-form-item>
@@ -56,7 +64,7 @@
 
     <footer class="editor-actions">
       <el-button @click="$router.back()">取消</el-button>
-      <el-button type="primary" :loading="saving" :disabled="!isEdit && initiatorOptionsLoading" :icon="Check" @click="save">保存</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!isEdit && !canCreateCase" :icon="Check" @click="save">保存</el-button>
     </footer>
   </section>
 </template>
@@ -67,10 +75,12 @@ import { ArrowLeft, Check } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { createCase, getCase, listLegalInitiatorOptions, listLegalUserOptions, updateCase } from '@/api/legalRisk'
+import { usePortalStore } from '@/store/portal'
 import { responsibleUserPatch } from '@/utils/legalCaseForm'
 
 const route = useRoute()
 const router = useRouter()
+const portalStore = usePortalStore()
 const formRef = ref()
 const loading = ref(false)
 const saving = ref(false)
@@ -78,8 +88,11 @@ const caseData = reactive({})
 const users = ref([])
 const initiatorOptions = ref([])
 const initiatorOptionsLoading = ref(false)
+const initiatorOptionsLoaded = ref(false)
+const initiatorOptionsFailed = ref(false)
 const responsibleNameDirty = ref(false)
 const isEdit = computed(() => Boolean(route.params.caseId))
+const isSuperuser = computed(() => portalStore.isSuperuser)
 const form = reactive({
   case_name: '', cause_of_action: '', court: '', court_case_no: '', subject_amount: 0,
   responsible_user_name: '', confidentiality_level: 'internal', law_firm: '', attorney_name: '',
@@ -91,8 +104,27 @@ const rules = {
   initiator_assignment_id: [{ required: true, message: '请选择案件发起组织', trigger: 'change' }],
   organization_code: [{ required: true, message: '请输入代理发起组织编码', trigger: 'blur' }]
 }
+const canCreateCase = computed(() => initiatorOptionsLoaded.value && (
+  isSuperuser.value
+    ? Boolean(form.organization_code.trim())
+    : form.initiator_assignment_id !== null
+))
+
+function initiatorWarning() {
+  if (initiatorOptionsFailed.value) return '案件发起任职加载失败，请稍后重试'
+  if (initiatorOptions.value.length) return '请选择有效的案件发起任职'
+  return '当前账号没有有效的案件发起任职'
+}
 
 async function loadInitiatorOptions() {
+  initiatorOptionsLoaded.value = false
+  initiatorOptionsFailed.value = false
+  form.initiator_assignment_id = null
+  if (isSuperuser.value) {
+    initiatorOptions.value = []
+    initiatorOptionsLoaded.value = true
+    return
+  }
   initiatorOptionsLoading.value = true
   try {
     initiatorOptions.value = await listLegalInitiatorOptions('case')
@@ -101,8 +133,11 @@ async function loadInitiatorOptions() {
     }
   } catch {
     initiatorOptions.value = []
+    initiatorOptionsFailed.value = true
+    ElMessage.warning('案件发起任职加载失败，请稍后重试')
   } finally {
     initiatorOptionsLoading.value = false
+    initiatorOptionsLoaded.value = true
   }
 }
 
@@ -125,6 +160,10 @@ onMounted(async () => {
 })
 
 async function save() {
+  if (!isEdit.value && !canCreateCase.value) {
+    ElMessage.warning(initiatorWarning())
+    return
+  }
   await formRef.value.validate()
   saving.value = true
   try {
@@ -138,7 +177,8 @@ async function save() {
     if (!isEdit.value) {
       delete payload.closed_date
       delete payload.closure_summary
-      if (payload.initiator_assignment_id) delete payload.organization_code
+      if (isSuperuser.value) delete payload.initiator_assignment_id
+      else delete payload.organization_code
     } else {
       delete payload.initiator_assignment_id
       delete payload.organization_code

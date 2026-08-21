@@ -277,10 +277,6 @@ def _validate_row(sheet_name: str, data: dict, known_keys: set[str], db: Session
     return normalized, warnings, errors
 
 
-def _default_ownership() -> LegalOwnership:
-    return LegalOwnership("investment", "investment.legal_risk", None)
-
-
 def _ownership_data(ownership: LegalOwnership) -> dict:
     return {
         "company_code": ownership.company_code,
@@ -291,9 +287,9 @@ def _ownership_data(ownership: LegalOwnership) -> dict:
 
 def preview_import(
     db: Session, content: bytes, file_name: str, actor: User,
-    ownership: LegalOwnership | None = None,
+    ownership: LegalOwnership,
 ) -> LegalCaseImportBatch:
-    ownership_data = _ownership_data(ownership or _default_ownership())
+    ownership_data = _ownership_data(ownership)
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
@@ -374,9 +370,9 @@ def confirm_import(
     batch: LegalCaseImportBatch,
     actor: User,
     confirmed_warning_rows: list[int],
-    ownership: LegalOwnership | None = None,
+    ownership: LegalOwnership,
 ) -> dict:
-    ownership_data = _ownership_data(ownership or _default_ownership())
+    ownership_data = _ownership_data(ownership)
     claimed = db.execute(
         update(LegalCaseImportBatch)
         .where(
