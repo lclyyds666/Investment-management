@@ -47,6 +47,8 @@ class LegalCaseBase(BaseModel):
 
 class LegalCaseCreate(LegalCaseBase):
     responsible_user_name: str | None = Field(default=None, max_length=64, exclude=True)
+    initiator_assignment_id: int | None = None
+    organization_code: str | None = None
 
 
 class LegalCaseUpdate(BaseModel):
@@ -98,6 +100,9 @@ class LegalCaseOut(LegalCaseBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    company_code: str
+    organization_code: str
+    initiator_assignment_id: int | None
     stage: LegalCaseStage
     case_no: str | None
     status: LegalCaseStatus | None
@@ -110,6 +115,16 @@ class LegalCaseOut(LegalCaseBase):
     activated_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class LegalInitiatorOptionOut(BaseModel):
+    assignment_id: int
+    company_code: str
+    company_name: str
+    organization_code: str
+    organization_name: str
+    position_code: str
+    position_name: str
 
 
 class LegalPartyIn(BaseModel):

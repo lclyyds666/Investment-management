@@ -32,6 +32,7 @@ from app.services import contract_review as review_svc
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
 from app.services.assignment_permissions import PermissionContext, has_permission, permission_grants
+from app.services.legal_ownership import LegalOwnershipError, resolve_legal_ownership
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
@@ -306,8 +307,23 @@ def create_contract(
 ):
     if db.scalar(select(Contract).where(Contract.contract_no == payload.contract_no)):
         raise HTTPException(status_code=400, detail="合同编号已存在")
+    try:
+        ownership = resolve_legal_ownership(
+            db,
+            current_user,
+            "contract",
+            payload.initiator_assignment_id,
+            payload.organization_code or (
+                CompanyCode.SUPPLY_MANAGEMENT.value if current_user.is_superuser else None
+            ),
+        )
+    except LegalOwnershipError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
     contract = Contract(
-        **payload.model_dump(),
+        **payload.model_dump(exclude={"initiator_assignment_id", "organization_code"}),
+        company_code=ownership.company_code,
+        organization_code=ownership.organization_code,
+        initiator_assignment_id=ownership.initiator_assignment_id,
         status=ContractStatus.DRAFT,
         current_step=0,
         created_by=current_user.id,

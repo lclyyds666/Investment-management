@@ -58,6 +58,7 @@ from app.schemas.legal_risk import (
     LegalJudgmentIn,
     LegalJudgmentOut,
     LegalImportConfirmIn,
+    LegalInitiatorOptionOut,
     LegalPage,
     LegalPartyIn,
     LegalPartyOut,
@@ -117,6 +118,12 @@ from app.services.legal_imports import (
     build_import_template,
     confirm_import,
     preview_import,
+)
+from app.services.legal_ownership import (
+    LegalOwnershipError,
+    LegalResource,
+    legal_initiator_options,
+    resolve_legal_ownership,
 )
 
 def _disable_sensitive_response_cache(response: StarletteResponse) -> None:
@@ -246,6 +253,19 @@ def legal_user_options(
     return Response.ok(options)
 
 
+@router.get(
+    "/initiator-options",
+    response_model=Response[list[LegalInitiatorOptionOut]],
+    summary="当前用户可用法务发起任职",
+)
+def get_initiator_options(
+    resource: LegalResource = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return Response.ok(legal_initiator_options(db, current_user, resource))
+
+
 @router.get("/cases", response_model=Response[LegalPage[LegalCaseOut]], summary="案件与草稿列表")
 def list_cases(
     keyword: str | None = None,
@@ -298,12 +318,29 @@ def create_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_legal_capability(LegalCapability.EDIT_CASE)),
 ):
-    data = payload.model_dump(exclude={"responsible_user_name"})
+    try:
+        ownership = resolve_legal_ownership(
+            db,
+            current_user,
+            "case",
+            payload.initiator_assignment_id,
+            payload.organization_code or (
+                "investment.legal_risk" if current_user.is_superuser else None
+            ),
+        )
+    except LegalOwnershipError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
+    data = payload.model_dump(exclude={
+        "responsible_user_name", "initiator_assignment_id", "organization_code",
+    })
     if "responsible_user_name" in payload.model_fields_set:
         name = (payload.responsible_user_name or "").strip()
         data["responsible_user_id"] = resolve_investment_user_name(db, name).id if name else None
     case = LegalCase(
         **data,
+        company_code=ownership.company_code,
+        organization_code=ownership.organization_code,
+        initiator_assignment_id=ownership.initiator_assignment_id,
         stage=LegalCaseStage.DRAFT,
         status=None,
         created_by=current_user.id,

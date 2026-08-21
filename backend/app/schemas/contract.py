@@ -44,6 +44,8 @@ class ContractBase(BaseModel):
 
 class ContractCreate(ContractBase):
     contract_no: str
+    initiator_assignment_id: Optional[int] = None
+    organization_code: Optional[str] = None
 
 
 class ContractUpdate(BaseModel):
@@ -72,6 +74,9 @@ class ContractOut(ContractBase):
     status: ContractStatus
     current_step: int = 0
     created_by: int
+    company_code: str
+    organization_code: str
+    initiator_assignment_id: Optional[int] = None
     creator_name: str = ""  # 由端点补充（业务经办姓名）
     attachment_name: str = ""  # 合同附件原始文件名（空表示未上传）
     workflow_instance_id: Optional[int] = None
