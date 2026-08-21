@@ -154,6 +154,10 @@ LEGAL_BUSINESS_POSITION_CODES = (
     "supply.company_leader",
     "investment.duty.supply_risk_review",
     "investment.duty.supply_finance_review",
+    "investment.asset_finance.middle_manager",
+    "investment.asset_finance.senior_manager",
+    "investment.asset_finance.deputy_director",
+    "investment.legal_risk.deputy_director",
     "supply.senior_manager",
     "fund.chairman",
     "fund.general_manager",
@@ -171,6 +175,8 @@ LEGAL_BUSINESS_POSITION_CODES = (
 LEGAL_MANAGEMENT_POSITION_CODES = (
     *INVESTMENT_EXECUTIVE_POSITION_CODES,
     "governance.supply_leader",
+    "governance.fund_leader",
+    "governance.zhanwei_leader",
 )
 LEGAL_COUNSEL_POSITION_CODES = ("external.legal_counsel",)
 LEGAL_ACCESS_POSITION_CODES = tuple(dict.fromkeys(
@@ -341,6 +347,7 @@ POSITION_GRANTS = (
     }),
     *_legal_grants(LEGAL_COUNSEL_POSITION_CODES, {
         "investment.legal.contracts.view", "investment.legal.contracts.review",
+        "investment.legal.contracts.return",
     }, data_scope="assigned"),
     {"position_code": "fund.chairman", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     {"position_code": "fund.general_manager", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},

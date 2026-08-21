@@ -586,8 +586,8 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         ])
         self.db.commit()
         cases = (
-            ("POST", "/api/v1/contracts", "supply.contract.create", {"contract_no": "C-2", "title": "New"}),
-            ("POST", "/api/v1/contracts/1/submit", "supply.contract.submit", None),
+            ("POST", "/api/v1/contracts", "investment.legal.contracts.create", {"contract_no": "C-2", "title": "New"}),
+            ("POST", "/api/v1/contracts/1/submit", "investment.legal.contracts.submit", None),
             ("PUT", "/api/v1/customers/1", "supply.customer.update", {"name": "Updated"}),
             ("POST", "/api/v1/scenic-spots/demo/ticket-ledger", "supply.scenic.create", {"rows": []}),
             ("POST", "/api/v1/scenic-spots/demo/ticket-ledger/1/confirm/approve", "supply.scenic.review", None),
@@ -627,7 +627,7 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         self.db.commit()
 
         for path, permission_code in (
-            ("/api/v1/contracts/1", "supply.contract.delete"),
+            ("/api/v1/contracts/1", "investment.legal.contracts.delete"),
             ("/api/v1/approval-forms/1", "supply.approval.delete"),
         ):
             with self.subTest(path=path):
@@ -730,7 +730,7 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         ):
             with self.subTest(contract="hidden", endpoint=suffix):
                 response = self.client.request(method, f"/api/v1/contracts/{hidden.id}/{suffix}")
-                self.assertEqual(response.status_code, 403, response.text)
+                self.assertEqual(response.status_code, 404, response.text)
 
         with self.subTest(contract="assigned", endpoint="attachment"):
             response = self.client.get(f"/api/v1/contracts/{assigned.id}/attachment")
@@ -806,7 +806,7 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
     def test_remaining_read_endpoints_require_module_view_permission(self):
         self._add_current_user()
         cases = (
-            ("POST", "/api/v1/contracts/999/ai-review", "supply.contract.view"),
+            ("POST", "/api/v1/contracts/999/ai-review", "investment.legal.contracts.view"),
             ("POST", "/api/v1/approval-forms/999/proofread", "supply.approval.view"),
             ("GET", "/api/v1/approval/pending-count", "supply.approval.view"),
         )
