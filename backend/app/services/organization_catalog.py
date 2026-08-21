@@ -364,7 +364,7 @@ POSITION_GRANTS = (
 )
 
 
-def seed_authorization_catalog(db: Session) -> None:
+def seed_authorization_catalog(db: Session, *, commit: bool = True) -> None:
     """Seed catalog rows and refresh managed labels without replacing grants."""
     try:
         organizations: dict[str, Organization] = {}
@@ -431,7 +431,10 @@ def seed_authorization_catalog(db: Session) -> None:
                     position_id=position.id, permission_id=permission.id,
                     data_scope=DataScope(grant["data_scope"]), scope_ref=grant["scope_ref"],
                 ))
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
         db.rollback()
         raise

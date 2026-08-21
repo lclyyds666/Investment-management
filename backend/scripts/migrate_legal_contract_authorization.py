@@ -350,7 +350,7 @@ def apply_migration(db: Session, publisher_id: int) -> dict:
     if report["blocking_issues"]:
         return report
     try:
-        seed_authorization_catalog(db)
+        seed_authorization_catalog(db, commit=False)
         for contract in db.scalars(select(Contract).where(
             (Contract.company_code.is_(None))
             | (Contract.company_code == "")

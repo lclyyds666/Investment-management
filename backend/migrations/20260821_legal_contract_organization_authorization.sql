@@ -161,6 +161,26 @@ SET @statement = IF(
 PREPARE stmt FROM @statement; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @statement = IF(
+  EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = @schema_name AND table_name = 'biz_contract')
+  AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'biz_contract' AND column_name = 'initiator_assignment_id')
+  AND EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = @schema_name AND table_name = 'sys_user_assignment')
+  AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'sys_user_assignment' AND column_name = 'id'),
+  'UPDATE `biz_contract` AS `record` LEFT JOIN `sys_user_assignment` AS `assignment` ON `assignment`.`id` = `record`.`initiator_assignment_id` SET `record`.`initiator_assignment_id` = NULL WHERE `record`.`initiator_assignment_id` IS NOT NULL AND `assignment`.`id` IS NULL',
+  'SELECT 1'
+);
+PREPARE stmt FROM @statement; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @statement = IF(
+  EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = @schema_name AND table_name = 'legal_case')
+  AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'legal_case' AND column_name = 'initiator_assignment_id')
+  AND EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = @schema_name AND table_name = 'sys_user_assignment')
+  AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = @schema_name AND table_name = 'sys_user_assignment' AND column_name = 'id'),
+  'UPDATE `legal_case` AS `record` LEFT JOIN `sys_user_assignment` AS `assignment` ON `assignment`.`id` = `record`.`initiator_assignment_id` SET `record`.`initiator_assignment_id` = NULL WHERE `record`.`initiator_assignment_id` IS NOT NULL AND `assignment`.`id` IS NULL',
+  'SELECT 1'
+);
+PREPARE stmt FROM @statement; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @statement = IF(
   EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema = @schema_name AND table_name = 'biz_contract' AND constraint_name = 'fk_biz_contract_initiator_assignment'),
   'SELECT 1',
   'ALTER TABLE `biz_contract` ADD CONSTRAINT `fk_biz_contract_initiator_assignment` FOREIGN KEY (`initiator_assignment_id`) REFERENCES `sys_user_assignment` (`id`) ON DELETE SET NULL'

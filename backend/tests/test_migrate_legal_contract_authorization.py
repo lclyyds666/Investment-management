@@ -1,18 +1,42 @@
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.core.enums import AssignmentStatus, PositionCategory
+from app.core.enums import (
+    AssignmentStatus,
+    PositionCategory,
+    WorkflowAction,
+    WorkflowAssigneeMode,
+    WorkflowInstanceStatus,
+    WorkflowTargetType,
+    WorkflowTaskStatus,
+    WorkflowVersionStatus,
+)
 from app.db import init_db  # noqa: F401
 from app.db.base import Base
 from app.models.contract import Contract
 from app.models.legal_risk import LegalCase
-from app.models.organization import Organization, Position, PositionPermission, UserAssignment
+from app.models.organization import (
+    Organization,
+    Permission,
+    Position,
+    PositionPermission,
+    UserAssignment,
+)
 from app.models.user import User
-from app.models.workflow import WorkflowDefinition, WorkflowInstance, WorkflowTask, WorkflowTaskAction
+from app.models.workflow import (
+    WorkflowDefinition,
+    WorkflowInstance,
+    WorkflowNode,
+    WorkflowTask,
+    WorkflowTaskAction,
+    WorkflowVersion,
+)
+from app.services.organization_catalog import seed_authorization_catalog
+import scripts.migrate_legal_contract_authorization as migration
 from scripts.migrate_legal_contract_authorization import apply_migration, build_report
 
 
@@ -195,21 +219,156 @@ def test_repeat_apply_does_not_restore_removed_position_permission(db, publisher
     )) is None
 
 
-def test_apply_does_not_rewrite_historical_workflow_runtime(db, publisher):
-    before = (
-        db.query(WorkflowInstance).count(),
-        db.query(WorkflowTask).count(),
-        db.query(WorkflowTaskAction).count(),
+def _column_snapshot(row):
+    return {
+        column.name: getattr(row, column.name)
+        for column in row.__table__.columns
+    }
+
+
+def test_apply_rolls_back_catalog_ownership_and_workflows_on_late_failure(
+    db, publisher, legacy_contract, legacy_case, monkeypatch
+):
+    publish = migration._publish_legal_workflows
+
+    def publish_then_fail(session, publisher_id):
+        publish(session, publisher_id)
+        session.flush()
+        raise RuntimeError("late workflow failure")
+
+    monkeypatch.setattr(migration, "_publish_legal_workflows", publish_then_fail)
+
+    with pytest.raises(RuntimeError, match="late workflow failure"):
+        apply_migration(db, publisher.id)
+
+    db.expire_all()
+    assert db.query(Organization).count() == 0
+    assert db.query(Position).count() == 0
+    assert db.query(Permission).count() == 0
+    assert db.query(PositionPermission).count() == 0
+    assert db.query(WorkflowDefinition).count() == 0
+    assert legacy_contract.company_code == ""
+    assert legacy_contract.organization_code == ""
+    assert legacy_case.company_code == ""
+    assert legacy_case.organization_code == ""
+
+
+def test_authorization_catalog_default_still_commits(db):
+    seed_authorization_catalog(db)
+    db.rollback()
+
+    assert db.query(Organization).count() > 0
+    assert db.query(PositionPermission).count() > 0
+
+
+def test_apply_preserves_each_historical_workflow_runtime_snapshot_field(db, publisher):
+    definition = WorkflowDefinition(
+        code="supply.contract.v2",
+        name="供应链合同审批",
+        target_type=WorkflowTargetType.CONTRACT,
     )
+    db.add(definition)
+    db.flush()
+    version = WorkflowVersion(
+        definition_id=definition.id,
+        version=2,
+        status=WorkflowVersionStatus.PUBLISHED,
+        published_at=datetime(2026, 8, 1, 9, 0),
+        published_by=publisher.id,
+    )
+    db.add(version)
+    db.flush()
+    node = WorkflowNode(
+        version_id=version.id,
+        sequence=0,
+        code="handler",
+        name="业务经办",
+        position_code="supply.business_handler",
+        assignee_mode=WorkflowAssigneeMode.SHARED_POSITION,
+        candidate_rule="position",
+        candidate_position_codes=["supply.business_handler"],
+        auto_complete_on_submit=True,
+        allow_reject=False,
+    )
+    db.add(node)
+    db.flush()
+    definition.active_version_id = version.id
+    instance = WorkflowInstance(
+        definition_id=definition.id,
+        version_id=version.id,
+        target_type=WorkflowTargetType.CONTRACT,
+        target_id=7788,
+        status=WorkflowInstanceStatus.ACTIVE,
+        current_sequence=0,
+        submitted_by=publisher.id,
+        submitted_at=datetime(2026, 8, 2, 10, 0),
+    )
+    db.add(instance)
+    db.flush()
+    task = WorkflowTask(
+        instance_id=instance.id,
+        node_id=node.id,
+        sequence=0,
+        status=WorkflowTaskStatus.APPROVED,
+        required_position_code="supply.business_handler",
+        required_position_name="供管公司初级经理（历史快照）",
+        assignee_mode=WorkflowAssigneeMode.SHARED_POSITION,
+        activated_at=datetime(2026, 8, 2, 10, 0),
+        completed_at=datetime(2026, 8, 2, 10, 5),
+        version=3,
+    )
+    db.add(task)
+    db.flush()
+    action = WorkflowTaskAction(
+        task_id=task.id,
+        action=WorkflowAction.APPROVE,
+        actor_id=publisher.id,
+        actor_name="历史办理人",
+        organization_code="supplymanagement",
+        organization_name="供管公司（历史快照）",
+        position_code="supply.business_handler",
+        position_name="供管公司初级经理（历史快照）",
+        comment="历史审批意见",
+        signature_snapshot="data:image/png;base64,historical-signature",
+        reason="历史原因",
+    )
+    db.add(action)
+    db.commit()
+    rows = (definition, version, node, instance, task, action)
+    before = [_column_snapshot(row) for row in rows]
 
     report = apply_migration(db, publisher.id)
+    db.expire_all()
 
     assert report["blocking_issues"] == []
-    assert (
-        db.query(WorkflowInstance).count(),
-        db.query(WorkflowTask).count(),
-        db.query(WorkflowTaskAction).count(),
-    ) == before
+    after = [_column_snapshot(db.get(type(row), row.id)) for row in rows]
+    assert after == before
+
+
+def test_mysql_migration_text_guards_schema_and_cleans_orphans_before_constraints():
+    source = Path(
+        "migrations/20260821_legal_contract_organization_authorization.sql"
+    ).read_text(encoding="utf-8")
+
+    orphan_updates = {
+        "biz_contract": "fk_biz_contract_initiator_assignment",
+        "legal_case": "fk_legal_case_initiator_assignment",
+    }
+    for table_name, constraint_name in orphan_updates.items():
+        cleanup = (
+            f"UPDATE `{table_name}` AS `record` LEFT JOIN "
+            "`sys_user_assignment` AS `assignment`"
+        )
+        assert cleanup in source
+        assert "`record`.`initiator_assignment_id` = NULL" in source
+        assert source.index(cleanup) < source.index(
+            f"ADD CONSTRAINT `{constraint_name}`"
+        )
+        assert (
+            f"table_name = '{table_name}' AND column_name = "
+            "'initiator_assignment_id'"
+        ) in source
+    assert "table_name = 'sys_user_assignment'" in source
 
 
 def test_mysql_migration_guards_every_schema_change_and_backfills_before_constraints():
