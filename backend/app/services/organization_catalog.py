@@ -320,6 +320,7 @@ def seed_authorization_catalog(db: Session) -> None:
             positions[item["code"]] = position
 
         permissions: dict[str, Permission] = {}
+        created_permission_codes: set[str] = set()
         for item in PERMISSION_CATALOG:
             permission = db.scalar(select(Permission).where(Permission.code == item["code"]))
             if permission is None:
@@ -329,13 +330,17 @@ def seed_authorization_catalog(db: Session) -> None:
                 )
                 db.add(permission)
                 db.flush()
+                created_permission_codes.add(permission.code)
             else:
                 permission.name = item["name"]
                 permission.resource = item["resource"]
             permissions[item["code"]] = permission
 
         for grant in POSITION_GRANTS:
-            if grant["position_code"] not in created_position_codes:
+            if (
+                grant["position_code"] not in created_position_codes
+                and grant["permission_code"] not in created_permission_codes
+            ):
                 continue
             position = positions[grant["position_code"]]
             permission = permissions[grant["permission_code"]]

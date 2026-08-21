@@ -210,6 +210,39 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
             PositionPermission.scope_ref == "supplymanagement",
         )))
 
+    def test_catalog_seed_adds_new_permission_once_without_restoring_removed_grant(self):
+        position = self.db.scalar(select(Position).where(Position.code == "supply.business_handler"))
+        permission = self.db.scalar(select(Permission).where(Permission.code == "organization.directory.view"))
+        self.db.query(PositionPermission).filter(
+            PositionPermission.permission_id == permission.id
+        ).delete()
+        self.db.delete(permission)
+        self.db.commit()
+
+        seed_authorization_catalog(self.db)
+
+        recreated_permission = self.db.scalar(select(Permission).where(
+            Permission.code == "organization.directory.view"
+        ))
+        grant = self.db.scalar(select(PositionPermission).where(
+            PositionPermission.position_id == position.id,
+            PositionPermission.permission_id == recreated_permission.id,
+            PositionPermission.data_scope == DataScope.COMPANY,
+            PositionPermission.scope_ref == "supplymanagement",
+        ))
+        self.assertIsNotNone(grant)
+        self.db.delete(grant)
+        self.db.commit()
+
+        seed_authorization_catalog(self.db)
+
+        self.assertIsNone(self.db.scalar(select(PositionPermission).where(
+            PositionPermission.position_id == position.id,
+            PositionPermission.permission_id == recreated_permission.id,
+            PositionPermission.data_scope == DataScope.COMPANY,
+            PositionPermission.scope_ref == "supplymanagement",
+        )))
+
     def test_catalog_seed_grants_defaults_to_new_catalog_position(self):
         position = self.db.scalar(select(Position).where(Position.code == "zhanwei.general_manager"))
         self.db.delete(position)
