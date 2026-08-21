@@ -324,9 +324,7 @@ def create_case(
             current_user,
             "case",
             payload.initiator_assignment_id,
-            payload.organization_code or (
-                "investment.legal_risk" if current_user.is_superuser else None
-            ),
+            payload.organization_code,
         )
     except LegalOwnershipError as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc

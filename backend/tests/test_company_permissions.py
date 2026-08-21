@@ -491,7 +491,11 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
 
         created_contract = self.client.post(
             "/api/v1/contracts",
-            json={"contract_no": "ADMIN-DISPOSABLE", "title": "Admin Draft"},
+            json={
+                "contract_no": "ADMIN-DISPOSABLE",
+                "title": "Admin Draft",
+                "organization_code": "supplymanagement",
+            },
         )
         self.assertEqual(created_contract.status_code, 200, created_contract.text)
         contract_id = created_contract.json()["data"]["id"]

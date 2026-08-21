@@ -313,9 +313,7 @@ def create_contract(
             current_user,
             "contract",
             payload.initiator_assignment_id,
-            payload.organization_code or (
-                CompanyCode.SUPPLY_MANAGEMENT.value if current_user.is_superuser else None
-            ),
+            payload.organization_code,
         )
     except LegalOwnershipError as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
