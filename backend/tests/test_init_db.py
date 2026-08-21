@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db import init_db
 from app.models.organization import UserAssignment
 from app.models.user import User
+from app.models.workflow import WorkflowDefinition, WorkflowVersion
 
 
 class DatabaseInitializationTest(unittest.TestCase):
@@ -37,6 +38,19 @@ class DatabaseInitializationTest(unittest.TestCase):
                     "investment.duty.supply_risk_review",
                 )
                 self.assertEqual(assignment.source, "legacy")
+                self.assertEqual(
+                    db.query(WorkflowDefinition)
+                    .filter(WorkflowDefinition.code.like("investment.contract.%"))
+                    .count(),
+                    3,
+                )
+                self.assertEqual(
+                    db.query(WorkflowVersion)
+                    .join(WorkflowVersion.definition)
+                    .filter(WorkflowDefinition.code.like("investment.contract.%"))
+                    .count(),
+                    3,
+                )
         finally:
             engine.dispose()
 

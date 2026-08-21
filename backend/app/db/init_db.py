@@ -6,7 +6,7 @@
 import base64
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.core.enums import CompanyCode, InvoiceStatus, Role
@@ -256,14 +256,28 @@ def seed_invoices(db: Session) -> None:
 
 
 def init() -> None:
+    fresh_database = not inspect(engine).has_table("sys_user")
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
         from app.services.legacy_assignment_migration import migrate_legacy_assignments
+        from scripts.migrate_legal_contract_authorization import apply_migration
 
         seed_authorization_catalog(db)
         seed_users(db)
         migrate_legacy_assignments(db, dry_run=False)
+        if fresh_database:
+            publisher = db.scalar(
+                select(User)
+                .where(User.is_superuser.is_(True), User.is_active.is_(True))
+                .order_by(User.id)
+            )
+            report = apply_migration(db, publisher.id if publisher else 0)
+            if report["blocking_issues"]:
+                raise RuntimeError(
+                    "Fresh database authorization initialization was blocked: "
+                    f"{report['blocking_issues']}"
+                )
         seed_operation(db)
         seed_customers(db)
         seed_channels(db)

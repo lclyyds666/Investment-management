@@ -565,14 +565,39 @@ class OrganizationAdminApiTest(unittest.TestCase):
         self.assertTrue(position["is_active"])
         self.assertEqual(position["permissions"], [
             {
+                "permission_code": "investment.legal.alerts.update",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
                 "permission_code": "investment.legal.alerts.view",
-                "data_scope": "company",
-                "scope_ref": "investment",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
+                "permission_code": "investment.legal.cases.review",
+                "data_scope": "assigned",
+                "scope_ref": "",
             },
             {
                 "permission_code": "investment.legal.cases.view",
-                "data_scope": "company",
-                "scope_ref": "investment",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
+                "permission_code": "investment.legal.contracts.return",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
+                "permission_code": "investment.legal.contracts.review",
+                "data_scope": "assigned",
+                "scope_ref": "",
+            },
+            {
+                "permission_code": "investment.legal.contracts.view",
+                "data_scope": "assigned",
+                "scope_ref": "",
             },
             {
                 "permission_code": "investment.portal.enter",

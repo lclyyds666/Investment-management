@@ -246,24 +246,32 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
             "supplymanagement": "invest_director",
         })
 
-    def test_each_investment_executive_snapshot_has_exact_read_only_boundary(self):
+    def test_each_investment_executive_snapshot_has_exact_authorization_boundary(self):
         for index, position_code in enumerate(INVESTMENT_EXECUTIVE_POSITION_CODES):
             with self.subTest(position_code=position_code):
                 user = self.add_user(f"snapshot-executive-{index}")
                 self.add_assignment(user, "investment", position_code)
 
                 snapshot = permission_snapshot_for_user(self.db, user)
+                expected_permissions = INVESTMENT_EXECUTIVE_READ_PERMISSIONS | {
+                    "investment.legal.cases.export",
+                    "investment.legal.contracts.view",
+                    "investment.legal.contracts.export",
+                    "investment.legal.contracts.review",
+                    "investment.legal.contracts.approve",
+                    "investment.legal.contracts.return",
+                }
 
                 self.assertEqual(
                     {item.code for item in snapshot.permissions},
-                    INVESTMENT_EXECUTIVE_READ_PERMISSIONS,
+                    expected_permissions,
                 )
                 self.assertEqual(
                     set(snapshot.resources),
                     {
                         resource.value
                         for resource, permission_code in RESOURCE_VIEW_PERMISSIONS.items()
-                        if permission_code in INVESTMENT_EXECUTIVE_READ_PERMISSIONS
+                        if permission_code in expected_permissions
                     },
                 )
 

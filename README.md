@@ -240,6 +240,7 @@ mysql -u root -p sd_publish_scm < backend/migrations/20260814_position_workflow_
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_foundation.sql             # 用户手机号、法务权限目录和钉钉提醒开关
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_domain.sql                 # 法务风控独立数据域
 mysql -u root -p sd_publish_scm < backend/migrations/20260814_legal_risk_hardening.sql              # 预警投递并发领取加固（幂等）
+mysql -u root -p sd_publish_scm < backend/migrations/20260821_legal_contract_organization_authorization.sql # 法务合同组织归属、动态候选规则与路由版本
 ```
 
 ### 统一权限与活动流程生产迁移顺序
@@ -279,6 +280,25 @@ PY
 ```
 
 任一报告出现 `unresolved` 非零,或条目结果为 `needs_designation` / `invalid_state`,必须停止部署并人工修复任职、指定审批人或流程状态后重新预览;禁止猜测人员、禁止跳过预览直接应用。应用后必须确认不存在 `status='pending'` 且 `workflow_instance_id IS NULL` 的合同或审批单,并逐项对照 preview/apply 报告;全部通过后才能恢复新提交。预览与应用报告均须随数据库备份长期保留,用于上线核对和审计追溯。
+
+### 法务合同组织授权生产迁移
+
+执行 `20260821_legal_contract_organization_authorization.sql` 后,在 `backend/`
+目录先预览、确认 `blocking_issues` 为空,再应用：
+
+```bash
+.venv/bin/python -m scripts.migrate_legal_contract_authorization --report /opt/sd-scm/reports/legal-contract-authorization-preview.json
+.venv/bin/python -m scripts.migrate_legal_contract_authorization --report /opt/sd-scm/reports/legal-contract-authorization-apply.json --apply
+```
+
+预览严格不写数据库;报告固定包含 `organizations`、`positions`、
+`permissions`、`ownership_backfill`、`workflow_versions`、`blocking_issues`。
+目录编码冲突、没有启用中的超管发布人、活动任职跨流程节点冲突时命令退出
+`2`,禁止应用。应用会将历史合同归属回填为 `supplymanagement`,历史案件归属
+回填为 `investment` / `investment.legal_risk`,历史 `initiator_assignment_id`
+保留空值,历史合同 `workflow_route_version` 保持 `0`,并仅幂等发布三套
+`investment.contract.*` 工作流。迁移不改写已有流程实例、节点、任务、动作以及
+岗位/签名快照;重复应用不重复建版本,也不恢复管理员后续移除的岗位权限。
 
 > 新表/新依赖提醒:业务审批打印/签章图嵌入需 **Pillow**;景区台账、对账单等 Excel 解析用 **openpyxl**——升级生产后须 `pip install -r requirements.txt`。
 
