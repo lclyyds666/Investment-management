@@ -5,16 +5,18 @@ const contractApi = vi.hoisted(() => ({
   listContracts: vi.fn(), createContract: vi.fn(), updateContract: vi.fn(), deleteContract: vi.fn(), submitContract: vi.fn(),
   uploadContractAttachment: vi.fn(), approveContract: vi.fn(), rejectContract: vi.fn(), aiReviewContract: vi.fn(), fetchContractAttachmentBlob: vi.fn()
 }))
-const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowTimeline: vi.fn() }))
+const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowSubmissionPlan: vi.fn(), getWorkflowTimeline: vi.fn() }))
+const legalApi = vi.hoisted(() => ({ listLegalInitiatorOptions: vi.fn(() => Promise.resolve([])) }))
 const badgeStore = vi.hoisted(() => ({ refresh: vi.fn() }))
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/customer', () => ({ listCustomers: vi.fn(() => Promise.resolve([])) }))
 vi.mock('@/api/knowledge', () => ({ listKnowledge: vi.fn(), uploadKnowledge: vi.fn(), deleteKnowledge: vi.fn() }))
 vi.mock('@/api/workflow', () => workflowApi)
+vi.mock('@/api/legalRisk', () => legalApi)
 vi.mock('@/components/workflow/DesignatedApproverFields.vue', () => ({
   default: {
-    props: ['workflowCode'],
-    async mounted() { await workflowApi.listWorkflowCandidates(this.workflowCode, 'company_leader') },
+    props: ['workflowCode', 'nodes', 'targetType', 'targetId'],
+    async mounted() { await workflowApi.listWorkflowCandidates(this.workflowCode, 'company_leader', this.targetType, this.targetId) },
     template: '<div data-testid="selector-stub" />'
   }
 }))
@@ -53,6 +55,37 @@ describe('contract designated submit', () => {
     vi.clearAllMocks()
     contractApi.listContracts.mockResolvedValue([])
     contractApi.submitContract.mockResolvedValue({})
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([])
+    workflowApi.getWorkflowSubmissionPlan.mockResolvedValue({ nodes: [] })
+  })
+
+  it('requires an initiator assignment when several legal origins are available', async () => {
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: 11, organization_code: 'investment.general', organization_name: '综合管理部', company_code: 'investment' },
+      { assignment_id: 12, organization_code: 'supplymanagement', organization_name: '山东出版供应链管理有限公司', company_code: 'supplymanagement' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openCreate()
+    expect(wrapper.vm.form.initiator_assignment_id).toBeNull()
+    expect(wrapper.vm.rules.initiator_assignment_id[0].required).toBe(true)
+  })
+
+  it('loads the server submission plan before opening the designated chain', async () => {
+    workflowApi.getWorkflowSubmissionPlan.mockResolvedValue({
+      workflow_code: 'investment.contract.department.v1',
+      workflow_name: '投资公司部门合同审批',
+      organization_name: '综合管理部',
+      nodes: [
+        { code: 'department_head', name: '经办部门负责人', position_name: '部门主任' },
+        { code: 'chairman', name: '单位主要负责人', position_name: '董事长' }
+      ]
+    })
+    const wrapper = mountView()
+    await wrapper.vm.onSubmit({ id: 7, status: 'draft', workflow_instance_id: null })
+    expect(workflowApi.getWorkflowSubmissionPlan).toHaveBeenCalledWith('contract', 7)
+    expect(wrapper.vm.submitVisible).toBe(true)
+    expect(wrapper.vm.submitNodes.map(node => node.name)).toEqual(['经办部门负责人', '单位主要负责人'])
   })
 
   it('blocks first submission until the selector validates and sends designated users', async () => {

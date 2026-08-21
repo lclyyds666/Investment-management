@@ -13,6 +13,7 @@ export function getContract(id) {
   return request.get(`/contracts/${id}`)
 }
 
+/** 新建合同，法务合同需携带 initiator_assignment_id。 */
 export function createContract(data) {
   return request.post('/contracts', data)
 }

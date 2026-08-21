@@ -59,6 +59,29 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="contract-form">
         <el-row :gutter="12">
           <el-col :span="12">
+            <el-form-item v-if="!isEdit" label="发起归属" prop="initiator_assignment_id">
+              <el-input
+                v-if="initiatorOptions.length === 1"
+                :model-value="initiatorOptions[0].organization_name"
+                readonly
+              />
+              <el-select
+                v-else
+                v-model="form.initiator_assignment_id"
+                placeholder="请选择发起归属"
+                style="width: 100%"
+                @change="onInitiatorAssignmentChange"
+              >
+                <el-option
+                  v-for="option in initiatorOptions"
+                  :key="option.assignment_id"
+                  :label="option.organization_name"
+                  :value="option.assignment_id"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
             <el-form-item label="申请部门"><el-input v-model="form.department" /></el-form-item>
           </el-col>
           <el-col :span="12">
@@ -168,7 +191,10 @@
         v-if="submitVisible"
         ref="submitFieldsRef"
         v-model="selectedApprovers"
-        workflow-code="supply.contract.v2"
+        :workflow-code="submitPlan?.workflow_code || ''"
+        :nodes="submitNodes"
+        target-type="contract"
+        :target-id="submitCurrent?.id || null"
         :exclude-user-id="userStore.userInfo?.id"
       />
       <template #footer>
@@ -315,7 +341,7 @@ import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Downl
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
-import { STATUS_META } from '@/constants/business'
+import { COMPANY_NAMES, STATUS_META } from '@/constants/business'
 import { canUsePermission } from '@/utils/businessAuthorization'
 import { renderSafeMarkdown } from '@/utils/safeMarkdown'
 import { previewBlob, downloadBlob } from '@/utils/file'
@@ -328,6 +354,8 @@ import {
 } from '@/api/contract'
 import { listCustomers } from '@/api/customer'
 import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge'
+import { listLegalInitiatorOptions } from '@/api/legalRisk'
+import { getWorkflowSubmissionPlan } from '@/api/workflow'
 
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 
@@ -382,6 +410,23 @@ function onCustomerChange(name) {
   if (c) form.customer_credit_code = c.social_credit_code || ''
 }
 
+const initiatorOptions = ref([])
+async function loadInitiatorOptions() {
+  try {
+    initiatorOptions.value = await listLegalInitiatorOptions('contract')
+    rules.initiator_assignment_id[0].required = initiatorOptions.value.length > 1
+    if (!isEdit.value && dialogVisible.value && initiatorOptions.value.length === 1) onInitiatorAssignmentChange(initiatorOptions.value[0].assignment_id)
+  } catch {
+    initiatorOptions.value = []
+  }
+}
+function onInitiatorAssignmentChange(assignmentId) {
+  const option = initiatorOptions.value.find((item) => Number(item.assignment_id) === Number(assignmentId))
+  if (!option) return
+  form.initiator_assignment_id = option.assignment_id
+  form.party_a = option.company_name || COMPANY_NAMES[option.company_code] || form.party_a
+}
+
 // 新建 / 编辑
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -405,19 +450,22 @@ const emptyForm = () => ({
   payment_terms: '',
   sign_date: null,
   remark: '',
-  attachment_name: ''
+  attachment_name: '',
+  initiator_assignment_id: null
 })
 const form = reactive(emptyForm())
-const rules = {
+const rules = reactive({
   contract_no: [{ required: true, message: '请输入合同编号', trigger: 'blur' }],
-  title: [{ required: true, message: '请输入合同名称', trigger: 'blur' }]
-}
+  title: [{ required: true, message: '请输入合同名称', trigger: 'blur' }],
+  initiator_assignment_id: [{ required: false, message: '请选择发起归属', trigger: 'change' }]
+})
 
 function openCreate() {
   isEdit.value = false
   editingId.value = null
   pickedFile.value = null
   Object.assign(form, emptyForm())
+  if (initiatorOptions.value.length === 1) onInitiatorAssignmentChange(initiatorOptions.value[0].assignment_id)
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
 }
@@ -441,7 +489,8 @@ function openEdit(row) {
     payment_terms: row.payment_terms || '',
     sign_date: row.sign_date || null,
     remark: row.remark,
-    attachment_name: row.attachment_name || ''
+    attachment_name: row.attachment_name || '',
+    initiator_assignment_id: null
   })
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
@@ -452,7 +501,7 @@ async function onSave() {
   try {
     let contractId = editingId.value
     if (isEdit.value) {
-      const { contract_no, attachment_name, ...rest } = form
+      const { contract_no, attachment_name, initiator_assignment_id, ...rest } = form
       await updateContract(editingId.value, { ...rest })
     } else {
       const { attachment_name, ...rest } = form
@@ -487,15 +536,18 @@ function onFileChange(file) {
 const submitVisible = ref(false)
 const submitSaving = ref(false)
 const submitCurrent = ref(null)
+const submitPlan = ref(null)
+const submitNodes = computed(() => submitPlan.value?.nodes || [])
 const submitFieldsRef = ref()
 const selectedApprovers = ref({})
 
 function isHandlerResubmit(row) {
-  return Boolean(row.workflow_instance_id && row.active_task?.node_code === 'handler')
+  return Boolean(row.workflow_instance_id && ['initiator', 'handler'].includes(row.active_task?.node_code))
 }
 
 function resetSubmitDialog() {
   submitCurrent.value = null
+  submitPlan.value = null
   selectedApprovers.value = {}
 }
 
@@ -518,6 +570,7 @@ async function onSubmit(row) {
     return
   }
   submitCurrent.value = row
+  submitPlan.value = await getWorkflowSubmissionPlan('contract', row.id)
   selectedApprovers.value = {}
   submitVisible.value = true
 }
@@ -734,7 +787,7 @@ async function onKbDelete(row) {
   await loadKb()
 }
 
-onMounted(() => { load(); loadCustomers() })
+onMounted(() => { load(); loadCustomers(); loadInitiatorOptions() })
 </script>
 
 <style scoped lang="scss">

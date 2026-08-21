@@ -4,6 +4,7 @@ const BASE = '/legal-risk'
 
 export const listCases = (params) => request.get(`${BASE}/cases`, { params })
 export const listLegalUserOptions = () => request.get(`${BASE}/user-options`)
+export const listLegalInitiatorOptions = (resource) => request.get(`${BASE}/initiator-options`, { params: { resource } })
 export const createCase = (data) => request.post(`${BASE}/cases`, data)
 export const getCase = (id) => request.get(`${BASE}/cases/${id}`)
 export const updateCase = (id, data) => request.put(`${BASE}/cases/${id}`, data)

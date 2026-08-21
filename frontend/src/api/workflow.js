@@ -1,11 +1,22 @@
 import request from './request'
 
-export function listWorkflowCandidates(workflowCode, nodeCode) {
+export function listWorkflowCandidates(workflowCode, nodeCode, targetType, targetId) {
   if (typeof workflowCode === 'object') {
     return request.get('/workflows/candidates', { params: { task_id: workflowCode.taskId } })
   }
+  const params = { workflow_code: workflowCode, node_code: nodeCode }
+  if (targetType && targetId) {
+    params.target_type = targetType
+    params.target_id = targetId
+  }
   return request.get('/workflows/candidates', {
-    params: { workflow_code: workflowCode, node_code: nodeCode }
+    params
+  })
+}
+
+export function getWorkflowSubmissionPlan(targetType, targetId) {
+  return request.get('/workflows/submission-plan', {
+    params: { target_type: targetType, target_id: targetId }
   })
 }
 
