@@ -188,6 +188,44 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
         self.assertEqual(before, after_first)
         self.assertEqual(after_first, after_second)
 
+    def test_catalog_seed_preserves_existing_permission_grant_changes(self):
+        position = self.db.scalar(select(Position).where(Position.code == "supply.business_handler"))
+        permission = self.db.scalar(select(Permission).where(Permission.code == "supply.contract.view"))
+        grant = self.db.scalar(select(PositionPermission).where(
+            PositionPermission.position_id == position.id,
+            PositionPermission.permission_id == permission.id,
+            PositionPermission.data_scope == DataScope.COMPANY,
+            PositionPermission.scope_ref == "supplymanagement",
+        ))
+        self.assertIsNotNone(grant)
+        self.db.delete(grant)
+        self.db.commit()
+
+        seed_authorization_catalog(self.db)
+
+        self.assertIsNone(self.db.scalar(select(PositionPermission).where(
+            PositionPermission.position_id == position.id,
+            PositionPermission.permission_id == permission.id,
+            PositionPermission.data_scope == DataScope.COMPANY,
+            PositionPermission.scope_ref == "supplymanagement",
+        )))
+
+    def test_catalog_seed_grants_defaults_to_new_catalog_position(self):
+        position = self.db.scalar(select(Position).where(Position.code == "zhanwei.general_manager"))
+        self.db.delete(position)
+        self.db.commit()
+
+        seed_authorization_catalog(self.db)
+
+        recreated = self.db.scalar(select(Position).where(Position.code == "zhanwei.general_manager"))
+        directory_permission = self.db.scalar(select(Permission).where(Permission.code == "organization.directory.view"))
+        self.assertIsNotNone(self.db.scalar(select(PositionPermission).where(
+            PositionPermission.position_id == recreated.id,
+            PositionPermission.permission_id == directory_permission.id,
+            PositionPermission.data_scope == DataScope.COMPANY,
+            PositionPermission.scope_ref == "supplymanagement",
+        )))
+
     def test_permission_scope_refs_resolve_active_catalog_targets(self):
         position = self.db.scalar(select(Position).where(Position.code == "supply.business_handler"))
         company_scope = PositionPermissionWrite(
