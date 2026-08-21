@@ -7,10 +7,17 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException, UploadFile
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 
+from app.api.v1.endpoints.legal_risk import _attachment_for_user
 from app.core.config import settings
 from app.core.enums import Role
+from app.db.base import Base
+from app.models.customer import Customer  # noqa: F401
+from app.models.legal_risk import LegalAttachment, LegalCase
+from app.models.user import User
 from app.services.legal_attachments import (
     attachment_path,
     can_delete_attachment,
@@ -18,6 +25,7 @@ from app.services.legal_attachments import (
     validate_attachment_relation,
 )
 from app.services.legal_permissions import LegalAccessContext, LegalCapability
+from app.services.legal_record_scope import LegalRecordScope
 
 
 class LegalAttachmentSecurityTest(unittest.TestCase):
@@ -136,6 +144,51 @@ class LegalAttachmentSecurityTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 422)
         self.assertIn("不属于当前案件", raised.exception.detail)
+
+    def test_cross_company_attachment_is_hidden_as_not_found(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            owner = User(
+                username="owner", full_name="owner", hashed_password="hashed",
+                role=Role.BUSINESS_HANDLER, is_active=True,
+            )
+            viewer = User(
+                username="viewer", full_name="viewer", hashed_password="hashed",
+                role=Role.BUSINESS_HANDLER, is_active=True,
+            )
+            db.add_all([owner, viewer]); db.flush()
+            case = LegalCase(
+                case_name="供管案件", created_by=owner.id,
+                company_code="supplymanagement", organization_code="supplymanagement",
+            )
+            db.add(case); db.flush()
+            attachment = LegalAttachment(
+                case_id=case.id, related_type="case", category="evidence",
+                original_name="evidence.pdf", storage_name="scope-evidence.pdf",
+                extension=".pdf", mime_type="application/pdf", size_bytes=1,
+                sha256="0" * 64, uploaded_by=owner.id,
+            )
+            db.add(attachment); db.commit()
+            context = LegalAccessContext(
+                user_id=viewer.id,
+                role=None,
+                is_superuser=False,
+                capabilities=frozenset({LegalCapability.VIEW_CASE}),
+                record_scope=LegalRecordScope(
+                    user_id=viewer.id,
+                    global_access=False,
+                    company_codes=frozenset({"fundmanagement"}),
+                    organization_codes=frozenset(),
+                ),
+            )
+
+            with patch("app.api.v1.endpoints.legal_risk.access_context", return_value=context):
+                with self.assertRaises(HTTPException) as raised:
+                    _attachment_for_user(db, attachment.id, viewer)
+
+            self.assertEqual(raised.exception.status_code, 404)
+        engine.dispose()
 
 
 if __name__ == "__main__":

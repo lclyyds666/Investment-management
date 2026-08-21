@@ -84,7 +84,7 @@ def get_case_or_403(
             select(LegalCase).where(LegalCase.id == case_id, LegalCase.deleted_at.is_(None))
         )
     if case is None or not can_access_case(db, case, context):
-        raise HTTPException(status_code=403, detail="无权访问该案件")
+        raise HTTPException(status_code=404, detail="案件不存在")
     return case
 
 

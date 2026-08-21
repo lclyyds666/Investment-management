@@ -66,6 +66,13 @@ LEGAL_CONTRACT_PERMISSION_CODES = (
     "investment.legal.contracts.export",
 )
 
+LEGAL_CASE_PERMISSION_CODES = (
+    "investment.legal.cases.view", "investment.legal.cases.create",
+    "investment.legal.cases.update", "investment.legal.cases.delete",
+    "investment.legal.cases.review", "investment.legal.cases.import",
+    "investment.legal.cases.export",
+)
+
 
 PERMISSION_CODES = (
     "supply.portal.enter", "supply.dashboard.view", "supply.operation.view", "supply.operation.create", "supply.operation.export",
@@ -75,7 +82,8 @@ PERMISSION_CODES = (
     "supply.approval.view", "supply.approval.create", "supply.approval.update", "supply.approval.delete", "supply.approval.submit", "supply.approval.review", "supply.approval.approve", "supply.approval.return", "supply.approval.export",
     "supply.customer.view", "supply.customer.create", "supply.customer.update", "supply.customer.delete", "supply.customer.export",
     "supply.channel.view", "supply.channel.configure", "organization.directory.view", "investment.portal.enter", "fund.portal.enter",
-    "investment.legal.dashboard.view", "investment.legal.cases.view", "investment.legal.alerts.view",
+    "investment.legal.dashboard.view", *LEGAL_CASE_PERMISSION_CODES,
+    "investment.legal.alerts.view", "investment.legal.alerts.update",
     "investment.legal.statistics.view", "investment.legal.admin.view",
     *LEGAL_CONTRACT_PERMISSION_CODES,
 )
@@ -146,6 +154,19 @@ LEGAL_BUSINESS_POSITION_CODES = (
     "supply.company_leader",
     "investment.duty.supply_risk_review",
     "investment.duty.supply_finance_review",
+    "supply.senior_manager",
+    "fund.chairman",
+    "fund.general_manager",
+    "zhanwei.general_manager",
+    "zhanwei.deputy_general_manager",
+    "zhanwei.senior_manager",
+    "zhanwei.middle_manager",
+    "zhanwei.junior_manager",
+    "xinhuaproperty.chairman",
+    "xinhuaproperty.general_manager",
+    "xinhuaproperty.deputy_general_manager",
+    "xinhuaproperty.department.director",
+    "xinhuaproperty.department.employee",
 )
 LEGAL_MANAGEMENT_POSITION_CODES = (
     *INVESTMENT_EXECUTIVE_POSITION_CODES,
@@ -155,6 +176,45 @@ LEGAL_COUNSEL_POSITION_CODES = ("external.legal_counsel",)
 LEGAL_ACCESS_POSITION_CODES = tuple(dict.fromkeys(
     (*LEGAL_BUSINESS_POSITION_CODES, *LEGAL_MANAGEMENT_POSITION_CODES, *LEGAL_COUNSEL_POSITION_CODES)
 ))
+
+LEGAL_CASE_BUSINESS_PERMISSIONS = frozenset(LEGAL_CASE_PERMISSION_CODES) | frozenset({
+    "investment.legal.dashboard.view",
+    "investment.legal.alerts.view",
+    "investment.legal.alerts.update",
+    "investment.legal.statistics.view",
+})
+LEGAL_CASE_MANAGEMENT_PERMISSIONS = frozenset({
+    "investment.legal.dashboard.view",
+    "investment.legal.cases.view",
+    "investment.legal.cases.export",
+    "investment.legal.alerts.view",
+    "investment.legal.statistics.view",
+})
+LEGAL_CASE_COUNSEL_PERMISSIONS = frozenset({
+    "investment.legal.cases.view",
+    "investment.legal.cases.review",
+    "investment.legal.alerts.view",
+    "investment.legal.alerts.update",
+})
+
+LEGAL_CONTRACT_CREATOR_POSITION_CODES = tuple(
+    position_code
+    for position_code in LEGAL_BUSINESS_POSITION_CODES
+    if not position_code.startswith("xinhuaproperty.")
+)
+
+
+def _legal_grants(position_codes, permission_codes, *, data_scope="company"):
+    return tuple(
+        {
+            "position_code": position_code,
+            "permission_code": permission_code,
+            "data_scope": data_scope,
+            "scope_ref": "investment" if data_scope == "company" else "",
+        }
+        for position_code in position_codes
+        for permission_code in sorted(permission_codes)
+    )
 
 INVESTMENT_EXECUTIVE_READ_PERMISSIONS = frozenset({
     "investment.portal.enter",
@@ -270,9 +330,18 @@ POSITION_GRANTS = (
         for position_code in LEGAL_ACCESS_POSITION_CODES
         if position_code not in INVESTMENT_EXECUTIVE_POSITION_CODES
     ),
-    *_legal_view_grants(LEGAL_BUSINESS_POSITION_CODES, LEGAL_BUSINESS_VIEW_PERMISSIONS),
-    *_legal_view_grants(LEGAL_MANAGEMENT_POSITION_CODES, LEGAL_BUSINESS_VIEW_PERMISSIONS),
-    *_legal_view_grants(LEGAL_COUNSEL_POSITION_CODES, LEGAL_COUNSEL_VIEW_PERMISSIONS),
+    *_legal_grants(LEGAL_BUSINESS_POSITION_CODES, LEGAL_CASE_BUSINESS_PERMISSIONS),
+    *_legal_grants(LEGAL_MANAGEMENT_POSITION_CODES, LEGAL_CASE_MANAGEMENT_PERMISSIONS),
+    *_legal_grants(LEGAL_COUNSEL_POSITION_CODES, LEGAL_CASE_COUNSEL_PERMISSIONS, data_scope="assigned"),
+    *_legal_grants(LEGAL_CONTRACT_CREATOR_POSITION_CODES, LEGAL_CONTRACT_PERMISSION_CODES),
+    *_legal_grants(LEGAL_MANAGEMENT_POSITION_CODES, {
+        "investment.legal.contracts.view", "investment.legal.contracts.export",
+        "investment.legal.contracts.review", "investment.legal.contracts.approve",
+        "investment.legal.contracts.return",
+    }),
+    *_legal_grants(LEGAL_COUNSEL_POSITION_CODES, {
+        "investment.legal.contracts.view", "investment.legal.contracts.review",
+    }, data_scope="assigned"),
     {"position_code": "fund.chairman", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     {"position_code": "fund.general_manager", "permission_code": "fund.portal.enter", "data_scope": "platform", "scope_ref": "fundmanagement"},
     *(

@@ -909,7 +909,7 @@ def _attachment_for_user(
         LegalAttachment.deleted_at.is_(None),
     ))
     if row is None:
-        raise HTTPException(status_code=403, detail="无权访问该附件")
+        raise HTTPException(status_code=404, detail="附件不存在")
     context = access_context(db, current_user)
     case = get_case_or_403(db, row.case_id, context)
     return row, case
@@ -979,7 +979,7 @@ def delete_attachment(
 def _alert_for_user(db: Session, alert_id: int, current_user: User) -> LegalCaseAlert:
     alert = db.get(LegalCaseAlert, alert_id)
     if alert is None:
-        raise HTTPException(status_code=403, detail="无权访问该预警")
+        raise HTTPException(status_code=404, detail="预警不存在")
     context = access_context(db, current_user)
     get_case_or_403(db, alert.case_id, context)
     return alert
