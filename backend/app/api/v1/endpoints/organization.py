@@ -16,6 +16,7 @@ from app.schemas.organization_admin import (
     UserAssignmentsReplace,
 )
 from app.services.assignment_permissions import PermissionContext, has_permission
+from app.services.organization_catalog import permission_catalog_item
 from app.services.organization_admin import (
     AuthorizationConflictError,
     create_organization,
@@ -199,6 +200,7 @@ def list_permissions(
             "code": permission.code,
             "name": permission.name,
             "resource": permission.resource,
+            "resource_name": permission_catalog_item(permission.code)["resource_name"],
             "action": permission.action,
             "is_active": permission.is_active,
         }

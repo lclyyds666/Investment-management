@@ -6,6 +6,8 @@ class CompanyCode(str, Enum):
     INVESTMENT = "investment"
     SUPPLY_MANAGEMENT = "supplymanagement"
     FUND_MANAGEMENT = "fundmanagement"
+    ZHANWEI = "zhanwei"
+    XINHUA_PROPERTY = "xinhuaproperty"
 
 
 class ResourceCode(str, Enum):

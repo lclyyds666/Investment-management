@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.main import create_app
-from app.core.enums import DataScope, PositionCategory, Role
+from app.core.enums import DataScope, OrganizationType, PermissionAction, PositionCategory, Role
 from app.db.base import Base
-from app.models.organization import ExternalAssignment, GovernanceScope, Organization, Position, UserAssignment
+from app.models.organization import ExternalAssignment, GovernanceScope, Organization, Permission, Position, PositionPermission, UserAssignment
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.schemas.organization_admin import (
@@ -139,6 +139,54 @@ class OrganizationAdminServiceValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(AuthorizationConflictError, "target subsidiary"):
             replace_user_assignments(self.db, self.user.id, payload)
+
+    def test_catalog_seed_is_idempotent_and_refreshes_managed_labels(self):
+        supply_organization = self.db.scalar(
+            select(Organization).where(Organization.code == "supplymanagement")
+        )
+        supply = self.db.scalar(select(Position).where(Position.code == "supply.business_handler"))
+        legal_alert = self.db.scalar(select(Permission).where(Permission.code == "investment.legal.alerts.view"))
+        supply_organization.organization_type = OrganizationType.DEPARTMENT
+        supply_organization.company_code = "custom-company"
+        supply_organization.sort_order = 999
+        supply.name = "旧名称"
+        supply.category = PositionCategory.DUTY
+        legal_alert.name = "old name"
+        legal_alert.resource = "old.resource"
+        legal_alert.action = PermissionAction.CREATE
+        self.db.commit()
+        before = {
+            "organizations": self.db.scalar(select(func.count()).select_from(Organization)),
+            "positions": self.db.scalar(select(func.count()).select_from(Position)),
+            "permissions": self.db.scalar(select(func.count()).select_from(Permission)),
+            "grants": self.db.scalar(select(func.count()).select_from(PositionPermission)),
+        }
+
+        seed_authorization_catalog(self.db)
+        after_first = {
+            "organizations": self.db.scalar(select(func.count()).select_from(Organization)),
+            "positions": self.db.scalar(select(func.count()).select_from(Position)),
+            "permissions": self.db.scalar(select(func.count()).select_from(Permission)),
+            "grants": self.db.scalar(select(func.count()).select_from(PositionPermission)),
+        }
+        seed_authorization_catalog(self.db)
+        after_second = {
+            "organizations": self.db.scalar(select(func.count()).select_from(Organization)),
+            "positions": self.db.scalar(select(func.count()).select_from(Position)),
+            "permissions": self.db.scalar(select(func.count()).select_from(Permission)),
+            "grants": self.db.scalar(select(func.count()).select_from(PositionPermission)),
+        }
+
+        self.assertEqual(supply.name, "供管公司初级经理")
+        self.assertEqual(supply.category, PositionCategory.DUTY)
+        self.assertEqual(supply_organization.organization_type, OrganizationType.DEPARTMENT)
+        self.assertEqual(supply_organization.company_code, "custom-company")
+        self.assertEqual(supply_organization.sort_order, 999)
+        self.assertEqual(legal_alert.name, "法务预警查看")
+        self.assertEqual(legal_alert.resource, "investment.legal.alerts")
+        self.assertEqual(legal_alert.action, PermissionAction.CREATE)
+        self.assertEqual(before, after_first)
+        self.assertEqual(after_first, after_second)
 
     def test_permission_scope_refs_resolve_active_catalog_targets(self):
         position = self.db.scalar(select(Position).where(Position.code == "supply.business_handler"))
@@ -408,6 +456,17 @@ class OrganizationAdminApiTest(unittest.TestCase):
     def test_business_user_cannot_read_permission_templates(self):
         response = self.client.get("/api/v1/organizations/permissions")
         self.assertEqual(response.status_code, 403)
+
+    def test_permission_catalog_exposes_chinese_names(self):
+        self.current_user = self.admin
+
+        response = self.client.get("/api/v1/organizations/permissions")
+
+        self.assertEqual(response.status_code, 200)
+        permissions = {item["code"]: item for item in response.json()}
+        self.assertEqual(permissions["investment.legal.alerts.view"]["name"], "法务预警查看")
+        self.assertEqual(permissions["investment.legal.contracts.submit"]["name"], "法务合同提交")
+        self.assertEqual(permissions["investment.legal.contracts.submit"]["resource_name"], "法务合同")
 
     def test_business_user_cannot_read_system_audit_apis(self):
         for method, path in (

@@ -9,6 +9,7 @@ from app.core.enums import AssignmentStatus, CompanyCode, DataScope, Organizatio
 GOVERNANCE_POSITION_TARGETS = {
     "governance.supply_leader": "supplymanagement",
     "governance.fund_leader": "fundmanagement",
+    "governance.zhanwei_leader": "zhanwei",
 }
 
 
