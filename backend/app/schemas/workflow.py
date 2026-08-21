@@ -21,6 +21,22 @@ class WorkflowStartRequest(BaseModel):
     designated_users: dict[str, int] = Field(default_factory=dict)
 
 
+class WorkflowSubmissionPlanNode(BaseModel):
+    code: str
+    name: str
+    position_code: str
+    position_name: str
+    candidate_rule: str
+
+
+class WorkflowSubmissionPlan(BaseModel):
+    workflow_code: str
+    workflow_name: str
+    organization_code: str
+    organization_name: str
+    nodes: list[WorkflowSubmissionPlanNode]
+
+
 class WorkflowTimelineAction(BaseModel):
     id: int
     task_id: int

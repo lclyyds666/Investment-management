@@ -20,8 +20,18 @@ from app.models.organization import ExternalAssignment, Organization, Position, 
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask, WorkflowTaskAction
 from app.schemas.common import Response
-from app.schemas.workflow import WorkflowTimelineTask
-from app.services.assignment_permissions import PermissionContext, has_permission
+from app.schemas.workflow import WorkflowSubmissionPlan, WorkflowTimelineTask
+from app.services.assignment_permissions import (
+    PermissionContext,
+    active_assignments,
+    has_permission,
+)
+from app.services.contract_workflow import (
+    CONTRACT_WORKFLOW_CODES,
+    contract_node_candidates,
+    submission_plan,
+)
+from app.services.legal_record_scope import can_access_contract, legal_record_scope
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
@@ -54,6 +64,9 @@ SUBMIT_PERMISSION_BY_WORKFLOW = {
     "supply.contract.v2": "supply.contract.submit",
     "supply.payment.v2": "supply.approval.submit",
     "supply.business.v2": "supply.approval.submit",
+    "investment.contract.department.v1": "investment.legal.contracts.submit",
+    "investment.contract.subsidiary.v1": "investment.legal.contracts.submit",
+    "investment.contract.legal-risk.v1": "investment.legal.contracts.submit",
 }
 
 
@@ -128,11 +141,81 @@ def _load_instance(db: Session, instance_id: int) -> WorkflowInstance:
     return instance
 
 
+def _contract_submission_target(
+    db: Session,
+    target_type: WorkflowTargetType,
+    target_id: int,
+    current_user: User,
+) -> Contract:
+    if target_type != WorkflowTargetType.CONTRACT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="submission plan currently supports contracts only",
+        )
+    contract = db.get(Contract, target_id)
+    if contract is None or not can_access_contract(
+        db, contract, legal_record_scope(db, current_user)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="合同不存在"
+        )
+    if contract.created_by != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能提交本人创建的合同")
+    permission_contexts = [
+        PermissionContext(company_code="investment"),
+        PermissionContext(
+            company_code=contract.company_code,
+            department_code=contract.organization_code,
+        ),
+        *(
+            PermissionContext(
+                company_code=assignment.organization.company_code,
+                department_code=(
+                    assignment.organization.code
+                    if assignment.organization.organization_type.value == "department"
+                    else None
+                ),
+            )
+            for assignment in active_assignments(db, current_user.id)
+        ),
+    ]
+    if not any(
+        has_permission(
+            db,
+            current_user,
+            "investment.legal.contracts.submit",
+            context,
+        )
+        for context in permission_contexts
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+    return contract
+
+
+@router.get("/submission-plan", response_model=Response[WorkflowSubmissionPlan])
+def workflow_submission_plan(
+    target_type: WorkflowTargetType = Query(...),
+    target_id: int = Query(..., ge=1),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    contract = _contract_submission_target(
+        db, target_type, target_id, current_user
+    )
+    try:
+        plan = submission_plan(db, contract, current_user)
+    except WorkflowValidationError as error:
+        raise _workflow_error(error) from error
+    return Response.ok(plan)
+
+
 @router.get("/candidates", response_model=Response[list[dict]])
 def candidates(
     workflow_code: str | None = Query(None, min_length=1),
     node_code: str | None = Query(None, min_length=1),
     task_id: int | None = Query(None, ge=1),
+    target_type: WorkflowTargetType | None = Query(None),
+    target_id: int | None = Query(None, ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -142,6 +225,11 @@ def candidates(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="provide exactly task_id or workflow_code with node_code",
+        )
+    if (target_type is None) != (target_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="target_type and target_id must be provided together",
         )
     if task_id is not None:
         if not current_user.is_superuser:
@@ -186,21 +274,56 @@ def candidates(
     permission_code = SUBMIT_PERMISSION_BY_WORKFLOW.get(workflow_code)
     if permission_code is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow not found")
-    if task_id is None and not has_permission(
-        db,
-        current_user,
-        permission_code,
-        PermissionContext(company_code="supplymanagement"),
+    permission_context = PermissionContext(
+        company_code=(
+            "investment"
+            if workflow_code in CONTRACT_WORKFLOW_CODES
+            else "supplymanagement"
+        )
+    )
+    if (
+        task_id is None
+        and workflow_code not in CONTRACT_WORKFLOW_CODES
+        and not has_permission(
+            db,
+            current_user,
+            permission_code,
+            permission_context,
+        )
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     try:
-        result = eligible_designated_users(
-            db,
-            workflow_code,
-            node_code,
-            date.today(),
-            exclude_user_id=current_user.id,
-        )
+        if workflow_code in CONTRACT_WORKFLOW_CODES:
+            if target_type is None or target_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="contract candidates require target_type and target_id",
+                )
+            contract = _contract_submission_target(
+                db, target_type, target_id, current_user
+            )
+            result = contract_node_candidates(
+                db,
+                contract,
+                current_user,
+                workflow_code,
+                node_code,
+                date.today(),
+                exclude_user_id=current_user.id,
+            )
+        else:
+            if target_type is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="legacy workflow candidates do not accept a target",
+                )
+            result = eligible_designated_users(
+                db,
+                workflow_code,
+                node_code,
+                date.today(),
+                exclude_user_id=current_user.id,
+            )
     except WorkflowValidationError as error:
         raise _workflow_error(error) from error
     return Response.ok([item.model_dump() for item in result])

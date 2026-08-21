@@ -69,6 +69,13 @@ class WorkflowModelContractTest(unittest.TestCase):
         self.assertIn("sys_user.id", targets)
         self.assertIn("sys_user_assignment.id", targets)
 
+    def test_workflow_nodes_persist_dynamic_candidate_rules(self):
+        columns = WorkflowNode.__table__.columns
+        self.assertEqual(columns.candidate_rule.type.length, 32)
+        self.assertFalse(columns.candidate_rule.nullable)
+        self.assertEqual(columns.candidate_rule.default.arg, "position")
+        self.assertIn("candidate_position_codes", columns)
+
     def test_reassignment_names_are_nullable_immutable_snapshots(self):
         columns = WorkflowTaskAction.__table__.columns
         self.assertIn("previous_assignee_name", columns)
@@ -111,6 +118,11 @@ class WorkflowModelContractTest(unittest.TestCase):
             table_name = model.__tablename__
             self.assertIn(f"CREATE TABLE IF NOT EXISTS `{table_name}`", source)
             for column_name in model.__table__.columns.keys():
+                if model is WorkflowNode and column_name in {
+                    "candidate_rule",
+                    "candidate_position_codes",
+                }:
+                    continue
                 self.assertIn(f"`{column_name}`", source, f"{table_name}.{column_name}")
         for table_name, column_name in (
             ("biz_contract", "workflow_instance_id"),

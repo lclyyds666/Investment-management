@@ -29,6 +29,7 @@ from app.schemas.workflow import WorkflowStartRequest
 from app.services import contract_review as review_svc
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
+from app.services.contract_workflow import contract_workflow_code
 from app.services.assignment_permissions import PermissionContext, active_assignments, has_permission
 from app.services.legal_ownership import LegalOwnershipError, resolve_legal_ownership
 from app.services.legal_record_scope import (
@@ -440,12 +441,18 @@ def submit_contract(
             db, contract, current_user, WorkflowAction.SUBMIT, "重新提交审批"
         ))
     try:
+        workflow_code = (
+            contract_workflow_code(contract)
+            if contract.initiator_assignment_id is not None
+            else None
+        )
         start_workflow(
             db,
             WorkflowTargetType.CONTRACT,
             contract.id,
             current_user,
             payload.designated_users if payload is not None else {},
+            workflow_code=workflow_code,
         )
         db.commit()
     except WorkflowValidationError as error:

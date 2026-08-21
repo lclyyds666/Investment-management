@@ -32,7 +32,16 @@ from app.services.workflow_engine import (
 
 
 WORKFLOW_BY_TARGET = {
-    definition.target_type: definition for definition in WORKFLOW_DEFINITIONS
+    target_type: next(
+        definition
+        for definition in WORKFLOW_DEFINITIONS
+        if definition.code == workflow_code
+    )
+    for target_type, workflow_code in {
+        WorkflowTargetType.CONTRACT: "supply.contract.v2",
+        WorkflowTargetType.PAYMENT_APPROVAL: "supply.payment.v2",
+        WorkflowTargetType.BUSINESS_APPROVAL: "supply.business.v2",
+    }.items()
 }
 
 POSITION_BY_LEGACY_ROLE = {
