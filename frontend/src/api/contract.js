@@ -4,6 +4,10 @@ export function listContracts() {
   return request.get('/contracts')
 }
 
+export function exportContracts() {
+  return request.get('/contracts/export', { responseType: 'blob', timeout: 60000 })
+}
+
 /** 待我审批（审批中心）：仅当前环节轮到我的合同 */
 export function listTodo() {
   return request.get('/contracts/todo')

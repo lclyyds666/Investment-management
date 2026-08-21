@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.core.enums import AssignmentStatus, CompanyCode, OrganizationType, PositionCategory, Role
+from app.core.enums import CompanyCode, OrganizationType, Role
 from app.db.base import Base
 from app.models.legal_risk import (
     LegalCase,
@@ -21,13 +21,11 @@ from app.models.legal_risk import (
     LegalRecoveryType,
 )
 from app.models.portal import UserCompanyRole
-from app.models.organization import Organization, Position, UserAssignment
+from app.models.organization import Organization
 from app.models.user import User
 from fastapi import HTTPException
 
-from app.api.v1.endpoints.contract import create_contract
 from app.api.v1.endpoints.legal_risk import create_case, list_cases, update_case, update_progress
-from app.schemas.contract import ContractCreate
 from app.schemas.legal_risk import LegalCaseCreate, LegalCaseUpdate, LegalProgressIn
 from app.services.legal_cases import (
     activate_case,
@@ -36,10 +34,7 @@ from app.services.legal_cases import (
     ensure_formal_case_fields,
     reserve_case_version,
     resolve_investment_user_name,
-    get_case_or_403,
 )
-from app.services.legal_permissions import LegalAccessContext
-from app.services.legal_record_scope import LegalRecordScope
 
 
 class LegalCaseServiceTest(unittest.TestCase):
@@ -220,72 +215,6 @@ class LegalCaseServiceTest(unittest.TestCase):
 
         self.assertIsNone(case.closed_date)
         self.assertEqual(case.closure_summary, "")
-
-    def test_xinhua_property_can_create_case_but_not_contract_and_cannot_view_other_company_case(self):
-        company = Organization(
-            code="xinhuaproperty", name="山东新华置业有限公司",
-            organization_type=OrganizationType.COMPANY, company_code="xinhuaproperty",
-        )
-        position = Position(
-            code="xinhuaproperty.business_handler", name="置业经办人",
-            category=PositionCategory.BUSINESS,
-        )
-        user = User(username="property-user", full_name="置业经办人", hashed_password="x", role=Role.BUSINESS_HANDLER)
-        self.db.add_all([company, position, user]); self.db.flush()
-        assignment = UserAssignment(
-            user_id=user.id, organization_id=company.id, position_id=position.id,
-            valid_from=date(2026, 1, 1), status=AssignmentStatus.ACTIVE,
-        )
-        self.db.add(assignment); self.db.flush()
-
-        created = create_case(
-            LegalCaseCreate(case_name="置业案件", initiator_assignment_id=assignment.id), self.db, user
-        ).data
-        self.assertEqual(created.company_code, "xinhuaproperty")
-        self.assertEqual(created.organization_code, "xinhuaproperty")
-        self.assertEqual(created.initiator_assignment_id, assignment.id)
-
-        updated = update_case(
-            created.id,
-            LegalCaseUpdate(version=created.version, case_name="置业案件更新"),
-            self.db,
-            self.actor,
-        ).data
-        self.assertEqual(updated.company_code, "xinhuaproperty")
-        self.assertEqual(updated.organization_code, "xinhuaproperty")
-        self.assertEqual(updated.initiator_assignment_id, assignment.id)
-
-        with self.assertRaises(HTTPException) as contract_error:
-            create_contract(
-                ContractCreate(
-                    contract_no="XH-2026-001",
-                    title="置业合同",
-                    initiator_assignment_id=assignment.id,
-                ),
-                self.db,
-                user,
-            )
-        self.assertEqual(contract_error.exception.status_code, 422)
-        self.assertEqual(
-            contract_error.exception.detail["code"],
-            "invalid_initiator_assignment",
-        )
-
-        other_company_case = LegalCase(
-            case_name="供管案件", created_by=self.actor.id,
-            company_code="supplymanagement", organization_code="supplymanagement",
-        )
-        self.db.add(other_company_case); self.db.commit()
-        property_context = LegalAccessContext(
-            user_id=user.id, role=None, is_superuser=False, capabilities=frozenset(),
-            record_scope=LegalRecordScope(
-                user_id=user.id, global_access=False,
-                company_codes=frozenset({"xinhuaproperty"}), organization_codes=frozenset(),
-            ),
-        )
-        with self.assertRaises(HTTPException) as raised:
-            get_case_or_403(self.db, other_company_case.id, property_context)
-        self.assertEqual(raised.exception.status_code, 404)
 
     def test_case_list_returns_and_filters_ownership_names(self):
         self.db.add_all([

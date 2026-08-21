@@ -5,7 +5,7 @@
       <div class="heading-actions">
         <el-button v-if="canExport" :icon="Download" :loading="exporting" @click="doExport">导出</el-button>
         <el-button v-if="canImport" :icon="Upload" @click="importDialog.open()">导入台账</el-button>
-        <el-button v-if="canWrite" type="primary" :icon="Plus" @click="$router.push('/investment/legal-risk/cases/new')">新建草稿</el-button>
+        <el-button v-if="canCreate" type="primary" :icon="Plus" @click="$router.push('/investment/legal-risk/cases/new')">新建草稿</el-button>
       </div>
     </header>
 
@@ -64,17 +64,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { exportCases, listCases } from '@/api/legalRisk'
 import { usePortalStore } from '@/store/portal'
 import { CASE_STATUS_OPTIONS, caseStatusLabel, cleanParams, money } from '@/constants/legalRisk'
-import { LEGAL_CAPABILITIES, hasLegalCapability } from '@/utils/legalCapabilities'
 import ImportDialog from './ImportDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const portalStore = usePortalStore()
-const role = computed(() => portalStore.companyRole('investment'))
-const hasCapability = (capability) => hasLegalCapability(role.value, capability, portalStore.isSuperuser, portalStore.assignments)
-const canWrite = computed(() => hasCapability(LEGAL_CAPABILITIES.EDIT_CASE))
-const canImport = computed(() => hasCapability(LEGAL_CAPABILITIES.IMPORT_EXPORT))
-const canExport = computed(() => canImport.value || hasCapability(LEGAL_CAPABILITIES.EXPORT_MANAGEMENT))
+const canCreate = computed(() => portalStore.hasPermission('investment.legal.cases.create'))
+const canWrite = computed(() => portalStore.hasPermission('investment.legal.cases.update'))
+const canImport = computed(() => portalStore.hasPermission('investment.legal.cases.import'))
+const canExport = computed(() => portalStore.hasPermission('investment.legal.cases.export'))
 const canFilterOwnership = computed(() => portalStore.isSuperuser || portalStore.assignments.some(
   (assignment) => assignment.organization_code === 'investment.legal_risk'
 ))

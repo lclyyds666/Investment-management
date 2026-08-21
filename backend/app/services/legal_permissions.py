@@ -23,6 +23,7 @@ from app.services.permissions import (
 
 class LegalCapability(str, Enum):
     VIEW_CASE = "view_case"
+    CREATE_CASE = "create_case"
     EDIT_CASE = "edit_case"
     ACTIVATE_CASE = "activate_case"
     MANAGE_DETAIL = "manage_detail"
@@ -102,6 +103,7 @@ def capabilities_for_positions(position_codes: set[str] | frozenset[str], *, is_
 
 CAPABILITY_PERMISSION_CODES = {
     LegalCapability.VIEW_CASE: ("investment.legal.cases.view",),
+    LegalCapability.CREATE_CASE: ("investment.legal.cases.create",),
     LegalCapability.EDIT_CASE: ("investment.legal.cases.update",),
     LegalCapability.ACTIVATE_CASE: ("investment.legal.cases.update",),
     LegalCapability.MANAGE_DETAIL: ("investment.legal.cases.update",),

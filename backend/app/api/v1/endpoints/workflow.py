@@ -457,19 +457,41 @@ def timeline(
     db: Session = Depends(get_db),
 ):
     instance = _load_instance(db, instance_id)
-    view_permission = (
-        "supply.contract.view"
-        if instance.target_type == WorkflowTargetType.CONTRACT
-        else "supply.approval.view"
-    )
     is_designated_for_instance = bool(db.scalar(select(exists().where(
         WorkflowTask.instance_id == instance.id,
         WorkflowTask.designated_user_id == current_user.id,
     ))))
-    if not current_user.is_superuser and not has_permission(
+    if instance.target_type == WorkflowTargetType.CONTRACT:
+        contract = db.get(Contract, instance.target_id)
+        if not has_permission(
+            db,
+            current_user,
+            "investment.legal.contracts.view",
+            PermissionContext(
+                company_code="investment",
+                assigned_user_id=current_user.id,
+            ),
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        scope = legal_record_scope(db, current_user)
+        participated = (
+            instance.submitted_by == current_user.id
+            or any(task.designated_user_id == current_user.id for task in instance.tasks)
+            or any(
+                action.actor_id == current_user.id
+                for task in instance.tasks
+                for action in task.actions
+            )
+        )
+        if contract is None:
+            if not scope.global_access and not participated:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="合同不存在")
+        elif not can_access_contract(db, contract, scope):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="合同不存在")
+    elif not current_user.is_superuser and not has_permission(
         db,
         current_user,
-        view_permission,
+        "supply.approval.view",
         PermissionContext(
             company_code="supplymanagement",
             assigned_user_id=current_user.id if is_designated_for_instance else None,

@@ -228,6 +228,44 @@ class AuthorizationCatalogTest(unittest.TestCase):
             [("assigned", "")],
         )
 
+    def test_contract_creator_grant_matrix_excludes_xinhua(self):
+        grants_by_position = {
+            position_code: {
+                item["permission_code"]
+                for item in POSITION_GRANTS
+                if item["position_code"] == position_code
+            }
+            for position_code in {
+                item["code"] for item in POSITION_CATALOG
+            }
+        }
+        allowed_positions = {
+            "supply.business_handler", "supply.business_reviewer",
+            "supply.senior_manager", "supply.company_leader",
+            "fund.chairman", "fund.general_manager",
+            "zhanwei.general_manager", "zhanwei.deputy_general_manager",
+            "zhanwei.senior_manager", "zhanwei.middle_manager",
+            "zhanwei.junior_manager", "investment.duty.supply_risk_review",
+            "investment.legal_risk.deputy_director",
+        }
+        xinhua_positions = {
+            item["code"] for item in POSITION_CATALOG
+            if item["code"].startswith("xinhuaproperty.")
+        }
+
+        for position_code in allowed_positions:
+            with self.subTest(position_code=position_code):
+                self.assertTrue({
+                    "investment.legal.contracts.create",
+                    "investment.legal.contracts.submit",
+                }.issubset(grants_by_position[position_code]))
+        for position_code in xinhua_positions:
+            with self.subTest(position_code=position_code):
+                self.assertFalse({
+                    "investment.legal.contracts.create",
+                    "investment.legal.contracts.submit",
+                } & grants_by_position[position_code])
+
     def test_investment_executives_receive_only_cross_platform_read_permissions(self):
         executive_positions = {
             "investment.executive.chairman",

@@ -1,6 +1,8 @@
+import csv
 import tempfile
 import unittest
 from datetime import date, datetime
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -676,8 +678,14 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             data_scope=DataScope.ASSIGNED,
             scope_ref="",
         ))
-        hidden = Contract(contract_no="HIDDEN", title="Hidden", created_by=self.current_user.id)
-        assigned = Contract(contract_no="ASSIGNED", title="Assigned", created_by=self.current_user.id)
+        creator = User(
+            username="assigned-contract-creator", full_name="Assigned Contract Creator",
+            hashed_password="test", role=Role.UNASSIGNED,
+        )
+        self.db.add(creator)
+        self.db.flush()
+        hidden = Contract(contract_no="HIDDEN", title="Hidden", created_by=creator.id)
+        assigned = Contract(contract_no="ASSIGNED", title="Assigned", created_by=creator.id)
         self.db.add_all([hidden, assigned])
         self.db.flush()
 
@@ -748,7 +756,9 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
     def test_assigned_counsel_can_read_shared_knowledge_library_only(self):
         self._add_current_user()
         self.current_user.role = Role.LEGAL_COUNSEL
-        self._set_permission("supply.contract.view", DataScope.ASSIGNED, "")
+        self._set_permission(
+            "investment.legal.contracts.view", DataScope.ASSIGNED, ""
+        )
         doc = KnowledgeDoc(
             title="法规依据",
             category="法律规范",
@@ -776,6 +786,72 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             self.assertEqual(downloaded.content, "法规原件".encode())
 
         self.assertEqual(self.client.delete(f"/api/v1/knowledge/{doc.id}").status_code, 403)
+
+    def test_knowledge_mutation_requires_legal_contract_update_permission(self):
+        self._add_current_user()
+        doc = KnowledgeDoc(
+            title="待删除法规", category="法律规范", filename="delete.txt",
+            stored_name="", file_type="txt", char_count=0, content="", uploaded_by="admin",
+        )
+        self.db.add(doc)
+        self.db.commit()
+        self._set_permission("supply.contract.update")
+
+        legacy_denied = self.client.delete(f"/api/v1/knowledge/{doc.id}")
+
+        self.assertEqual(legacy_denied.status_code, 403, legacy_denied.text)
+        self._set_permission(
+            "investment.legal.contracts.update", DataScope.COMPANY, "investment"
+        )
+        legal_allowed = self.client.delete(f"/api/v1/knowledge/{doc.id}")
+        self.assertEqual(legal_allowed.status_code, 200, legal_allowed.text)
+
+    def test_contract_export_uses_record_scope(self):
+        self._add_current_user()
+        no_grant = self.client.get("/api/v1/contracts/export")
+        self.assertEqual(no_grant.status_code, 403, no_grant.text)
+        self._set_permission(
+            "investment.legal.contracts.view", DataScope.COMPANY, "investment"
+        )
+        wrong_grant = self.client.get("/api/v1/contracts/export")
+        self.assertEqual(wrong_grant.status_code, 403, wrong_grant.text)
+        self._set_permission(
+            "investment.legal.contracts.export", DataScope.COMPANY, "investment"
+        )
+        self.db.add_all([
+            Contract(
+                contract_no="=EXPORT-SUPPLY", title="+Supply", contract_type="-Type",
+                subject="@Subject", customer_credit_code="\tCredit",
+                customer_name="\rCustomer", currency="@Currency",
+                payment_terms="=Terms", is_internal=True, created_by=999,
+                company_code="supplymanagement", organization_code="supplymanagement",
+            ),
+            Contract(
+                contract_no="EXPORT-FUND", title="Fund", created_by=998,
+                company_code="fundmanagement", organization_code="fundmanagement",
+            ),
+        ])
+        self.db.commit()
+
+        response = self.client.get("/api/v1/contracts/export")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.content.startswith("\ufeff".encode()))
+        self.assertEqual(
+            response.headers["content-disposition"],
+            "attachment; filename*=UTF-8''%E5%90%88%E5%90%8C%E5%88%97%E8%A1%A8.csv",
+        )
+        rows = list(csv.reader(StringIO(response.content.decode("utf-8-sig"))))
+        self.assertEqual(rows[0], [
+            "合同编号", "合同名称", "合同类型", "是否内部合同", "合同标的", "签订日期",
+            "客户社会信用代码", "客户名称", "合同金额", "币种", "付款条件",
+        ])
+        self.assertEqual(rows[1][0:5], [
+            "'=EXPORT-SUPPLY", "'+Supply", "'-Type", "是", "'@Subject",
+        ])
+        self.assertEqual(rows[1][6:8], ["'\tCredit", "'\rCustomer"])
+        self.assertEqual(rows[1][9:11], ["'@Currency", "'=Terms"])
+        self.assertNotIn("EXPORT-FUND", response.text)
 
     def test_superuser_without_business_assignment_has_zero_pending_tasks(self):
         user = User(
@@ -851,6 +927,14 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
                     response = self.client.get("/api/v1/approval/pending-count")
 
                     self.assertEqual(response.status_code, 403, response.text)
+
+        self._set_permission(
+            "investment.legal.contracts.view",
+            DataScope.COMPANY,
+            CompanyCode.INVESTMENT.value,
+        )
+        response = self.client.get("/api/v1/approval/pending-count")
+        self.assertEqual(response.status_code, 200, response.text)
 
 
 class UserAccountSchemaTest(unittest.TestCase):

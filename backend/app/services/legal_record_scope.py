@@ -77,6 +77,7 @@ def contract_access_predicate(scope: LegalRecordScope):
     if scope.global_access:
         return true()
     predicates = [
+        Contract.created_by == scope.user_id,
         exists().where(
             Approval.contract_id == Contract.id,
             Approval.approver_id == scope.user_id,

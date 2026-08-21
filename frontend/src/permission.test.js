@@ -6,7 +6,6 @@ import { ElMessage } from 'element-plus'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { portalGuard } from './permission'
-import { LEGAL_CAPABILITIES } from '@/utils/legalCapabilities'
 
 vi.mock('element-plus', () => ({ ElMessage: { error: vi.fn() } }))
 
@@ -17,7 +16,8 @@ function authenticatedContext({
   applications = [],
   permissions = [],
   resources = [],
-  companyRoles = {}
+  companyRoles = {},
+  assignments = []
 } = {}) {
   const userStore = useUserStore()
   userStore.token = 'test-token'
@@ -26,7 +26,7 @@ function authenticatedContext({
   portalStore.applications = applications
   portalStore.permissions = {
     is_superuser: isSuperuser,
-    assignments: [],
+    assignments,
     permissions,
     resources,
     company_roles: companyRoles
@@ -121,19 +121,37 @@ describe('portal permission guard', () => {
     expect(hasResource).not.toHaveBeenCalled()
   })
 
-  it('keeps investment management users out of legal edit routes', async () => {
+  it('keeps users without the exact case update grant out of edit routes', async () => {
     authenticatedContext({
       applications: [{ code: 'investment', accessible: true }],
       resources: ['invest.legal.cases'],
-      companyRoles: { investment: 'invest_director' }
+      permissions: [{ code: 'investment.legal.cases.view' }]
     })
 
     await expect(portalGuard(route('/investment/legal-risk/cases/8/edit', {
       company: 'investment',
       resource: 'invest.legal.cases',
-      legalCapability: LEGAL_CAPABILITIES.EDIT_CASE
-    }))).resolves.toEqual({ path: '/investment/legal-risk/cases' })
-    expect(ElMessage.error).toHaveBeenCalledWith('权限不足，无法执行该法务操作')
+      permission: 'investment.legal.cases.update'
+    }))).resolves.toEqual({ path: '/' })
+    expect(ElMessage.error).toHaveBeenCalledWith('权限不足，无法访问该页面')
+  })
+
+  it.each([
+    ['新华案件创建', 'investment.legal.cases.create', '/investment/legal-risk/cases/new'],
+    ['展威案件更新', 'investment.legal.cases.update', '/investment/legal-risk/cases/8/edit'],
+    ['投资新增岗位案件创建', 'investment.legal.cases.create', '/investment/legal-risk/cases/new']
+  ])('allows %s from the effective permission snapshot', async (_label, permission, path) => {
+    authenticatedContext({
+      applications: [{ code: 'investment', accessible: true }],
+      resources: ['invest.legal.cases'],
+      permissions: [{ code: permission }]
+    })
+
+    await expect(portalGuard(route(path, {
+      company: 'investment',
+      resource: 'invest.legal.cases',
+      permission
+    }))).resolves.toBe(true)
   })
 
   it('allows a subsidiary user with the legal contract resource', async () => {

@@ -122,6 +122,28 @@ def test_contract_and_case_scope_union_company_department_and_legal_global(db):
         assert visible_cases == expected[key]
 
 
+def test_contract_scope_includes_records_created_by_the_user(db):
+    organization = Organization(
+        code="scope-owner", name="scope-owner", company_code="scope-owner",
+        organization_type=OrganizationType.COMPANY, is_active=True,
+    )
+    position = Position(
+        code="scope-owner-position", name="scope-owner-position",
+        category=PositionCategory.BUSINESS, is_active=True,
+    )
+    db.add_all([organization, position])
+    db.flush()
+    owner = _user(db, "scope-owner", organization, position)
+    contract = Contract(
+        contract_no="OWNER-ONLY", title="OWNER-ONLY", created_by=owner.id,
+        company_code="other-company", organization_code="other-company",
+    )
+    db.add(contract)
+    db.commit()
+
+    assert can_access_contract(db, contract, legal_record_scope(db, owner))
+
+
 def test_contract_list_endpoint_applies_shared_scope(db):
     from app.services.organization_catalog import seed_authorization_catalog
 

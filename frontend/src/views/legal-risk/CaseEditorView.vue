@@ -64,7 +64,7 @@
 
     <footer class="editor-actions">
       <el-button @click="$router.back()">取消</el-button>
-      <el-button type="primary" :loading="saving" :disabled="!isEdit && !canCreateCase" :icon="Check" @click="save">保存</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!canSave" :icon="Check" @click="save">保存</el-button>
     </footer>
   </section>
 </template>
@@ -93,6 +93,8 @@ const initiatorOptionsFailed = ref(false)
 const responsibleNameDirty = ref(false)
 const isEdit = computed(() => Boolean(route.params.caseId))
 const isSuperuser = computed(() => portalStore.isSuperuser)
+const canCreatePermission = computed(() => portalStore.hasPermission('investment.legal.cases.create'))
+const canUpdatePermission = computed(() => portalStore.hasPermission('investment.legal.cases.update'))
 const form = reactive({
   case_name: '', cause_of_action: '', court: '', court_case_no: '', subject_amount: 0,
   responsible_user_name: '', confidentiality_level: 'internal', law_firm: '', attorney_name: '',
@@ -109,6 +111,9 @@ const canCreateCase = computed(() => initiatorOptionsLoaded.value && (
     ? Boolean(form.organization_code.trim())
     : form.initiator_assignment_id !== null
 ))
+const canSave = computed(() => isEdit.value
+  ? canUpdatePermission.value
+  : canCreatePermission.value && canCreateCase.value)
 
 function initiatorWarning() {
   if (initiatorOptionsFailed.value) return '案件发起任职加载失败，请稍后重试'
@@ -160,6 +165,14 @@ onMounted(async () => {
 })
 
 async function save() {
+  if (isEdit.value && !canUpdatePermission.value) {
+    ElMessage.warning('权限不足，无法修改案件')
+    return
+  }
+  if (!isEdit.value && !canCreatePermission.value) {
+    ElMessage.warning('权限不足，无法新建案件')
+    return
+  }
   if (!isEdit.value && !canCreateCase.value) {
     ElMessage.warning(initiatorWarning())
     return

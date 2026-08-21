@@ -77,7 +77,8 @@ describe('unified portal routes', () => {
       expect(resolved.meta.company).toBe('investment')
       expect(resolved.meta.resource).toBe(resource)
     }
-    expect(router.resolve({ name: 'LegalRiskCaseCreate' }).meta.legalCapability).toBe('edit_case')
+    expect(router.resolve({ name: 'LegalRiskCaseCreate' }).meta.permission).toBe('investment.legal.cases.create')
+    expect(router.resolve({ name: 'LegalRiskCaseEdit', params: { caseId: 8 } }).meta.permission).toBe('investment.legal.cases.update')
     expect(router.resolve({ name: 'LegalRiskUsers' }).meta.requiresSuperuser).toBe(true)
   })
 

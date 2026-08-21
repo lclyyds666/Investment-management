@@ -1,4 +1,5 @@
 """合同全生命周期与岗位工作流兼容端点。"""
+import csv
 import io
 import uuid
 from pathlib import Path
@@ -73,6 +74,7 @@ _export_guard = _contract_permission_guard("investment.legal.contracts.export")
 # 合同附件允许的扩展名（与前端 accept 对齐）
 _ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
 _ATTACH_MAX_BYTES = 20 * 1024 * 1024  # 单个附件 ≤ 20MB
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 # --------------------------------------------------------------------------- #
@@ -90,6 +92,11 @@ def _names_map(db: Session, ids: set[int]) -> dict[int, str]:
         return {}
     rows = db.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all()
     return {i: n for i, n in rows}
+
+
+def _csv_cell(value: object) -> str:
+    text = "" if value is None else str(value)
+    return f"'{text}" if text.startswith(_CSV_FORMULA_PREFIXES) else text
 
 
 def _active_task_for_contract(db: Session, contract: Contract) -> WorkflowTask | None:
@@ -238,6 +245,45 @@ def list_contracts(
     rows = db.scalars(stmt).all()
     names = _names_map(db, {c.created_by for c in rows})
     return Response.ok([_to_out(db, c, current_user, names.get(c.created_by, "")) for c in rows])
+
+
+@router.get("/export", summary="导出合同列表(CSV)")
+def export_contracts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_export_guard),
+):
+    rows = db.scalars(
+        select(Contract)
+        .where(contract_access_predicate(legal_record_scope(db, current_user)))
+        .order_by(Contract.id.desc())
+    ).all()
+    content = io.StringIO()
+    writer = csv.writer(content)
+    writer.writerow([
+        "合同编号", "合同名称", "合同类型", "是否内部合同", "合同标的", "签订日期",
+        "客户社会信用代码", "客户名称", "合同金额", "币种", "付款条件",
+    ])
+    for contract in rows:
+        writer.writerow([_csv_cell(value) for value in (
+            contract.contract_no,
+            contract.title,
+            contract.contract_type,
+            "是" if contract.is_internal else "否",
+            contract.subject,
+            contract.sign_date,
+            contract.customer_credit_code,
+            contract.customer_name,
+            contract.amount,
+            contract.currency,
+            contract.payment_terms,
+        )])
+    data = ("\ufeff" + content.getvalue()).encode("utf-8")
+    filename = quote("合同列表.csv")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 @router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同")

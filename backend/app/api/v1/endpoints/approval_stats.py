@@ -1,21 +1,28 @@
 """审批角标统计端点，按可执行工作流任务计数。"""
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.enums import CompanyCode, DataScope, WorkflowTargetType
 from app.db.session import get_db
+from app.models.contract import Contract
 from app.models.user import User
 from app.schemas.common import Response
 from app.services.assignment_permissions import permission_grants
 from app.services.workflow_engine import (
     actionable_active_task_counts,
     awaiting_reassignment_count,
+    my_active_tasks,
 )
 
 router = APIRouter()
 
-_VIEW_PERMISSIONS = {"supply.contract.view", "supply.approval.view"}
+_VIEW_PERMISSIONS = {
+    "investment.legal.contracts.view",
+    "supply.contract.view",
+    "supply.approval.view",
+}
 
 
 def _pending_view_grant_codes(db: Session, user_id: int) -> set[str]:
@@ -27,7 +34,11 @@ def _pending_view_grant_codes(db: Session, user_id: int) -> set[str]:
             grant.data_scope == DataScope.ASSIGNED
             or (
                 grant.data_scope == DataScope.COMPANY
-                and grant.scope_ref == CompanyCode.SUPPLY_MANAGEMENT.value
+                and grant.scope_ref == (
+                    CompanyCode.INVESTMENT.value
+                    if grant.code == "investment.legal.contracts.view"
+                    else CompanyCode.SUPPLY_MANAGEMENT.value
+                )
             )
         )
     }
@@ -46,6 +57,31 @@ def _require_pending_view(
     return current_user
 
 
+def _actionable_contract_count(
+    db: Session,
+    current_user: User,
+    grant_codes: set[str],
+) -> int:
+    if not {
+        "investment.legal.contracts.view",
+        "supply.contract.view",
+    } & grant_codes:
+        return 0
+    tasks = my_active_tasks(db, current_user, WorkflowTargetType.CONTRACT)
+    if "investment.legal.contracts.view" in grant_codes:
+        return len(tasks)
+    contract_ids = {task.instance.target_id for task in tasks}
+    if not contract_ids:
+        return 0
+    legacy_contract_ids = set(db.scalars(
+        select(Contract.id).where(
+            Contract.id.in_(contract_ids),
+            Contract.workflow_route_version < 1,
+        )
+    ))
+    return sum(task.instance.target_id in legacy_contract_ids for task in tasks)
+
+
 @router.get(
     "/pending-count",
     response_model=Response[dict],
@@ -62,11 +98,7 @@ def pending_count(
         else _pending_view_grant_codes(db, current_user.id)
     )
     counts = actionable_active_task_counts(db, current_user)
-    contract_cnt = (
-        counts.get(WorkflowTargetType.CONTRACT, 0)
-        if "supply.contract.view" in grant_codes
-        else 0
-    )
+    contract_cnt = _actionable_contract_count(db, current_user, grant_codes)
     business_cnt = (
         counts.get(WorkflowTargetType.PAYMENT_APPROVAL, 0)
         + counts.get(WorkflowTargetType.BUSINESS_APPROVAL, 0)

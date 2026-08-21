@@ -19,6 +19,7 @@ from app.services.workflow_engine import (
     _assignment_has_required_scope,
     _published_workflow,
 )
+from app.services.assignment_permissions import PermissionContext, has_permission
 
 
 DEPARTMENT_WORKFLOW = "investment.contract.department.v1"
@@ -161,6 +162,20 @@ def _matches_candidate_rule(
     )
 
 
+def _candidate_permission_code(node_code: str) -> str | None:
+    if node_code in {"legal_counsel", "legal_risk"}:
+        return "investment.legal.contracts.review"
+    if node_code in {
+        "department_head",
+        "company_head",
+        "governance_leader",
+        "investment_general_manager",
+        "investment_chairman",
+    }:
+        return "investment.legal.contracts.approve"
+    return None
+
+
 def contract_node_candidates(
     db: Session,
     contract: Contract,
@@ -207,6 +222,7 @@ def contract_node_candidates(
     position_codes = set(
         workflow_node.candidate_position_codes or [workflow_node.position_code]
     )
+    permission_code = _candidate_permission_code(workflow_node.code)
     candidates: list[WorkflowCandidate] = []
     seen_users: set[int] = set()
     for assignment in _active_assignments(db, position_codes, on_date):
@@ -217,6 +233,18 @@ def contract_node_candidates(
             or not _assignment_has_required_scope(assignment)
             or not _matches_candidate_rule(
                 assignment, contract, workflow_node.candidate_rule
+            )
+            or (
+                permission_code is not None
+                and not has_permission(
+                    db,
+                    assignment.user,
+                    permission_code,
+                    PermissionContext(
+                        company_code="investment",
+                        assigned_user_id=assignment.user_id,
+                    ),
+                )
             )
         ):
             continue

@@ -66,9 +66,23 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="contract-form">
         <el-row :gutter="12">
           <el-col :span="12">
-            <el-form-item v-if="!isEdit" label="发起归属" prop="initiator_assignment_id">
+            <el-form-item v-if="!isEdit" label="发起归属" :prop="isSuperuser ? 'organization_code' : 'initiator_assignment_id'">
+              <el-select
+                v-if="isSuperuser"
+                v-model="form.organization_code"
+                placeholder="请选择发起归属"
+                style="width: 100%"
+                @change="onInitiatorOrganizationChange"
+              >
+                <el-option
+                  v-for="option in initiatorOptions"
+                  :key="option.organization_code"
+                  :label="option.organization_name"
+                  :value="option.organization_code"
+                />
+              </el-select>
               <el-input
-                v-if="initiatorOptions.length === 1"
+                v-else-if="initiatorOptions.length === 1"
                 :model-value="initiatorOptions[0].organization_name"
                 readonly
               />
@@ -216,7 +230,7 @@
     <el-dialog v-model="ledgerVisible" title="合同台账" width="92%" top="5vh">
       <div class="ledger-toolbar">
         <span class="ledger-count">共 {{ list.length }} 条合同</span>
-        <el-button type="primary" size="small" :icon="Download" @click="exportLedger">导出 CSV</el-button>
+        <el-button v-if="canExport" data-testid="export-contract-ledger" type="primary" size="small" :icon="Download" @click="exportLedger">导出 CSV</el-button>
       </div>
       <el-table :data="list" border stripe size="small" max-height="60vh">
         <el-table-column type="index" label="#" width="50" align="center" />
@@ -357,7 +371,7 @@ import DesignatedApproverFields from '@/components/workflow/DesignatedApproverFi
 import {
   listContracts, createContract, updateContract, deleteContract, submitContract,
   uploadContractAttachment, approveContract, rejectContract, aiReviewContract,
-  fetchContractAttachmentBlob
+  exportContracts, fetchContractAttachmentBlob
 } from '@/api/contract'
 import { listCustomers } from '@/api/customer'
 import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge'
@@ -369,13 +383,14 @@ const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
 const portalStore = usePortalStore()
 const userStore = useUserStore()
 const badgeStore = useApprovalBadgeStore()
-const canCreate = computed(() => canUsePermission(portalStore, 'supply.contract.create'))
-const canUpdate = computed(() => canUsePermission(portalStore, 'supply.contract.update'))
-const canDelete = computed(() => canUsePermission(portalStore, 'supply.contract.delete'))
-const canSubmit = computed(() => canUsePermission(portalStore, 'supply.contract.submit'))
-const canExport = computed(() => canUsePermission(portalStore, 'supply.contract.export'))
-const canViewKnowledge = computed(() => canUsePermission(portalStore, 'supply.contract.view'))
-const canManageKnowledge = computed(() => canUsePermission(portalStore, 'supply.contract.update'))
+const isSuperuser = computed(() => portalStore.isSuperuser)
+const canCreate = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.create'))
+const canUpdate = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.update'))
+const canDelete = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.delete'))
+const canSubmit = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.submit'))
+const canExport = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.export'))
+const canViewKnowledge = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.view'))
+const canManageKnowledge = computed(() => canUsePermission(portalStore, 'investment.legal.contracts.update'))
 
 function canApprove(row) {
   return Boolean(row.active_task && row.can_act)
@@ -424,11 +439,17 @@ async function loadInitiatorOptions() {
   initiatorOptionsLoading.value = true
   try {
     initiatorOptions.value = await listLegalInitiatorOptions('contract')
-    rules.initiator_assignment_id[0].required = initiatorOptions.value.length > 1
-    if (!isEdit.value && dialogVisible.value && initiatorOptions.value.length === 1) onInitiatorAssignmentChange(initiatorOptions.value[0].assignment_id)
+    rules.initiator_assignment_id[0].required = !isSuperuser.value && initiatorOptions.value.length > 1
+    rules.organization_code[0].required = isSuperuser.value
+    if (!isEdit.value && dialogVisible.value && initiatorOptions.value.length === 1) {
+      const [option] = initiatorOptions.value
+      if (isSuperuser.value) onInitiatorOrganizationChange(option.organization_code)
+      else onInitiatorAssignmentChange(option.assignment_id)
+    }
   } catch {
     initiatorOptions.value = []
     rules.initiator_assignment_id[0].required = false
+    rules.organization_code[0].required = false
   } finally {
     initiatorOptionsLoading.value = false
   }
@@ -437,6 +458,12 @@ function onInitiatorAssignmentChange(assignmentId) {
   const option = initiatorOptions.value.find((item) => Number(item.assignment_id) === Number(assignmentId))
   if (!option) return
   form.initiator_assignment_id = option.assignment_id
+  form.party_a = option.company_name || COMPANY_NAMES[option.company_code] || form.party_a
+}
+function onInitiatorOrganizationChange(organizationCode) {
+  const option = initiatorOptions.value.find((item) => item.organization_code === organizationCode)
+  if (!option) return
+  form.organization_code = option.organization_code
   form.party_a = option.company_name || COMPANY_NAMES[option.company_code] || form.party_a
 }
 
@@ -464,13 +491,15 @@ const emptyForm = () => ({
   sign_date: null,
   remark: '',
   attachment_name: '',
-  initiator_assignment_id: null
+  initiator_assignment_id: null,
+  organization_code: ''
 })
 const form = reactive(emptyForm())
 const rules = reactive({
   contract_no: [{ required: true, message: '请输入合同编号', trigger: 'blur' }],
   title: [{ required: true, message: '请输入合同名称', trigger: 'blur' }],
-  initiator_assignment_id: [{ required: false, message: '请选择发起归属', trigger: 'change' }]
+  initiator_assignment_id: [{ required: false, message: '请选择发起归属', trigger: 'change' }],
+  organization_code: [{ required: false, message: '请选择发起归属', trigger: 'change' }]
 })
 
 function openCreate() {
@@ -479,7 +508,11 @@ function openCreate() {
   editingId.value = null
   pickedFile.value = null
   Object.assign(form, emptyForm())
-  if (initiatorOptions.value.length === 1) onInitiatorAssignmentChange(initiatorOptions.value[0].assignment_id)
+  if (initiatorOptions.value.length === 1) {
+    const [option] = initiatorOptions.value
+    if (isSuperuser.value) onInitiatorOrganizationChange(option.organization_code)
+    else onInitiatorAssignmentChange(option.assignment_id)
+  }
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
 }
@@ -504,7 +537,8 @@ function openEdit(row) {
     sign_date: row.sign_date || null,
     remark: row.remark,
     attachment_name: row.attachment_name || '',
-    initiator_assignment_id: null
+    initiator_assignment_id: null,
+    organization_code: ''
   })
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
@@ -512,16 +546,19 @@ function openEdit(row) {
 async function onSave() {
   if (!isEdit.value && !canOpenCreate.value) return
   await formRef.value?.validate()
-  if (!isEdit.value && !form.initiator_assignment_id) return
+  if (!isEdit.value && !(isSuperuser.value ? form.organization_code : form.initiator_assignment_id)) return
   saving.value = true
   try {
     let contractId = editingId.value
     if (isEdit.value) {
-      const { contract_no, attachment_name, initiator_assignment_id, ...rest } = form
+      const { contract_no, attachment_name, initiator_assignment_id, organization_code, ...rest } = form
       await updateContract(editingId.value, { ...rest })
     } else {
-      const { attachment_name, ...rest } = form
-      const created = await createContract({ ...rest })
+      const { attachment_name, initiator_assignment_id, organization_code, ...rest } = form
+      const initiator = isSuperuser.value
+        ? { organization_code }
+        : { initiator_assignment_id }
+      const created = await createContract({ ...rest, ...initiator })
       contractId = created?.id
     }
     // 附件：保存合同后再真实上传（覆盖式）
@@ -666,34 +703,14 @@ const ledgerVisible = ref(false)
 function openLedger() {
   ledgerVisible.value = true
 }
-function exportLedger() {
-  const headers = ['合同编号', '合同名称', '合同类型', '是否内部合同', '合同标的', '签订日期', '客户社会信用代码', '客户名称', '合同金额', '币种', '付款条件']
-  const rows = list.value.map((c) => [
-    c.contract_no,
-    c.title,
-    c.contract_type || c.contract_type_label || '',
-    c.is_internal ? '是' : '否',
-    c.subject || '',
-    c.sign_date || '',
-    c.customer_credit_code || '',
-    c.customer_name || '',
-    Number(c.amount || 0),
-    c.currency || '',
-    (c.payment_terms || '').replace(/\r?\n/g, ' ')
-  ])
-  const esc = (v) => {
-    const s = String(v ?? '')
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+async function exportLedger() {
+  try {
+    const blob = await exportContracts()
+    downloadBlob(blob, `合同台账_${new Date().toISOString().slice(0, 10)}.csv`)
+    ElMessage.success('合同台账导出成功')
+  } catch {
+    ElMessage.error('合同台账导出失败，请稍后重试')
   }
-  const csv = [headers, ...rows].map((r) => r.map(esc).join(',')).join('\r\n')
-  // 加 BOM 确保 Excel 正确识别 UTF-8 中文
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `合同台账_${new Date().toISOString().slice(0, 10)}.csv`
-  a.click()
-  URL.revokeObjectURL(a.href)
-  ElMessage.success(`已导出 ${rows.length} 条合同台账`)
 }
 async function onDelete(row) {
   try {

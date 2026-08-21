@@ -349,7 +349,7 @@ def list_cases(
 def create_case(
     payload: LegalCaseCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_legal_capability(LegalCapability.EDIT_CASE)),
+    current_user: User = Depends(require_legal_capability(LegalCapability.CREATE_CASE)),
 ):
     try:
         ownership = resolve_legal_ownership(

@@ -16,6 +16,8 @@ from app.core.enums import (
     AssignmentStatus,
     ContractStatus,
     ContractType,
+    DataScope,
+    PositionCategory,
     WorkflowAction,
     WorkflowInstanceStatus,
     WorkflowTargetType,
@@ -31,7 +33,9 @@ from app.models.organization import (
     ExternalAssignment,
     GovernanceScope,
     Organization,
+    Permission,
     Position,
+    PositionPermission,
     UserAssignment,
 )
 from app.models.user import User
@@ -641,7 +645,25 @@ class WorkflowApiTest(unittest.TestCase):
         not_assigned = self.client.get(f"/api/v1/workflows/instances/{other_instance.id}/timeline")
 
         self.assertEqual(assigned.status_code, 200, assigned.text)
-        self.assertEqual(not_assigned.status_code, 403, not_assigned.text)
+        self.assertEqual(not_assigned.status_code, 404, not_assigned.text)
+        self.db.delete(other_contract)
+        self.db.commit()
+        deleted_not_assigned = self.client.get(
+            f"/api/v1/workflows/instances/{other_instance.id}/timeline"
+        )
+        self.assertEqual(deleted_not_assigned.status_code, 404, deleted_not_assigned.text)
+
+    def test_contract_timeline_hides_cross_company_targets(self):
+        fund_reader = self.add_user("fund-timeline-reader", "Fund Timeline Reader")
+        self.assign(fund_reader, "fundmanagement", "fund.general_manager")
+        self.db.commit()
+        self.current_user = fund_reader
+
+        response = self.client.get(
+            f"/api/v1/workflows/instances/{self.instance.id}/timeline"
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
 
     def test_reassignment_requires_superuser_reason_and_exact_effective_position(self):
         task = self.active_task()
@@ -1956,6 +1978,76 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
 
         self.assertEqual(selected["contract"], 1)
         self.assertEqual(unselected["contract"], 0)
+
+    def test_pending_count_splits_legacy_and_ownership_routed_contract_tasks(self):
+        supply_viewer = self.add_user("supply-contract-viewer", "Supply Contract Viewer")
+        legal_viewer = self.add_user("legal-contract-viewer", "Legal Contract Viewer")
+        supply_position = Position(
+            code="test.supply-contract-viewer",
+            name="Supply Contract Viewer",
+            category=PositionCategory.BUSINESS,
+        )
+        legal_position = Position(
+            code="test.legal-contract-viewer",
+            name="Legal Contract Viewer",
+            category=PositionCategory.BUSINESS,
+        )
+        self.db.add_all([supply_position, legal_position])
+        self.db.flush()
+        self.db.add_all([
+            PositionPermission(
+                position_id=supply_position.id,
+                permission_id=self.db.scalar(select(Permission.id).where(
+                    Permission.code == "supply.contract.view"
+                )),
+                data_scope=DataScope.COMPANY,
+                scope_ref="supplymanagement",
+            ),
+            PositionPermission(
+                position_id=legal_position.id,
+                permission_id=self.db.scalar(select(Permission.id).where(
+                    Permission.code == "investment.legal.contracts.view"
+                )),
+                data_scope=DataScope.COMPANY,
+                scope_ref="investment",
+            ),
+        ])
+        self.assign(supply_viewer, "supplymanagement", supply_position.code)
+        self.assign(legal_viewer, "investment.legal_risk", legal_position.code)
+        legacy_contract = Contract(
+            contract_no="WF-FORM-STATS-LEGACY",
+            title="Legacy contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            workflow_route_version=0,
+        )
+        routed_contract = Contract(
+            contract_no="WF-FORM-STATS-ROUTED",
+            title="Ownership-routed contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            workflow_route_version=1,
+        )
+        self.db.add_all([legacy_contract, routed_contract])
+        self.db.commit()
+        actionable_tasks = [
+            SimpleNamespace(instance=SimpleNamespace(target_id=legacy_contract.id)),
+            SimpleNamespace(instance=SimpleNamespace(target_id=routed_contract.id)),
+        ]
+
+        with patch(
+            "app.api.v1.endpoints.approval_stats.my_active_tasks",
+            return_value=actionable_tasks,
+        ):
+            self.current_user = supply_viewer
+            supply_count = self.client.get("/api/v1/approval/pending-count")
+            self.current_user = legal_viewer
+            legal_count = self.client.get("/api/v1/approval/pending-count")
+
+        self.assertEqual(supply_count.status_code, 200, supply_count.text)
+        self.assertEqual(legal_count.status_code, 200, legal_count.text)
+        self.assertEqual(supply_count.json()["data"]["contract"], 1)
+        self.assertEqual(legal_count.json()["data"]["contract"], 2)
 
     def test_delete_returned_forms_cancels_workflow_and_preserves_timeline(self):
         cases = (

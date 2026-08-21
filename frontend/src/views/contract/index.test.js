@@ -3,11 +3,26 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 
 const contractApi = vi.hoisted(() => ({
   listContracts: vi.fn(), createContract: vi.fn(), updateContract: vi.fn(), deleteContract: vi.fn(), submitContract: vi.fn(),
-  uploadContractAttachment: vi.fn(), approveContract: vi.fn(), rejectContract: vi.fn(), aiReviewContract: vi.fn(), fetchContractAttachmentBlob: vi.fn()
+  uploadContractAttachment: vi.fn(), approveContract: vi.fn(), rejectContract: vi.fn(), aiReviewContract: vi.fn(), exportContracts: vi.fn(), fetchContractAttachmentBlob: vi.fn()
 }))
 const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowSubmissionPlan: vi.fn(), getWorkflowTimeline: vi.fn() }))
 const legalApi = vi.hoisted(() => ({ listLegalInitiatorOptions: vi.fn(() => Promise.resolve([])) }))
 const badgeStore = vi.hoisted(() => ({ refresh: vi.fn() }))
+const portal = vi.hoisted(() => ({
+  isSuperuser: false,
+  permissionCodes: new Set([
+    'investment.legal.contracts.view',
+    'investment.legal.contracts.create',
+    'investment.legal.contracts.update',
+    'investment.legal.contracts.delete',
+    'investment.legal.contracts.submit',
+    'investment.legal.contracts.export'
+  ])
+}))
+const authorization = vi.hoisted(() => ({
+  canUsePermission: vi.fn((store, code) => store.isSuperuser || store.permissionCodes.has(code))
+}))
+const fileApi = vi.hoisted(() => ({ downloadBlob: vi.fn(), previewBlob: vi.fn() }))
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/customer', () => ({ listCustomers: vi.fn(() => Promise.resolve([])) }))
 vi.mock('@/api/knowledge', () => ({ listKnowledge: vi.fn(), uploadKnowledge: vi.fn(), deleteKnowledge: vi.fn() }))
@@ -20,10 +35,11 @@ vi.mock('@/components/workflow/DesignatedApproverFields.vue', () => ({
     template: '<div data-testid="selector-stub" />'
   }
 }))
-vi.mock('@/store/portal', () => ({ usePortalStore: () => ({ hasPermission: () => true }) }))
+vi.mock('@/store/portal', () => ({ usePortalStore: () => portal }))
 vi.mock('@/store/user', () => ({ useUserStore: () => ({ userInfo: { id: 99 } }) }))
 vi.mock('@/store/approvalBadge', () => ({ useApprovalBadgeStore: () => badgeStore }))
-vi.mock('@/utils/businessAuthorization', () => ({ canUsePermission: () => true }))
+vi.mock('@/utils/businessAuthorization', () => authorization)
+vi.mock('@/utils/file', () => fileApi)
 const messages = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: messages, ElMessageBox: { confirm: vi.fn() } }))
 
@@ -57,6 +73,8 @@ describe('contract designated submit', () => {
     vi.clearAllMocks()
     contractApi.listContracts.mockResolvedValue([])
     contractApi.submitContract.mockResolvedValue({})
+    contractApi.exportContracts.mockResolvedValue(new Blob(['csv']))
+    portal.isSuperuser = false
     legalApi.listLegalInitiatorOptions.mockResolvedValue([])
     workflowApi.getWorkflowSubmissionPlan.mockResolvedValue({ nodes: [] })
   })
@@ -110,6 +128,68 @@ describe('contract designated submit', () => {
     await wrapper.vm.onSave()
 
     expect(contractApi.createContract).toHaveBeenCalledWith(expect.objectContaining({ initiator_assignment_id: 12 }))
+  })
+
+  it('lets a superuser select a real contract organization without a fake assignment', async () => {
+    portal.isSuperuser = true
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: null, organization_code: 'supplymanagement', organization_name: '山东出版供应链管理有限公司', company_code: 'supplymanagement' }
+    ])
+    contractApi.createContract.mockResolvedValue({ id: 82 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    wrapper.vm.openCreate()
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.onSave()
+
+    expect(contractApi.createContract).toHaveBeenCalledWith(expect.objectContaining({
+      organization_code: 'supplymanagement'
+    }))
+    expect(contractApi.createContract.mock.calls[0][0]).not.toHaveProperty('initiator_assignment_id')
+  })
+
+  it('uses only the official legal-contract permission family for page actions', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const pageActions = [
+      wrapper.vm.canCreate,
+      wrapper.vm.canUpdate,
+      wrapper.vm.canDelete,
+      wrapper.vm.canSubmit,
+      wrapper.vm.canExport,
+      wrapper.vm.canViewKnowledge,
+      wrapper.vm.canManageKnowledge
+    ]
+    pageActions.forEach((allowed) => expect(allowed).toBe(true))
+    const requested = authorization.canUsePermission.mock.calls.map(([, code]) => code)
+    expect(requested).toEqual(expect.arrayContaining([
+      'investment.legal.contracts.create',
+      'investment.legal.contracts.update',
+      'investment.legal.contracts.delete',
+      'investment.legal.contracts.submit',
+      'investment.legal.contracts.export',
+      'investment.legal.contracts.view'
+    ]))
+    expect(requested.some((code) => code.startsWith('supply.contract.'))).toBe(false)
+  })
+
+  it('downloads the server-scoped contract export once', async () => {
+    const blob = new Blob(['server csv'])
+    contractApi.exportContracts.mockResolvedValue(blob)
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="export-contract-ledger"]').exists()).toBe(true)
+    await wrapper.vm.exportLedger()
+
+    expect(contractApi.exportContracts).toHaveBeenCalledTimes(1)
+    expect(fileApi.downloadBlob).toHaveBeenCalledWith(
+      blob,
+      expect.stringMatching(/^合同台账_\d{4}-\d{2}-\d{2}\.csv$/)
+    )
+    expect(messages.success).toHaveBeenCalledWith('合同台账导出成功')
   })
 
   it('defaults party A to the Zhanwei company name when the option omits company_name', async () => {

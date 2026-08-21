@@ -1,7 +1,6 @@
-import { ROLES } from '@/constants/business'
-
 export const LEGAL_CAPABILITIES = Object.freeze({
   VIEW_CASE: 'view_case',
+  CREATE_CASE: 'create_case',
   EDIT_CASE: 'edit_case',
   ACTIVATE_CASE: 'activate_case',
   MANAGE_DETAIL: 'manage_detail',
@@ -16,93 +15,55 @@ export const LEGAL_CAPABILITIES = Object.freeze({
   ADMIN: 'admin'
 })
 
+const CAPABILITY_PERMISSION_CODES = Object.freeze({
+  [LEGAL_CAPABILITIES.VIEW_CASE]: ['investment.legal.cases.view'],
+  [LEGAL_CAPABILITIES.CREATE_CASE]: ['investment.legal.cases.create'],
+  [LEGAL_CAPABILITIES.EDIT_CASE]: ['investment.legal.cases.update'],
+  [LEGAL_CAPABILITIES.ACTIVATE_CASE]: ['investment.legal.cases.update'],
+  [LEGAL_CAPABILITIES.MANAGE_DETAIL]: ['investment.legal.cases.update'],
+  [LEGAL_CAPABILITIES.ADD_COUNSEL_CONTENT]: ['investment.legal.cases.review'],
+  [LEGAL_CAPABILITIES.UPLOAD_ATTACHMENT]: [
+    'investment.legal.cases.update',
+    'investment.legal.cases.review'
+  ],
+  [LEGAL_CAPABILITIES.DELETE_ATTACHMENT]: [
+    'investment.legal.cases.delete',
+    'investment.legal.cases.review'
+  ],
+  [LEGAL_CAPABILITIES.MANAGE_ALERT]: ['investment.legal.alerts.update'],
+  [LEGAL_CAPABILITIES.ARCHIVE_CASE]: ['investment.legal.cases.delete'],
+  [LEGAL_CAPABILITIES.VIEW_STATISTICS]: ['investment.legal.statistics.view'],
+  [LEGAL_CAPABILITIES.IMPORT_EXPORT]: ['investment.legal.cases.import'],
+  [LEGAL_CAPABILITIES.EXPORT_MANAGEMENT]: ['investment.legal.cases.export'],
+  [LEGAL_CAPABILITIES.ADMIN]: ['investment.legal.admin.view']
+})
+
 const ALL_CAPABILITIES = Object.freeze(Object.values(LEGAL_CAPABILITIES))
-const GENERAL_ROLES = new Set([
-  ROLES.BUSINESS_HANDLER,
-  ROLES.BUSINESS_REVIEWER,
-  ROLES.RISK_AUDITOR,
-  ROLES.FINANCE_HANDLER,
-  ROLES.FINANCE_REVIEWER,
-  ROLES.SCM_DIRECTOR
-])
-const BUSINESS_CAPABILITIES = new Set(
-  ALL_CAPABILITIES.filter((capability) => capability !== LEGAL_CAPABILITIES.ADMIN)
-)
-const MANAGEMENT_CAPABILITIES = new Set([
-  LEGAL_CAPABILITIES.VIEW_CASE,
-  LEGAL_CAPABILITIES.VIEW_STATISTICS,
-  LEGAL_CAPABILITIES.EXPORT_MANAGEMENT
-])
-const COUNSEL_CAPABILITIES = new Set([
-  LEGAL_CAPABILITIES.VIEW_CASE,
-  LEGAL_CAPABILITIES.ADD_COUNSEL_CONTENT,
-  LEGAL_CAPABILITIES.UPLOAD_ATTACHMENT,
-  LEGAL_CAPABILITIES.DELETE_ATTACHMENT,
-  LEGAL_CAPABILITIES.MANAGE_ALERT
-])
-const BUSINESS_POSITION_CODES = new Set([
-  'investment.department.director',
-  'investment.department.deputy_director',
-  'investment.department.senior_manager',
-  'investment.department.middle_manager',
-  'investment.department.junior_manager',
-  'supply.business_handler',
-  'supply.business_reviewer',
-  'supply.finance_handler',
-  'supply.company_leader',
-  'investment.duty.supply_risk_review',
-  'investment.duty.supply_finance_review'
-])
-const MANAGEMENT_POSITION_CODES = new Set([
-  'investment.executive.chairman',
-  'investment.executive.general_manager',
-  'investment.executive.deputy_general_manager',
-  'governance.supply_leader'
-])
-const COUNSEL_POSITION_CODES = new Set(['external.legal_counsel'])
 
-export function legalCapabilities(role, isSuperuser = false) {
-  if (isSuperuser) return new Set(ALL_CAPABILITIES)
-  if (GENERAL_ROLES.has(role)) return new Set(BUSINESS_CAPABILITIES)
-  if (role === ROLES.INVEST_DIRECTOR) return new Set(MANAGEMENT_CAPABILITIES)
-  if (role === ROLES.LEGAL_COUNSEL) return new Set(COUNSEL_CAPABILITIES)
-  return new Set()
+function permissionCodes(permissions = []) {
+  return new Set(permissions.map((item) => typeof item === 'string' ? item : item?.code).filter(Boolean))
 }
 
-export function legalCapabilitiesForAssignments(assignments = [], isSuperuser = false) {
+export function legalCapabilities(permissions = [], isSuperuser = false) {
   if (isSuperuser) return new Set(ALL_CAPABILITIES)
-  const positionCodes = new Set(assignments.map((item) => item?.position_code).filter(Boolean))
-  const capabilities = new Set()
-  if ([...positionCodes].some((code) => BUSINESS_POSITION_CODES.has(code))) {
-    BUSINESS_CAPABILITIES.forEach((capability) => capabilities.add(capability))
-  }
-  if ([...positionCodes].some((code) => MANAGEMENT_POSITION_CODES.has(code))) {
-    MANAGEMENT_CAPABILITIES.forEach((capability) => capabilities.add(capability))
-  }
-  if ([...positionCodes].some((code) => COUNSEL_POSITION_CODES.has(code))) {
-    COUNSEL_CAPABILITIES.forEach((capability) => capabilities.add(capability))
-  }
-  return capabilities
+  const codes = permissionCodes(permissions)
+  return new Set(Object.entries(CAPABILITY_PERMISSION_CODES)
+    .filter(([, requiredCodes]) => requiredCodes.some((code) => codes.has(code)))
+    .map(([capability]) => capability))
 }
 
-export function hasLegalCapability(role, capability, isSuperuser = false, assignments = []) {
-  const capabilities = assignments.length
-    ? legalCapabilitiesForAssignments(assignments, isSuperuser)
-    : legalCapabilities(role, isSuperuser)
-  return capabilities.has(capability)
+export function hasLegalCapability(permissions, capability, isSuperuser = false) {
+  return legalCapabilities(permissions, isSuperuser).has(capability)
 }
 
 export function canDeleteLegalAttachment({
-  role,
+  permissions = [],
   isSuperuser = false,
   currentUserId,
-  archivedAt,
-  assignments = []
+  archivedAt
 }, attachment) {
   if (archivedAt) return false
-  const capabilities = assignments.length
-    ? legalCapabilitiesForAssignments(assignments, isSuperuser)
-    : legalCapabilities(role, isSuperuser)
+  const capabilities = legalCapabilities(permissions, isSuperuser)
   if (capabilities.has(LEGAL_CAPABILITIES.MANAGE_DETAIL)) return true
   return capabilities.has(LEGAL_CAPABILITIES.DELETE_ATTACHMENT)
     && Number(attachment?.uploaded_by) === Number(currentUserId)

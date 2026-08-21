@@ -11,12 +11,17 @@ const api = vi.hoisted(() => ({
   updateCase: vi.fn()
 }))
 const messages = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn() }))
-const portal = vi.hoisted(() => ({ isSuperuser: false }))
+const portal = vi.hoisted(() => ({
+  isSuperuser: false,
+  permissionCodes: new Set(),
+  hasPermission(code) { return this.isSuperuser || this.permissionCodes.has(code) }
+}))
+const route = vi.hoisted(() => ({ params: {} }))
 
 vi.mock('@/api/legalRisk', () => api)
 vi.mock('@/store/portal', () => ({ usePortalStore: () => portal }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: {} }),
+  useRoute: () => route,
   useRouter: () => ({ back: vi.fn(), replace: vi.fn() })
 }))
 vi.mock('element-plus', async (importOriginal) => ({
@@ -33,6 +38,8 @@ describe('legal case editor initiator ownership', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     portal.isSuperuser = false
+    portal.permissionCodes = new Set(['investment.legal.cases.create'])
+    route.params = {}
     api.listLegalUserOptions.mockResolvedValue([])
   })
 
@@ -87,5 +94,35 @@ describe('legal case editor initiator ownership', () => {
       organization_code: 'xinhuaproperty'
     }))
     expect(api.createCase.mock.calls[0][0]).not.toHaveProperty('initiator_assignment_id')
+  })
+
+  it('rejects direct create attempts when the snapshot lacks create permission', async () => {
+    portal.permissionCodes = new Set(['investment.legal.cases.update'])
+    api.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: 51, company_code: 'xinhuaproperty', organization_code: 'xinhuaproperty' }
+    ])
+    const wrapper = mountCaseEditor()
+    await flushPromises()
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+
+    await wrapper.vm.save()
+
+    expect(api.createCase).not.toHaveBeenCalled()
+    expect(messages.warning).toHaveBeenCalledWith('权限不足，无法新建案件')
+  })
+
+  it('allows update-only snapshots to edit without granting create', async () => {
+    route.params = { caseId: '7' }
+    portal.permissionCodes = new Set(['investment.legal.cases.update'])
+    api.getCase.mockResolvedValue({ id: 7, version: 1, case_name: '原案件' })
+    api.updateCase.mockResolvedValue({ id: 7 })
+    const wrapper = mountCaseEditor()
+    await flushPromises()
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+
+    await wrapper.vm.save()
+
+    expect(api.updateCase).toHaveBeenCalledWith('7', expect.objectContaining({ version: 1 }))
+    expect(api.createCase).not.toHaveBeenCalled()
   })
 })

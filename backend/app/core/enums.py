@@ -14,6 +14,7 @@ class ResourceCode(str, Enum):
     PORTAL = "portal"
     INVEST_LEGAL_DASHBOARD = "invest.legal.dashboard"
     INVEST_LEGAL_CASES = "invest.legal.cases"
+    INVEST_LEGAL_CONTRACTS = "invest.legal.contracts"
     INVEST_LEGAL_ALERTS = "invest.legal.alerts"
     INVEST_LEGAL_STATISTICS = "invest.legal.statistics"
     INVEST_LEGAL_ADMIN = "invest.legal.admin"

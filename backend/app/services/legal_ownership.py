@@ -14,7 +14,7 @@ LegalResource = Literal["contract", "case"]
 
 @dataclass(frozen=True)
 class LegalInitiatorOption:
-    assignment_id: int
+    assignment_id: int | None
     company_code: str
     company_name: str
     organization_code: str
@@ -67,8 +67,40 @@ def legal_initiator_options(
     db: Session, user: User, resource: LegalResource
 ) -> list[LegalInitiatorOption]:
     allowed_companies = _allowed_companies(resource)
-    if not user.is_active or user.is_superuser:
+    if not user.is_active:
         return []
+
+    if user.is_superuser:
+        organizations = db.scalars(
+            select(Organization).where(
+                Organization.is_active.is_(True),
+                Organization.organization_type != OrganizationType.EXTERNAL,
+                Organization.company_code.in_(allowed_companies),
+                Organization.code != "investment",
+            ).order_by(Organization.sort_order, Organization.code)
+        ).all()
+        company_names = _company_names(
+            db,
+            {
+                organization.company_code
+                for organization in organizations
+                if organization.company_code is not None
+            },
+        )
+        return [
+            LegalInitiatorOption(
+                assignment_id=None,
+                company_code=organization.company_code,
+                company_name=company_names.get(
+                    organization.company_code, organization.name
+                ),
+                organization_code=organization.code,
+                organization_name=organization.name,
+                position_code="",
+                position_name="",
+            )
+            for organization in organizations
+        ]
 
     assignments = [
         assignment
@@ -132,7 +164,11 @@ def resolve_legal_ownership(
                 Organization.organization_type != OrganizationType.EXTERNAL,
             )
         )
-        if organization is None or organization.company_code not in allowed_companies:
+        if (
+            organization is None
+            or organization.code == "investment"
+            or organization.company_code not in allowed_companies
+        ):
             raise LegalOwnershipError("invalid_organization", "发起组织不可用于该法务资源")
         return LegalOwnership(
             company_code=organization.company_code,

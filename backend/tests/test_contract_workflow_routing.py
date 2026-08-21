@@ -12,7 +12,9 @@ from app.models.organization import (
     ExternalAssignment,
     GovernanceScope,
     Organization,
+    Permission,
     Position,
+    PositionPermission,
     UserAssignment,
 )
 from app.models.user import User
@@ -287,6 +289,58 @@ def test_legal_executive_and_subsidiary_candidates_are_not_cross_scoped(db):
             db, contract, submitter, SUBSIDIARY_WORKFLOW, "governance_leader", date.today()
         )
     } == {governance.id}
+
+    selected_users = {
+        "company_head": supply_head.id,
+        "legal_counsel": counsel.id,
+        "legal_risk": legal_reviewer.id,
+        "governance_leader": governance.id,
+    }
+    review_permission = db.scalar(select(Permission).where(
+        Permission.code == "investment.legal.contracts.review"
+    ))
+    counsel_position = db.scalar(select(Position).where(
+        Position.code == "external.legal_counsel"
+    ))
+    review_grant = db.scalar(select(PositionPermission).where(
+        PositionPermission.position_id == counsel_position.id,
+        PositionPermission.permission_id == review_permission.id,
+    ))
+    db.delete(review_grant)
+    db.commit()
+
+    assert contract_node_candidates(
+        db, contract, submitter, SUBSIDIARY_WORKFLOW, "legal_counsel", date.today()
+    ) == []
+    with pytest.raises(WorkflowValidationError, match="eligible"):
+        start_workflow(
+            db, "contract", contract.id, submitter, selected_users,
+            workflow_code=SUBSIDIARY_WORKFLOW,
+        )
+
+
+def test_company_head_candidate_requires_contract_approve_permission(db):
+    contract, submitter = make_contract(
+        db, "supplymanagement", "supplymanagement", "supply.business_handler"
+    )
+    head = add_user(db, "permissionless-company-head")
+    assign(db, head, "supplymanagement", "supply.company_leader")
+    approve_permission = db.scalar(select(Permission).where(
+        Permission.code == "investment.legal.contracts.approve"
+    ))
+    head_position = db.scalar(select(Position).where(
+        Position.code == "supply.company_leader"
+    ))
+    approve_grant = db.scalar(select(PositionPermission).where(
+        PositionPermission.position_id == head_position.id,
+        PositionPermission.permission_id == approve_permission.id,
+    ))
+    db.delete(approve_grant)
+    db.commit()
+
+    assert contract_node_candidates(
+        db, contract, submitter, SUBSIDIARY_WORKFLOW, "company_head", date.today()
+    ) == []
 
 
 def test_xinhua_contract_workflow_is_not_available(db):

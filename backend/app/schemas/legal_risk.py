@@ -120,7 +120,7 @@ class LegalCaseOut(LegalCaseBase):
 
 
 class LegalInitiatorOptionOut(BaseModel):
-    assignment_id: int
+    assignment_id: int | None
     company_code: str
     company_name: str
     organization_code: str
