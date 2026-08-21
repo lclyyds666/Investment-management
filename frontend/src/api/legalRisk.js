@@ -64,8 +64,9 @@ export const previewImport = (formData) => request.post(`${BASE}/imports/preview
   headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000
 })
 export const getImportBatch = (id) => request.get(`${BASE}/imports/${id}`)
-export const confirmImport = (id, rows) => request.post(`${BASE}/imports/${id}/confirm`, {
-  confirmed_warning_rows: rows
+export const confirmImport = (id, rows, ownership = {}) => request.post(`${BASE}/imports/${id}/confirm`, {
+  confirmed_warning_rows: rows,
+  ...ownership
 }, { timeout: 120000 })
 export const downloadImportErrors = (id) => request.get(`${BASE}/imports/${id}/errors.xlsx`, {
   responseType: 'blob', timeout: 120000

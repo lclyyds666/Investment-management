@@ -7,6 +7,16 @@
     </el-steps>
 
     <div v-if="step === 0" class="import-step">
+      <el-form label-position="top">
+        <el-form-item v-if="initiatorOptions.length" label="案件发起组织" required>
+          <el-select v-model="initiatorAssignmentId" :loading="initiatorOptionsLoading" placeholder="请选择案件发起组织">
+            <el-option v-for="option in initiatorOptions" :key="option.assignment_id" :value="option.assignment_id" :label="`${option.company_name} / ${option.organization_name} / ${option.position_name || option.position_code}`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-else label="代理发起组织编码" required>
+          <el-input v-model="organizationCode" :disabled="initiatorOptionsLoading" placeholder="超级管理员请输入发起组织编码" />
+        </el-form-item>
+      </el-form>
       <el-upload drag :auto-upload="false" accept=".xlsx" :limit="1" :on-change="selectFile" :on-remove="removeFile">
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
         <div>拖入或选择标准 Excel 文件</div>
@@ -45,7 +55,7 @@
 
     <template #footer>
       <el-button v-if="step < 2" @click="visible = false">取消</el-button>
-      <el-button v-if="step === 0" type="primary" :loading="loading" :disabled="!file" @click="preview">开始预检</el-button>
+      <el-button v-if="step === 0" type="primary" :loading="loading" :disabled="!canPreview" @click="preview">开始预检</el-button>
       <el-button v-if="step === 1" type="primary" :loading="loading" :disabled="!canConfirm" @click="confirm">确认导入</el-button>
       <el-button v-if="step === 2" type="primary" @click="finish">完成</el-button>
     </template>
@@ -58,7 +68,7 @@ import { Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import {
   confirmImport, downloadImportErrors, downloadImportTemplate,
-  getImportBatch, previewImport
+  getImportBatch, listLegalInitiatorOptions, previewImport
 } from '@/api/legalRisk'
 
 const emit = defineEmits(['imported'])
@@ -66,6 +76,10 @@ const visible = ref(false)
 const step = ref(0)
 const loading = ref(false)
 const file = ref(null)
+const initiatorOptions = ref([])
+const initiatorOptionsLoading = ref(false)
+const initiatorAssignmentId = ref(null)
+const organizationCode = ref('')
 const batch = reactive({ id: null, total_rows: 0, importable_rows: 0, warning_rows: 0, error_rows: 0, rows: [] })
 const confirmed = reactive({})
 const result = reactive({ imported_cases: 0 })
@@ -73,6 +87,13 @@ const result = reactive({ imported_cases: 0 })
 const issueRows = computed(() => (batch.rows || []).filter((row) => row.errors?.length || row.warnings?.length))
 const warningRows = computed(() => issueRows.value.filter((row) => row.warnings?.length && !row.errors?.length))
 const canConfirm = computed(() => !batch.error_rows && warningRows.value.every((row) => confirmed[row.id]))
+const ownership = computed(() => ({
+  ...(initiatorAssignmentId.value !== null ? { initiator_assignment_id: initiatorAssignmentId.value } : {}),
+  ...(organizationCode.value ? { organization_code: organizationCode.value } : {})
+}))
+const canPreview = computed(() => file.value && !initiatorOptionsLoading.value && (
+  initiatorAssignmentId.value !== null || organizationCode.value.trim()
+))
 
 const saveBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob)
@@ -83,7 +104,19 @@ const saveBlob = (blob, filename) => {
   URL.revokeObjectURL(url)
 }
 
-const open = () => { visible.value = true }
+async function loadInitiatorOptions() {
+  initiatorOptionsLoading.value = true
+  try {
+    initiatorOptions.value = await listLegalInitiatorOptions('case')
+    if (initiatorOptions.value.length === 1) initiatorAssignmentId.value = initiatorOptions.value[0].assignment_id
+  } catch {
+    initiatorOptions.value = []
+  } finally {
+    initiatorOptionsLoading.value = false
+  }
+}
+
+const open = () => { visible.value = true; loadInitiatorOptions() }
 const selectFile = (uploadFile) => { file.value = uploadFile.raw }
 const removeFile = () => { file.value = null }
 
@@ -96,6 +129,7 @@ async function preview() {
   try {
     const data = new FormData()
     data.append('file', file.value)
+    Object.entries(ownership.value).forEach(([key, value]) => data.append(key, String(value)))
     const summary = await previewImport(data)
     Object.assign(batch, summary, await getImportBatch(summary.id))
     step.value = 1
@@ -107,7 +141,7 @@ async function preview() {
 async function confirm() {
   loading.value = true
   try {
-    Object.assign(result, await confirmImport(batch.id, warningRows.value.map((row) => row.id)))
+    Object.assign(result, await confirmImport(batch.id, warningRows.value.map((row) => row.id), ownership.value))
     step.value = 2
     ElMessage.success('案件台账导入成功')
   } finally {
@@ -127,6 +161,8 @@ function finish() {
 function reset() {
   step.value = 0
   file.value = null
+  initiatorAssignmentId.value = null
+  organizationCode.value = ''
   Object.assign(batch, { id: null, total_rows: 0, importable_rows: 0, warning_rows: 0, error_rows: 0, rows: [] })
   Object.keys(confirmed).forEach((key) => delete confirmed[key])
   result.imported_cases = 0

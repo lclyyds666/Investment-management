@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
-from app.api.v1.endpoints.legal_risk import _import_batch_for_user
+from app.api.v1.endpoints.legal_risk import _import_batch_for_user, confirm_import_endpoint
 from app.core.enums import AssignmentStatus, Role
 from app.db.base import Base
 from app.models.legal_risk import (
@@ -21,12 +21,14 @@ from app.models.legal_risk import (
 )
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
+from app.schemas.legal_risk import LegalImportConfirmIn
 from app.services.legal_imports import (
     build_import_template,
     confirm_import,
     expire_unconfirmed_batches,
     preview_import,
 )
+from app.services.legal_ownership import resolve_legal_ownership
 from app.services.organization_catalog import seed_authorization_catalog
 
 
@@ -95,6 +97,59 @@ class LegalImportTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             confirm_import(self.db, batch, self.user, list(warning_ids))
         self.assertEqual(raised.exception.status_code, 409)
+
+    def test_import_uses_the_same_validated_ownership_for_every_case(self):
+        ownership = resolve_legal_ownership(
+            self.db, self.user, "case", None, "xinhuaproperty"
+        )
+        batch = preview_import(
+            self.db, self._filled_template(), "property-cases.xlsx", self.user, ownership
+        )
+        result = confirm_import(self.db, batch, self.user, [], ownership)
+        self.db.commit()
+
+        self.assertEqual(result["imported_cases"], 1)
+        case = self.db.query(LegalCase).one()
+        self.assertEqual(case.company_code, "xinhuaproperty")
+        self.assertEqual(case.organization_code, "xinhuaproperty")
+
+    def test_confirm_rejects_an_ownership_different_from_preview(self):
+        property_ownership = resolve_legal_ownership(
+            self.db, self.user, "case", None, "xinhuaproperty"
+        )
+        investment_ownership = resolve_legal_ownership(
+            self.db, self.user, "case", None, "investment.legal_risk"
+        )
+        batch = preview_import(
+            self.db, self._filled_template(), "property-cases.xlsx", self.user, property_ownership
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            confirm_import(self.db, batch, self.user, [], investment_ownership)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.db.rollback()
+
+    def test_confirm_endpoint_returns_422_when_ownership_is_no_longer_valid(self):
+        ownership = resolve_legal_ownership(
+            self.db, self.user, "case", None, "xinhuaproperty"
+        )
+        batch = preview_import(
+            self.db, self._filled_template(), "property-cases.xlsx", self.user, ownership
+        )
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as raised:
+            confirm_import_endpoint(
+                batch.id,
+                LegalImportConfirmIn(organization_code="unknown-company"),
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail["code"], "invalid_organization")
+        self.assertEqual(self.db.get(LegalCaseImportBatch, batch.id).status, LegalImportStatus.PREVIEWED)
 
     def test_imported_future_custom_deadline_creates_task_without_delivery(self):
         workbook = load_workbook(BytesIO(self._filled_template()))

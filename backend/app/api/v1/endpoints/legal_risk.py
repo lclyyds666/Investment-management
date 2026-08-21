@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.responses import Response as StarletteResponse
 
 from app.api.deps import get_current_user, require_company_resource, require_superuser
-from app.core.enums import CompanyCode, ResourceCode
+from app.core.enums import CompanyCode, OrganizationType, ResourceCode
 from app.db.session import get_db
 from app.models.legal_risk import (
     LegalCase,
@@ -36,6 +36,7 @@ from app.models.legal_risk import (
     LegalCollaboratorType,
     LegalProgressType,
 )
+from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.legal_risk import (
@@ -202,8 +203,16 @@ def _dispatch_case_deliveries(db: Session, case_id: int) -> int:
         return 0
 
 
-def _case_out(case: LegalCase) -> LegalCaseOut:
-    return LegalCaseOut.model_validate(case)
+def _case_out(
+    case: LegalCase,
+    *,
+    company_name: str = "",
+    organization_name: str = "",
+) -> LegalCaseOut:
+    return LegalCaseOut.model_validate(case).model_copy(update={
+        "company_name": company_name,
+        "organization_name": organization_name,
+    })
 
 
 def _detail_out(db: Session, case: LegalCase) -> LegalCaseDetailOut:
@@ -273,6 +282,8 @@ def list_cases(
     status: str | None = None,
     court: str | None = None,
     responsible_user_id: int | None = None,
+    company_name: str | None = None,
+    organization_name: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -298,14 +309,36 @@ def list_cases(
         stmt = stmt.where(LegalCase.court.like(f"%{court.strip()}%"))
     if responsible_user_id is not None:
         stmt = stmt.where(LegalCase.responsible_user_id == responsible_user_id)
+    if company_name:
+        stmt = stmt.where(LegalCase.company_code.in_(select(Organization.code).where(
+            Organization.name.like(f"%{company_name.strip()}%"),
+            Organization.organization_type == OrganizationType.COMPANY,
+        )))
+    if organization_name:
+        stmt = stmt.where(LegalCase.organization_code.in_(select(Organization.code).where(
+            Organization.name.like(f"%{organization_name.strip()}%")
+        )))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.order_by(LegalCase.updated_at.desc(), LegalCase.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+    names = {
+        organization.code: organization.name
+        for organization in db.scalars(select(Organization).where(
+            Organization.code.in_({
+                code for row in rows
+                for code in (row.company_code, row.organization_code)
+            })
+        )).all()
+    }
     return Response.ok(LegalPage(
-        items=[_case_out(row) for row in rows],
+        items=[_case_out(
+            row,
+            company_name=names.get(row.company_code, row.company_code),
+            organization_name=names.get(row.organization_code, row.organization_code),
+        ) for row in rows],
         total=total,
         page=page,
         page_size=page_size,
@@ -1268,6 +1301,8 @@ def import_template(
 @router.post("/imports/preview", response_model=Response[dict], summary="预检法务案件 Excel")
 async def preview_import_endpoint(
     file: UploadFile = File(...),
+    initiator_assignment_id: int | None = Form(default=None),
+    organization_code: str | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_legal_capability(LegalCapability.IMPORT_EXPORT)),
 ):
@@ -1276,7 +1311,15 @@ async def preview_import_endpoint(
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(status_code=422, detail="导入文件超过 20MB 上限")
-    batch = preview_import(db, content, file.filename or "法务案件导入.xlsx", current_user)
+    try:
+        ownership = resolve_legal_ownership(
+            db, current_user, "case", initiator_assignment_id, organization_code
+        )
+    except LegalOwnershipError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
+    batch = preview_import(
+        db, content, file.filename or "法务案件导入.xlsx", current_user, ownership
+    )
     _commit(db); db.refresh(batch)
     return Response.ok({
         "id": batch.id, "status": batch.status.value,
@@ -1326,9 +1369,20 @@ def confirm_import_endpoint(
 ):
     batch = _import_batch_for_user(db, batch_id, current_user)
     try:
-        result = confirm_import(db, batch, current_user, payload.confirmed_warning_rows)
+        ownership = resolve_legal_ownership(
+            db, current_user, "case", payload.initiator_assignment_id, payload.organization_code
+        )
+        result = confirm_import(
+            db, batch, current_user, payload.confirmed_warning_rows, ownership
+        )
         _commit(db)
         return Response.ok(result, message="导入成功")
+    except LegalOwnershipError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
     except Exception:
         db.rollback()
         raise

@@ -21,7 +21,10 @@ vi.mock('@/api/legalRisk', () => ({
 
 vi.mock('@/store/portal', () => ({
   usePortalStore: () => ({
-    assignments: [{ position_code: 'investment.department.junior_manager' }],
+    assignments: [{
+      organization_code: 'investment.legal_risk',
+      position_code: 'investment.department.junior_manager'
+    }],
     companyRole: () => 'business_handler',
     isSuperuser: false
   })
@@ -39,5 +42,23 @@ describe('legal case list drilldown filters', () => {
     expect(mocks.listCases).toHaveBeenCalledWith(expect.objectContaining({
       status: 'enforcement'
     }))
+  })
+
+  it('renders company and initiator organization columns', async () => {
+    const wrapper = shallowMount(CaseListView, {
+      global: { stubs: { ElTable: { template: '<div><slot /></div>' } } }
+    })
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('所属公司')
+    expect(wrapper.html()).toContain('发起组织')
+  })
+
+  it('shows ownership filters to legal department users', async () => {
+    const wrapper = shallowMount(CaseListView)
+    await flushPromises()
+
+    expect(wrapper.html()).toContain('placeholder="所属公司"')
+    expect(wrapper.html()).toContain('placeholder="发起组织"')
   })
 })

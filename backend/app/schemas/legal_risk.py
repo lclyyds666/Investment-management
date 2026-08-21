@@ -103,6 +103,8 @@ class LegalCaseOut(LegalCaseBase):
     company_code: str
     organization_code: str
     initiator_assignment_id: int | None
+    company_name: str = ""
+    organization_name: str = ""
     stage: LegalCaseStage
     case_no: str | None
     status: LegalCaseStatus | None
@@ -294,6 +296,8 @@ class LegalAlertActionIn(BaseModel):
 
 class LegalImportConfirmIn(BaseModel):
     confirmed_warning_rows: list[int] = Field(default_factory=list)
+    initiator_assignment_id: int | None = None
+    organization_code: str | None = None
 
     @field_validator("confirmed_warning_rows")
     @classmethod

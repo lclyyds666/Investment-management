@@ -10,6 +10,14 @@
       <section class="form-section">
         <h2>案件识别</h2>
         <div class="form-grid">
+          <el-form-item v-if="!isEdit && initiatorOptions.length" label="案件发起组织" prop="initiator_assignment_id" class="wide">
+            <el-select v-model="form.initiator_assignment_id" :loading="initiatorOptionsLoading" placeholder="请选择案件发起组织">
+              <el-option v-for="option in initiatorOptions" :key="option.assignment_id" :value="option.assignment_id" :label="`${option.company_name} / ${option.organization_name} / ${option.position_name || option.position_code}`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-else-if="!isEdit" label="代理发起组织编码" prop="organization_code" class="wide">
+            <el-input v-model="form.organization_code" :disabled="initiatorOptionsLoading" placeholder="超级管理员请输入发起组织编码" />
+          </el-form-item>
           <el-form-item label="案件名称" prop="case_name" class="wide"><el-input v-model="form.case_name" maxlength="255" show-word-limit /></el-form-item>
           <el-form-item label="案由"><el-input v-model="form.cause_of_action" /></el-form-item>
           <el-form-item label="受理法院"><el-input v-model="form.court" /></el-form-item>
@@ -48,7 +56,7 @@
 
     <footer class="editor-actions">
       <el-button @click="$router.back()">取消</el-button>
-      <el-button type="primary" :loading="saving" :icon="Check" @click="save">保存</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!isEdit && initiatorOptionsLoading" :icon="Check" @click="save">保存</el-button>
     </footer>
   </section>
 </template>
@@ -58,7 +66,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ArrowLeft, Check } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { createCase, getCase, listLegalUserOptions, updateCase } from '@/api/legalRisk'
+import { createCase, getCase, listLegalInitiatorOptions, listLegalUserOptions, updateCase } from '@/api/legalRisk'
 import { responsibleUserPatch } from '@/utils/legalCaseForm'
 
 const route = useRoute()
@@ -68,20 +76,44 @@ const loading = ref(false)
 const saving = ref(false)
 const caseData = reactive({})
 const users = ref([])
+const initiatorOptions = ref([])
+const initiatorOptionsLoading = ref(false)
 const responsibleNameDirty = ref(false)
 const isEdit = computed(() => Boolean(route.params.caseId))
 const form = reactive({
   case_name: '', cause_of_action: '', court: '', court_case_no: '', subject_amount: 0,
   responsible_user_name: '', confidentiality_level: 'internal', law_firm: '', attorney_name: '',
-  case_summary: '', claims: '', enforcement_property_status: '', closed_date: null, closure_summary: ''
+  case_summary: '', claims: '', enforcement_property_status: '', closed_date: null, closure_summary: '',
+  initiator_assignment_id: null, organization_code: ''
 })
-const rules = { case_name: [{ required: true, message: '请输入案件名称', trigger: 'blur' }] }
+const rules = {
+  case_name: [{ required: true, message: '请输入案件名称', trigger: 'blur' }],
+  initiator_assignment_id: [{ required: true, message: '请选择案件发起组织', trigger: 'change' }],
+  organization_code: [{ required: true, message: '请输入代理发起组织编码', trigger: 'blur' }]
+}
+
+async function loadInitiatorOptions() {
+  initiatorOptionsLoading.value = true
+  try {
+    initiatorOptions.value = await listLegalInitiatorOptions('case')
+    if (initiatorOptions.value.length === 1) {
+      form.initiator_assignment_id = initiatorOptions.value[0].assignment_id
+    }
+  } catch {
+    initiatorOptions.value = []
+  } finally {
+    initiatorOptionsLoading.value = false
+  }
+}
 
 onMounted(async () => {
   loading.value = true
   try {
     users.value = await listLegalUserOptions()
-    if (!isEdit.value) return
+    if (!isEdit.value) {
+      await loadInitiatorOptions()
+      return
+    }
     const data = await getCase(route.params.caseId)
     Object.assign(caseData, data)
     Object.keys(form).forEach((key) => { form[key] = data[key] ?? form[key] })
@@ -106,6 +138,10 @@ async function save() {
     if (!isEdit.value) {
       delete payload.closed_date
       delete payload.closure_summary
+      if (payload.initiator_assignment_id) delete payload.organization_code
+    } else {
+      delete payload.initiator_assignment_id
+      delete payload.organization_code
     }
     const data = isEdit.value
       ? await updateCase(route.params.caseId, { ...payload, version: caseData.version })
