@@ -44,14 +44,14 @@ describe('investment legal-risk navigation', () => {
     portalStore.hasPermission.mockReturnValue(true)
   })
 
-  it('shows contract management when its resource and permission are available', () => {
+  it('shows contract management when its legal resource is available', () => {
     const wrapper = mountLayout()
 
     expect(wrapper.text()).toContain('合同管理')
   })
 
-  it('hides contract management without supply.contract.view', () => {
-    portalStore.hasPermission.mockImplementation((code) => code !== 'supply.contract.view')
+  it('hides contract management without the legal contract resource', () => {
+    portalStore.hasResource.mockImplementation((code) => code !== 'invest.legal.contracts')
     const wrapper = mountLayout()
 
     expect(wrapper.text()).not.toContain('合同管理')

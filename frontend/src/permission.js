@@ -55,7 +55,7 @@ export const portalGuard = async (to) => {
     return { path: '/' }
   }
 
-  if (to.meta?.company && !portalStore.hasCompany(to.meta.company)) {
+  if (to.meta?.company && !to.meta?.allowCrossCompanyResource && !portalStore.hasCompany(to.meta.company)) {
     ElMessage.error('无权访问该公司应用')
     return { path: '/' }
   }

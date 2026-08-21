@@ -135,4 +135,17 @@ describe('portal permission guard', () => {
     }))).resolves.toEqual({ path: '/investment/legal-risk/cases' })
     expect(ElMessage.error).toHaveBeenCalledWith('权限不足，无法执行该法务操作')
   })
+
+  it('allows a subsidiary user with the legal contract resource', async () => {
+    authenticatedContext({
+      applications: [{ code: 'supplymanagement', accessible: true }],
+      resources: ['invest.legal.contracts']
+    })
+
+    await expect(portalGuard(route('/investment/legal-risk/contracts', {
+      company: 'investment',
+      resource: 'invest.legal.contracts',
+      allowCrossCompanyResource: true
+    }))).resolves.toBe(true)
+  })
 })

@@ -84,14 +84,13 @@ const activeMenu = computed(() => {
 const allMenus = [
   { path: '/investment/legal-risk/dashboard', label: '法务工作台', icon: DataBoard, resource: RESOURCE_CODES.INVEST_LEGAL_DASHBOARD },
   { path: '/investment/legal-risk/cases', label: '案件管理', icon: Briefcase, resource: RESOURCE_CODES.INVEST_LEGAL_CASES },
-  { path: '/investment/legal-risk/contracts', label: '合同管理', icon: DocumentChecked, resource: RESOURCE_CODES.INVEST_LEGAL_CASES, permission: 'supply.contract.view' },
+  { path: '/investment/legal-risk/contracts', label: '合同管理', icon: DocumentChecked, resource: RESOURCE_CODES.INVEST_LEGAL_CONTRACTS },
   { path: '/investment/legal-risk/alerts', label: '预警任务', icon: Bell, resource: RESOURCE_CODES.INVEST_LEGAL_ALERTS, badge: true },
   { path: '/investment/legal-risk/statistics', label: '统计分析', icon: TrendCharts, resource: RESOURCE_CODES.INVEST_LEGAL_STATISTICS },
   { path: '/investment/legal-risk/users', label: '通知人员', icon: UserFilled, resource: RESOURCE_CODES.INVEST_LEGAL_ADMIN }
 ]
 const menus = computed(() => allMenus.filter((item) => (
-  (!item.resource || portalStore.hasResource(item.resource)) &&
-  (!item.permission || portalStore.hasPermission(item.permission))
+  !item.resource || portalStore.hasResource(item.resource)
 )))
 
 const syncViewport = () => {

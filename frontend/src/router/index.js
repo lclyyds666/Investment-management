@@ -73,8 +73,8 @@ const routes = [
         meta: {
           title: '合同管理',
           company: COMPANY_CODES.INVESTMENT,
-          resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
-          permission: 'supply.contract.view'
+          resource: RESOURCE_CODES.INVEST_LEGAL_CONTRACTS,
+          allowCrossCompanyResource: true
         }
       },
       {
@@ -288,19 +288,6 @@ const routes = [
           groupIcon: 'Wallet',
           company: supplyCompany,
           resource: RESOURCE_CODES.SUPPLY_FINANCE
-        }
-      },
-      {
-        path: 'contract',
-        name: 'Contract',
-        component: () => import('@/views/contract/index.vue'),
-        meta: {
-          title: '合同管理',
-          icon: 'Document',
-          group: '经营合规',
-          groupIcon: 'DocumentChecked',
-          company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_CONTRACT
         }
       },
       {

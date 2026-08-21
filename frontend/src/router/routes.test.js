@@ -16,7 +16,6 @@ const supplyRoutes = [
   ['CulturalTourismDetail', '/supplymanagement/cultural-tourism/zunyi-zoo', 'supply.scenic.analytics'],
   ['FinanceFund', '/supplymanagement/finance/fund', 'supply.finance'],
   ['Invoice', '/supplymanagement/finance/invoice', 'supply.finance'],
-  ['Contract', '/supplymanagement/contract', 'supply.contract'],
   ['Approval', '/supplymanagement/approval', 'supply.approval'],
   ['Customer', '/supplymanagement/customer', 'supply.customer'],
   ['Screen', '/supplymanagement/screen', 'supply.dashboard']
@@ -33,7 +32,7 @@ const legacyRoutes = [
   ['/finance/fund', 'FinanceFund', {}],
   ['/finance/invoice', 'Invoice', {}],
   ['/invoice', 'Invoice', {}],
-  ['/contract', 'Contract', {}],
+  ['/contract', 'LegalRiskContracts', {}],
   ['/approval', 'Approval', {}],
   ['/customer', 'Customer', {}],
   ['/org', 'SystemUsers', {}],
@@ -86,8 +85,16 @@ describe('unified portal routes', () => {
     const route = router.resolve({ name: 'LegalRiskContracts' })
 
     expect(route.path).toBe('/investment/legal-risk/contracts')
-    expect(route.meta.resource).toBe('invest.legal.cases')
-    expect(route.meta.permission).toBe('supply.contract.view')
+    expect(route.meta.resource).toBe('invest.legal.contracts')
+    expect(route.meta.permission).toBeUndefined()
+  })
+
+  it('moves contract management to the legal-risk application', () => {
+    const legalContract = router.getRoutes().find((route) => route.path === '/investment/legal-risk/contracts')
+    const supplyContract = router.getRoutes().find((route) => route.path === '/supplymanagement/contract')
+
+    expect(legalContract.meta.resource).toBe('invest.legal.contracts')
+    expect(supplyContract.redirect).toBe('/investment/legal-risk/contracts')
   })
 
   it.each(supplyRoutes)(
