@@ -11,7 +11,14 @@
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <div class="toolbar-right">
-          <el-button v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">
+          <el-button
+            v-if="canCreate"
+            data-testid="create-contract"
+            type="primary"
+            :icon="Plus"
+            :disabled="!canOpenCreate"
+            @click="openCreate"
+          >
             新建合同
           </el-button>
           <el-button :icon="Tickets" @click="openLedger">生成合同台账</el-button>
@@ -411,13 +418,19 @@ function onCustomerChange(name) {
 }
 
 const initiatorOptions = ref([])
+const initiatorOptionsLoading = ref(true)
+const canOpenCreate = computed(() => canCreate.value && !initiatorOptionsLoading.value && initiatorOptions.value.length > 0)
 async function loadInitiatorOptions() {
+  initiatorOptionsLoading.value = true
   try {
     initiatorOptions.value = await listLegalInitiatorOptions('contract')
     rules.initiator_assignment_id[0].required = initiatorOptions.value.length > 1
     if (!isEdit.value && dialogVisible.value && initiatorOptions.value.length === 1) onInitiatorAssignmentChange(initiatorOptions.value[0].assignment_id)
   } catch {
     initiatorOptions.value = []
+    rules.initiator_assignment_id[0].required = false
+  } finally {
+    initiatorOptionsLoading.value = false
   }
 }
 function onInitiatorAssignmentChange(assignmentId) {
@@ -461,6 +474,7 @@ const rules = reactive({
 })
 
 function openCreate() {
+  if (!canOpenCreate.value) return
   isEdit.value = false
   editingId.value = null
   pickedFile.value = null
@@ -496,7 +510,9 @@ function openEdit(row) {
   dialogVisible.value = true
 }
 async function onSave() {
+  if (!isEdit.value && !canOpenCreate.value) return
   await formRef.value?.validate()
+  if (!isEdit.value && !form.initiator_assignment_id) return
   saving.value = true
   try {
     let contractId = editingId.value
@@ -540,6 +556,7 @@ const submitPlan = ref(null)
 const submitNodes = computed(() => submitPlan.value?.nodes || [])
 const submitFieldsRef = ref()
 const selectedApprovers = ref({})
+let submitPlanRequestGeneration = 0
 
 function isHandlerResubmit(row) {
   return Boolean(row.workflow_instance_id && ['initiator', 'handler'].includes(row.active_task?.node_code))
@@ -559,6 +576,7 @@ async function finishSubmit(row, payload) {
 }
 
 async function onSubmit(row) {
+  const requestGeneration = ++submitPlanRequestGeneration
   if (isHandlerResubmit(row)) {
     if (submitSaving.value) return
     submitSaving.value = true
@@ -569,8 +587,10 @@ async function onSubmit(row) {
     }
     return
   }
+  const plan = await getWorkflowSubmissionPlan('contract', row.id)
+  if (requestGeneration !== submitPlanRequestGeneration) return
   submitCurrent.value = row
-  submitPlan.value = await getWorkflowSubmissionPlan('contract', row.id)
+  submitPlan.value = plan
   selectedApprovers.value = {}
   submitVisible.value = true
 }

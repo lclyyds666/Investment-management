@@ -9,7 +9,8 @@ export const COMPANY_CODES = {
 export const COMPANY_NAMES = {
   investment: '山东出版投资有限公司',
   supplymanagement: '山东出版供应链管理有限公司',
-  fundmanagement: '山东出版股权基金管理有限公司'
+  fundmanagement: '山东出版股权基金管理有限公司',
+  zhanwei: '山东展威科技有限公司'
 }
 
 export const RESOURCE_CODES = {

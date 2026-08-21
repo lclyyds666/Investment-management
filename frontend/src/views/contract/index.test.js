@@ -44,6 +44,8 @@ function mountView() {
     global: {
       stubs: {
         ElDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+        ElCard: { template: '<div><slot name="header" /><slot /></div>' },
+        ElButton: { props: ['disabled'], template: '<button :disabled="disabled"><slot /></button>' },
         DesignatedApproverFields: false
       }
     }
@@ -71,6 +73,57 @@ describe('contract designated submit', () => {
     expect(wrapper.vm.rules.initiator_assignment_id[0].required).toBe(true)
   })
 
+  it('keeps contract creation disabled while origins load and when none are available', async () => {
+    const optionsRequest = deferred()
+    legalApi.listLegalInitiatorOptions.mockReturnValue(optionsRequest.promise)
+    const wrapper = mountView()
+
+    expect(wrapper.vm.canOpenCreate).toBe(false)
+    expect(wrapper.find('[data-testid="create-contract"]').attributes('disabled')).toBeDefined()
+    wrapper.vm.openCreate()
+    expect(wrapper.vm.dialogVisible).toBe(false)
+
+    optionsRequest.resolve([])
+    await flushPromises()
+    expect(wrapper.vm.canOpenCreate).toBe(false)
+    expect(wrapper.find('[data-testid="create-contract"]').attributes('disabled')).toBeDefined()
+    wrapper.vm.openCreate()
+    expect(wrapper.vm.dialogVisible).toBe(false)
+
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.onSave()
+    expect(contractApi.createContract).not.toHaveBeenCalled()
+  })
+
+  it('creates a contract when a legal origin is available', async () => {
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: 12, organization_code: 'supplymanagement', organization_name: '山东出版供应链管理有限公司', company_code: 'supplymanagement' }
+    ])
+    contractApi.createContract.mockResolvedValue({ id: 81 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="create-contract"]').attributes('disabled')).toBeUndefined()
+    wrapper.vm.openCreate()
+    expect(wrapper.vm.dialogVisible).toBe(true)
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.onSave()
+
+    expect(contractApi.createContract).toHaveBeenCalledWith(expect.objectContaining({ initiator_assignment_id: 12 }))
+  })
+
+  it('defaults party A to the Zhanwei company name when the option omits company_name', async () => {
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: 14, organization_code: 'zhanwei', organization_name: '山东展威科技有限公司', company_code: 'zhanwei' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+
+    wrapper.vm.openCreate()
+    expect(wrapper.vm.form.initiator_assignment_id).toBe(14)
+    expect(wrapper.vm.form.party_a).toBe('山东展威科技有限公司')
+  })
+
   it('loads the server submission plan before opening the designated chain', async () => {
     workflowApi.getWorkflowSubmissionPlan.mockResolvedValue({
       workflow_code: 'investment.contract.department.v1',
@@ -86,6 +139,29 @@ describe('contract designated submit', () => {
     expect(workflowApi.getWorkflowSubmissionPlan).toHaveBeenCalledWith('contract', 7)
     expect(wrapper.vm.submitVisible).toBe(true)
     expect(wrapper.vm.submitNodes.map(node => node.name)).toEqual(['经办部门负责人', '单位主要负责人'])
+  })
+
+  it('discards a late submission plan from an earlier contract', async () => {
+    const firstPlan = deferred()
+    const secondPlan = deferred()
+    workflowApi.getWorkflowSubmissionPlan
+      .mockReturnValueOnce(firstPlan.promise)
+      .mockReturnValueOnce(secondPlan.promise)
+    const wrapper = mountView()
+    const firstSubmit = wrapper.vm.onSubmit({ id: 21, status: 'draft', workflow_instance_id: null })
+    const secondSubmit = wrapper.vm.onSubmit({ id: 22, status: 'draft', workflow_instance_id: null })
+
+    secondPlan.resolve({ workflow_code: 'workflow.second', nodes: [{ code: 'second', name: '第二合同节点', position_name: '负责人' }] })
+    await secondSubmit
+    expect(wrapper.vm.submitCurrent.id).toBe(22)
+    expect(wrapper.vm.submitPlan.workflow_code).toBe('workflow.second')
+    expect(wrapper.vm.submitVisible).toBe(true)
+
+    firstPlan.resolve({ workflow_code: 'workflow.first', nodes: [{ code: 'first', name: '第一合同节点', position_name: '负责人' }] })
+    await firstSubmit
+    expect(wrapper.vm.submitCurrent.id).toBe(22)
+    expect(wrapper.vm.submitPlan.workflow_code).toBe('workflow.second')
+    expect(wrapper.vm.submitNodes.map((node) => node.code)).toEqual(['second'])
   })
 
   it('blocks first submission until the selector validates and sends designated users', async () => {
