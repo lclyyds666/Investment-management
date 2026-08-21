@@ -329,6 +329,7 @@ def create_contract(
         company_code=ownership.company_code,
         organization_code=ownership.organization_code,
         initiator_assignment_id=ownership.initiator_assignment_id,
+        workflow_route_version=1,
         status=ContractStatus.DRAFT,
         current_step=0,
         created_by=current_user.id,
@@ -443,7 +444,7 @@ def submit_contract(
     try:
         workflow_code = (
             contract_workflow_code(contract)
-            if contract.initiator_assignment_id is not None
+            if contract.workflow_route_version >= 1
             else None
         )
         start_workflow(

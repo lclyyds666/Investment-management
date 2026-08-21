@@ -77,6 +77,7 @@ class ContractOut(ContractBase):
     company_code: str
     organization_code: str
     initiator_assignment_id: Optional[int] = None
+    workflow_route_version: int = 0
     creator_name: str = ""  # 由端点补充（业务经办姓名）
     attachment_name: str = ""  # 合同附件原始文件名（空表示未上传）
     workflow_instance_id: Optional[int] = None

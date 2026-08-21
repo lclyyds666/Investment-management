@@ -179,11 +179,16 @@ def _contract_submission_target(
             for assignment in active_assignments(db, current_user.id)
         ),
     ]
+    permission_code = (
+        "supply.contract.submit"
+        if contract.workflow_route_version < 1
+        else "investment.legal.contracts.submit"
+    )
     if not any(
         has_permission(
             db,
             current_user,
-            "investment.legal.contracts.submit",
+            permission_code,
             context,
         )
         for context in permission_contexts
@@ -306,6 +311,26 @@ def candidates(
                 db,
                 contract,
                 current_user,
+                workflow_code,
+                node_code,
+                date.today(),
+                exclude_user_id=current_user.id,
+            )
+        elif (
+            workflow_code == "supply.contract.v2"
+            and target_type is not None
+            and target_id is not None
+        ):
+            contract = _contract_submission_target(
+                db, target_type, target_id, current_user
+            )
+            if contract.workflow_route_version >= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="new contracts require an ownership-routed workflow",
+                )
+            result = eligible_designated_users(
+                db,
                 workflow_code,
                 node_code,
                 date.today(),

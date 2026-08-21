@@ -1,7 +1,7 @@
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
@@ -12,6 +12,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
 from app.models.organization import Organization, Position, UserAssignment
+from app.models.contract import Contract
 from app.models.user import User
 from app.services.legal_ownership import (
     LegalOwnershipError,
@@ -244,3 +245,39 @@ def test_superuser_create_endpoint_requires_organization_code(
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "invalid_organization"
+
+
+def test_superuser_contract_create_marks_new_route_without_assignment(
+    db, assigned_users
+):
+    admin = User(
+        username="admin-proxy-contract",
+        full_name="管理员",
+        hashed_password="hashed",
+        role=Role.INFO_MAINTAINER,
+        is_superuser=True,
+        is_active=True,
+    )
+    db.add(admin)
+    db.commit()
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: admin
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/contracts",
+            json={
+                "contract_no": "ADMIN-PROXY-ROUTE",
+                "title": "管理员代建合同",
+                "organization_code": "supplymanagement",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["workflow_route_version"] == 1
+    contract = db.scalar(
+        select(Contract).where(Contract.contract_no == "ADMIN-PROXY-ROUTE")
+    )
+    assert contract.initiator_assignment_id is None
+    assert contract.workflow_route_version == 1

@@ -89,6 +89,8 @@ class WorkflowModelContractTest(unittest.TestCase):
 
     def test_business_models_keep_legacy_fields_and_add_links(self):
         self.assertTrue({"status", "current_step", "workflow_instance_id"}.issubset(Contract.__table__.columns.keys()))
+        self.assertEqual(Contract.__table__.c.workflow_route_version.default.arg, 0)
+        self.assertEqual(Contract.__table__.c.workflow_route_version.server_default.arg, "0")
         self.assertTrue({"status", "current_step", "workflow_instance_id"}.issubset(ApprovalForm.__table__.columns.keys()))
         for model in (Approval, ApprovalFormAction):
             columns = set(model.__table__.columns.keys())

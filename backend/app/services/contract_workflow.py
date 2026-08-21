@@ -51,7 +51,18 @@ def _initiator_assignment(
     contract: Contract,
     submitter: User,
     on_date: date,
-) -> UserAssignment:
+) -> UserAssignment | None:
+    if contract.initiator_assignment_id is None:
+        if submitter.is_active and submitter.is_superuser:
+            return None
+        raise WorkflowValidationError(
+            "invalid_contract_initiator_assignment",
+            "合同发起任职已失效或与合同归属不一致，请重新选择发起组织。",
+            {
+                "initiator_assignment_id": None,
+                "organization_code": contract.organization_code,
+            },
+        )
     assignment = db.scalar(
         select(UserAssignment)
         .where(UserAssignment.id == contract.initiator_assignment_id)
@@ -159,6 +170,15 @@ def contract_node_candidates(
     on_date: date,
     exclude_user_id: int | None = None,
 ) -> list[WorkflowCandidate]:
+    if contract.workflow_route_version < 1:
+        raise WorkflowValidationError(
+            "contract_workflow_mismatch",
+            "历史合同草稿只能使用原供应链合同审批流程。",
+            {
+                "workflow_code": workflow_code,
+                "expected_workflow_code": "supply.contract.v2",
+            },
+        )
     expected_workflow_code = contract_workflow_code(contract)
     if workflow_code != expected_workflow_code:
         raise WorkflowValidationError(
@@ -220,8 +240,11 @@ def submission_plan(
     contract: Contract,
     submitter: User,
 ) -> WorkflowSubmissionPlan:
-    workflow_code = contract_workflow_code(contract)
-    _initiator_assignment(db, contract, submitter, date.today())
+    if contract.workflow_route_version < 1:
+        workflow_code = "supply.contract.v2"
+    else:
+        workflow_code = contract_workflow_code(contract)
+        _initiator_assignment(db, contract, submitter, date.today())
     definition, version = _published_workflow(db, workflow_code)
     organization_name = db.scalar(
         select(Organization.name).where(
@@ -238,6 +261,10 @@ def submission_plan(
         node
         for node in sorted(version.nodes, key=lambda item: item.sequence)
         if not node.auto_complete_on_submit
+        and (
+            contract.workflow_route_version >= 1
+            or node.assignee_mode == WorkflowAssigneeMode.DESIGNATED_USER
+        )
     ]
     position_codes = {
         node.position_code for node in visible_nodes if node.position_code
@@ -270,7 +297,13 @@ def validate_submission_assignments(
     version: WorkflowVersion,
     designated_users: dict[str, int],
     submitted_on: date,
-) -> tuple[UserAssignment, dict[str, UserAssignment]]:
+) -> tuple[UserAssignment | None, dict[str, UserAssignment]]:
+    if contract.workflow_route_version < 1:
+        raise WorkflowValidationError(
+            "contract_workflow_mismatch",
+            "历史合同草稿只能使用原供应链合同审批流程。",
+            {"expected_workflow_code": "supply.contract.v2"},
+        )
     workflow_code = contract_workflow_code(contract)
     if version.definition.code != workflow_code:
         raise WorkflowValidationError(
@@ -314,9 +347,9 @@ def validate_submission_assignments(
             "One person cannot occupy two nodes in the same workflow.",
         )
 
-    selected_assignments: dict[str, UserAssignment] = {
-        "initiator": initiator_assignment
-    }
+    selected_assignments: dict[str, UserAssignment] = {}
+    if initiator_assignment is not None:
+        selected_assignments["initiator"] = initiator_assignment
     for node_code, user_id in designated_users.items():
         candidates = contract_node_candidates(
             db,

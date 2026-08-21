@@ -27,7 +27,13 @@ from app.main import create_app
 from app.models.approval import Approval
 from app.models.contract import Contract
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
-from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
+from app.models.organization import (
+    ExternalAssignment,
+    GovernanceScope,
+    Organization,
+    Position,
+    UserAssignment,
+)
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowTaskAction
 from app.services.approval_print import build_approval_form_xlsx
@@ -226,6 +232,7 @@ class WorkflowApiTest(unittest.TestCase):
             company_code="supplymanagement",
             organization_code="supplymanagement",
             initiator_assignment_id=initiator_assignment.id,
+            workflow_route_version=1,
         )
         self.db.add(target)
         self.db.commit()
@@ -252,6 +259,75 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertEqual(
             [node["name"] for node in plan.json()["data"]["nodes"]],
             ["公司负责人", "外聘法律顾问", "法务风控部", "分管领导"],
+        )
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(
+            {item["user_id"] for item in candidates.json()["data"]},
+            {self.leader.id, self.other_leader.id},
+        )
+
+    def test_contract_create_marks_new_workflow_route_generation(self):
+        initiator_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.handler.id,
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "supply.business_handler"
+                    )
+                ),
+            )
+        )
+
+        response = self.client.post(
+            "/api/v1/contracts",
+            json={
+                "contract_no": "WF-API-CREATE-ROUTE",
+                "title": "new routed contract",
+                "initiator_assignment_id": initiator_assignment.id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["workflow_route_version"], 1)
+        contract = self.db.scalar(
+            select(Contract).where(
+                Contract.contract_no == "WF-API-CREATE-ROUTE"
+            )
+        )
+        self.assertEqual(contract.workflow_route_version, 1)
+
+    def test_legacy_contract_plan_and_candidates_keep_old_designated_chain(self):
+        target = Contract(
+            contract_no="WF-API-LEGACY-PLAN",
+            title="legacy workflow plan",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            company_code="supplymanagement",
+            organization_code="supplymanagement",
+            workflow_route_version=0,
+        )
+        self.db.add(target)
+        self.db.commit()
+
+        plan = self.client.get(
+            "/api/v1/workflows/submission-plan",
+            params={"target_type": "contract", "target_id": target.id},
+        )
+        candidates = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={
+                "workflow_code": "supply.contract.v2",
+                "node_code": "company_leader",
+                "target_type": "contract",
+                "target_id": target.id,
+            },
+        )
+
+        self.assertEqual(plan.status_code, 200, plan.text)
+        self.assertEqual(plan.json()["data"]["workflow_code"], "supply.contract.v2")
+        self.assertEqual(
+            [node["code"] for node in plan.json()["data"]["nodes"]],
+            ["company_leader", "legal_counsel", "supply_governance_leader"],
         )
         self.assertEqual(candidates.status_code, 200, candidates.text)
         self.assertEqual(
@@ -974,6 +1050,56 @@ class ContractWorkflowApiTest(unittest.TestCase):
             .order_by(WorkflowTask.sequence)
         ))
         self.assertEqual(tasks[-1].required_position_code, "governance.supply_leader")
+
+    def test_new_contract_route_version_uses_subsidiary_workflow(self):
+        initiator_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.handler.id,
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "supply.business_handler"
+                    )
+                ),
+            )
+        )
+        governance_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.governance.id,
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "governance.supply_leader"
+                    )
+                ),
+            )
+        )
+        self.db.add(GovernanceScope(
+            assignment_id=governance_assignment.id,
+            scope_type="company",
+            scope_ref="supplymanagement",
+        ))
+        self.contract.initiator_assignment_id = initiator_assignment.id
+        self.contract.workflow_route_version = 1
+        self.db.commit()
+
+        response = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={
+                "designated_users": {
+                    "company_head": self.leader.id,
+                    "legal_counsel": self.legal.id,
+                    "legal_risk": self.risk.id,
+                    "governance_leader": self.governance.id,
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        instance = self.db.get(
+            WorkflowInstance, response.json()["data"]["workflow_instance_id"]
+        )
+        self.assertEqual(
+            instance.definition.code, "investment.contract.subsidiary.v1"
+        )
 
     def test_todo_and_legacy_wrappers_use_current_workflow_task(self):
         submitted = self.client.post(

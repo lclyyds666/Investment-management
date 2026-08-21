@@ -75,6 +75,9 @@ class Contract(Base):
         nullable=True,
         index=True,
     )
+    workflow_route_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
     approvals: Mapped[list["Approval"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"

@@ -105,6 +105,7 @@ def make_contract(
         company_code=company_code,
         organization_code=organization_code,
         initiator_assignment_id=initiator_assignment.id,
+        workflow_route_version=1,
     )
     db.add(contract)
     db.commit()
@@ -302,6 +303,33 @@ def test_xinhua_contract_workflow_is_not_available(db):
     assert raised.value.code == "contract_workflow_not_available"
 
 
+def test_legacy_contract_submission_plan_only_exposes_designated_nodes(db):
+    submitter = add_user(db, "legacy-submitter")
+    assign(db, submitter, "supplymanagement", "supply.business_handler")
+    contract = Contract(
+        contract_no="WF-LEGACY-PLAN",
+        title="legacy plan",
+        status=ContractStatus.DRAFT,
+        created_by=submitter.id,
+        company_code="supplymanagement",
+        organization_code="supplymanagement",
+        initiator_assignment_id=None,
+        workflow_route_version=0,
+    )
+    db.add(contract)
+    db.commit()
+
+    plan = submission_plan(db, contract, submitter)
+
+    assert plan.workflow_code == "supply.contract.v2"
+    assert [node.code for node in plan.nodes] == [
+        "company_leader",
+        "legal_counsel",
+        "supply_governance_leader",
+    ]
+    assert "supply_risk_review" not in {node.code for node in plan.nodes}
+
+
 def test_start_workflow_snapshots_initiator_assignment_and_scoped_approvers(db):
     contract, submitter = make_contract(
         db,
@@ -367,3 +395,148 @@ def test_start_workflow_snapshots_initiator_assignment_and_scoped_approvers(db):
     assert initiator.required_position_code == "supply.business_handler"
     assert action.organization_code == "supplymanagement"
     assert action.position_code == "supply.business_handler"
+
+
+def test_superuser_proxy_contract_uses_new_route_without_fake_assignment(db):
+    admin = add_user(db, "proxy-admin")
+    admin.is_superuser = True
+    contract = Contract(
+        contract_no="WF-PROXY-ADMIN",
+        title="proxy contract",
+        status=ContractStatus.DRAFT,
+        created_by=admin.id,
+        company_code="supplymanagement",
+        organization_code="supplymanagement",
+        initiator_assignment_id=None,
+        workflow_route_version=1,
+    )
+    db.add(contract)
+    head = add_user(db, "proxy-head")
+    assign(db, head, "supplymanagement", "supply.company_leader")
+    counsel = add_user(db, "proxy-counsel")
+    counsel_assignment = assign(
+        db, counsel, "external.legal", "external.legal_counsel"
+    )
+    db.add(ExternalAssignment(
+        assignment_id=counsel_assignment.id,
+        provider_name="律所",
+        service_scopes=["contract_legal_review"],
+    ))
+    legal_reviewer = add_user(db, "proxy-legal")
+    assign(
+        db,
+        legal_reviewer,
+        "investment.legal_risk",
+        "investment.duty.supply_risk_review",
+    )
+    governance = add_user(db, "proxy-governance")
+    governance_assignment = assign(
+        db, governance, "supplymanagement", "governance.supply_leader"
+    )
+    db.add(GovernanceScope(
+        assignment_id=governance_assignment.id,
+        scope_type="company",
+        scope_ref="supplymanagement",
+    ))
+    db.commit()
+
+    plan = submission_plan(db, contract, admin)
+    instance = start_workflow(
+        db,
+        "contract",
+        contract.id,
+        admin,
+        {
+            "company_head": head.id,
+            "legal_counsel": counsel.id,
+            "legal_risk": legal_reviewer.id,
+            "governance_leader": governance.id,
+        },
+        workflow_code=SUBSIDIARY_WORKFLOW,
+    )
+
+    initiator = db.scalar(
+        select(WorkflowTask)
+        .where(WorkflowTask.instance_id == instance.id)
+        .order_by(WorkflowTask.sequence)
+    )
+    action = db.scalar(
+        select(WorkflowTaskAction).where(WorkflowTaskAction.task_id == initiator.id)
+    )
+    assert plan.workflow_code == SUBSIDIARY_WORKFLOW
+    assert initiator.designated_assignment_id is None
+    assert initiator.designated_user_id is None
+    assert action.organization_code == "system.governance"
+    assert action.position_code == "system.superuser"
+
+
+@pytest.mark.parametrize(
+    (
+        "company_code",
+        "submitter_position",
+        "head_position",
+        "governance_position",
+    ),
+    [
+        (
+            "supplymanagement",
+            "supply.business_handler",
+            "supply.company_leader",
+            "governance.supply_leader",
+        ),
+        (
+            "fundmanagement",
+            "fund.chairman",
+            "fund.general_manager",
+            "governance.fund_leader",
+        ),
+        (
+            "zhanwei",
+            "zhanwei.junior_manager",
+            "zhanwei.general_manager",
+            "governance.zhanwei_leader",
+        ),
+    ],
+)
+def test_subsidiary_company_head_and_governance_candidates_are_company_scoped(
+    db,
+    company_code,
+    submitter_position,
+    head_position,
+    governance_position,
+):
+    contract, submitter = make_contract(
+        db, company_code, company_code, submitter_position
+    )
+    head = add_user(db, f"{company_code}-head")
+    assign(db, head, company_code, head_position)
+    governance = add_user(db, f"{company_code}-governance")
+    governance_assignment = assign(
+        db, governance, company_code, governance_position
+    )
+    db.add(GovernanceScope(
+        assignment_id=governance_assignment.id,
+        scope_type="company",
+        scope_ref=company_code,
+    ))
+    db.commit()
+
+    heads = contract_node_candidates(
+        db,
+        contract,
+        submitter,
+        SUBSIDIARY_WORKFLOW,
+        "company_head",
+        date.today(),
+    )
+    leaders = contract_node_candidates(
+        db,
+        contract,
+        submitter,
+        SUBSIDIARY_WORKFLOW,
+        "governance_leader",
+        date.today(),
+    )
+
+    assert {item.user_id for item in heads} == {head.id}
+    assert {item.user_id for item in leaders} == {governance.id}
