@@ -85,49 +85,31 @@ def test_real_mysql8_migration_is_repeatable_and_repairs_legacy_data():
                 _execute_all(cursor, migration_source)
                 _execute_all(cursor, migration_source)
 
-                expected_columns = {
-                    ("biz_contract", "company_code"),
-                    ("biz_contract", "organization_code"),
-                    ("biz_contract", "initiator_assignment_id"),
-                    ("biz_contract", "workflow_route_version"),
-                    ("legal_case", "company_code"),
-                    ("legal_case", "organization_code"),
-                    ("legal_case", "initiator_assignment_id"),
-                    ("wf_node", "candidate_rule"),
-                    ("wf_node", "candidate_position_codes"),
+                expected_column_metadata = {
+                    ("biz_contract", "company_code"): ("NO", None),
+                    ("biz_contract", "organization_code"): ("NO", None),
+                    ("biz_contract", "initiator_assignment_id"): ("YES", None),
+                    ("biz_contract", "workflow_route_version"): ("NO", "0"),
+                    ("legal_case", "company_code"): ("NO", None),
+                    ("legal_case", "organization_code"): ("NO", None),
+                    ("legal_case", "initiator_assignment_id"): ("YES", None),
+                    ("wf_node", "candidate_rule"): ("NO", "position"),
+                    ("wf_node", "candidate_position_codes"): ("YES", None),
                 }
-                cursor.execute("""
-                    SELECT table_name, column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = %s
-                """, (database_name,))
-                assert expected_columns.issubset(set(cursor.fetchall()))
-
                 cursor.execute("""
                     SELECT table_name, column_name, is_nullable, column_default
                     FROM information_schema.columns
                     WHERE table_schema = %s
                 """, (database_name,))
-                nullability = {
+                actual_column_metadata = {
                     (table_name, column_name): (is_nullable, column_default)
                     for table_name, column_name, is_nullable, column_default
                     in cursor.fetchall()
                 }
-                non_nullable_columns = expected_columns - {
-                    ("biz_contract", "initiator_assignment_id"),
-                    ("legal_case", "initiator_assignment_id"),
-                    ("wf_node", "candidate_position_codes"),
-                }
-                assert all(
-                    nullability[column][0] == "NO"
-                    for column in non_nullable_columns
-                )
-                assert all(
-                    nullability[column][0] == "YES"
-                    for column in expected_columns - non_nullable_columns
-                )
-                assert nullability[("biz_contract", "workflow_route_version")][1] == "0"
-                assert nullability[("wf_node", "candidate_rule")][1] == "position"
+                assert {
+                    column: actual_column_metadata[column]
+                    for column in expected_column_metadata
+                } == expected_column_metadata
 
                 cursor.execute("""
                     SELECT id, company_code, organization_code,
