@@ -10,9 +10,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api/organization'
-import { useOrganizationStore } from '@/store/organization'
+import { canonicalPosition, useOrganizationStore } from '@/store/organization'
 
-const store = useOrganizationStore(); const positions = computed(() => store.positions || []); const drawerVisible = ref(false); const reason = ref('')
+const store = useOrganizationStore(); const positions = computed(() => (store.positions || []).map(canonicalPosition)); const drawerVisible = ref(false); const reason = ref('')
 const form = reactive({ id: null, code: '', name: '', category: 'business', is_active: true, permissions: [] })
 const categoryLabels = { executive: '高管', department: '部门', business: '业务', governance: '治理', external: '外聘', duty: '职责' }
 const scopeLabels = { platform: '平台', company: '公司', department: '部门', business_domain: '业务域', own: '本人创建', participated: '本人参与', assigned: '指定给本人' }

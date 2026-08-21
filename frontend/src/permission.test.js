@@ -148,4 +148,30 @@ describe('portal permission guard', () => {
       allowCrossCompanyResource: true
     }))).resolves.toBe(true)
   })
+
+  it('rejects a cross-company flag on a non-contract resource', async () => {
+    authenticatedContext({
+      applications: [{ code: 'supplymanagement', accessible: true }],
+      resources: ['invest.legal.cases']
+    })
+
+    await expect(portalGuard(route('/investment/legal-risk/cases', {
+      company: 'investment',
+      resource: 'invest.legal.cases',
+      allowCrossCompanyResource: true
+    }))).resolves.toEqual({ path: '/' })
+    expect(ElMessage.error).toHaveBeenCalledWith('无权访问该公司应用')
+  })
+
+  it('rejects a cross-company flag without a resource', async () => {
+    authenticatedContext({
+      applications: [{ code: 'supplymanagement', accessible: true }]
+    })
+
+    await expect(portalGuard(route('/investment/unscoped', {
+      company: 'investment',
+      allowCrossCompanyResource: true
+    }))).resolves.toEqual({ path: '/' })
+    expect(ElMessage.error).toHaveBeenCalledWith('无权访问该公司应用')
+  })
 })
