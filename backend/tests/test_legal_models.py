@@ -25,6 +25,13 @@ class LegalModelContractTest(unittest.TestCase):
         self.assertNotIn("risk_level", columns)
         self.assertNotIn("major_case", columns)
 
+    def test_contract_and_case_persist_legal_ownership(self):
+        from app.models.contract import Contract
+
+        expected = {"company_code", "organization_code", "initiator_assignment_id"}
+        self.assertTrue(expected.issubset(Contract.__table__.columns.keys()))
+        self.assertTrue(expected.issubset(LegalCase.__table__.columns.keys()))
+
     def test_mysql_migration_quotes_reserved_row_number_identifier(self):
         source = Path("migrations/20260814_legal_risk_domain.sql").read_text(
             encoding="utf-8"

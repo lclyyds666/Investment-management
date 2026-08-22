@@ -90,13 +90,11 @@ const route = useRoute()
 const router = useRouter()
 const portalStore = usePortalStore()
 const alertStore = useLegalAlertsStore()
-const role = computed(() => portalStore.companyRole('investment'))
 const isSuperuser = computed(() => portalStore.isSuperuser)
 const canManageAlerts = computed(() => hasLegalCapability(
-  role.value,
+  portalStore.permissions?.permissions || [],
   LEGAL_CAPABILITIES.MANAGE_ALERT,
-  isSuperuser.value,
-  portalStore.assignments
+  isSuperuser.value
 ))
 const loading = ref(false)
 const scanning = ref(false)

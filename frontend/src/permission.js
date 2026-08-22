@@ -2,8 +2,7 @@ import { ElMessage } from 'element-plus'
 import router from './router'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
-import { COMPANY_CODES } from '@/constants/business'
-import { hasLegalCapability } from '@/utils/legalCapabilities'
+import { COMPANY_CODES, RESOURCE_CODES } from '@/constants/business'
 
 const TITLE = import.meta.env.VITE_APP_TITLE || '山东出版投资有限公司工作平台'
 const SUPPLY_DASHBOARD_PATH = '/supplymanagement/dashboard'
@@ -55,7 +54,10 @@ export const portalGuard = async (to) => {
     return { path: '/' }
   }
 
-  if (to.meta?.company && !portalStore.hasCompany(to.meta.company)) {
+  const allowsCrossCompanyResource = to.meta?.allowCrossCompanyResource === true
+    && to.meta?.resource === RESOURCE_CODES.INVEST_LEGAL_CONTRACTS
+
+  if (to.meta?.company && !allowsCrossCompanyResource && !portalStore.hasCompany(to.meta.company)) {
     ElMessage.error('无权访问该公司应用')
     return { path: '/' }
   }
@@ -63,16 +65,6 @@ export const portalGuard = async (to) => {
   if (to.meta?.resource && !portalStore.hasResource(to.meta.resource)) {
     ElMessage.error('权限不足，无法访问该页面')
     return { path: companyFallback(to.meta?.company) }
-  }
-
-  if (to.meta?.legalCapability && !hasLegalCapability(
-    portalStore.companyRole(COMPANY_CODES.INVESTMENT),
-    to.meta.legalCapability,
-    portalStore.isSuperuser,
-    portalStore.assignments
-  )) {
-    ElMessage.error('权限不足，无法执行该法务操作')
-    return { path: INVESTMENT_CASES_PATH }
   }
 
   return true

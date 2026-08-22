@@ -85,17 +85,15 @@ import { listWorkflowCandidates } from '@/api/workflow'
 
 const props = defineProps({
   workflowCode: { type: String, required: true },
+  nodes: { type: Array, default: null },
+  targetType: { type: String, default: null },
+  targetId: { type: Number, default: null },
   modelValue: { type: Object, default: () => ({}) },
   excludeUserId: { type: Number, default: null }
 })
 const emit = defineEmits(['update:modelValue'])
 
 const NODE_DEFINITIONS = {
-  'supply.contract.v2': [
-    { code: 'company_leader', name: '公司负责人', positionName: '指定公司负责人' },
-    { code: 'legal_counsel', name: '外聘法律顾问', positionName: '指定合同法律顾问' },
-    { code: 'supply_governance_leader', name: '供管公司分管领导', positionName: '指定供管分管领导' }
-  ],
   'supply.payment.v2': [
     { code: 'company_leader', name: '公司负责人', positionName: '指定公司负责人' },
     { code: 'supply_governance_leader', name: '供管公司分管领导', positionName: '指定供管分管领导' }
@@ -106,7 +104,10 @@ const NODE_DEFINITIONS = {
   ]
 }
 
-const nodes = computed(() => NODE_DEFINITIONS[props.workflowCode] || [])
+const nodes = computed(() => (props.nodes || NODE_DEFINITIONS[props.workflowCode] || []).map((node) => ({
+  ...node,
+  positionName: node.positionName || node.position_name || ''
+})))
 const selected = ref({ ...props.modelValue })
 const candidatesByNode = ref({})
 const errorsByNode = ref({})
@@ -125,7 +126,7 @@ watch(() => props.modelValue, (value) => {
   selected.value = { ...value }
 }, { deep: true })
 
-watch(() => props.workflowCode, async () => {
+watch([() => props.workflowCode, () => props.nodes, () => props.targetType, () => props.targetId], async () => {
   selected.value = {}
   emit('update:modelValue', {})
   await reloadCandidates({ preserve: false })
@@ -180,11 +181,13 @@ function retainEligibleSelections(previous) {
 async function reloadNode(nodeCode) {
   const requestGeneration = ++candidateRequestGeneration
   const workflowCode = props.workflowCode
+  const targetType = props.targetType
+  const targetId = props.targetId
   candidateRequestOwners.set(nodeCode, requestGeneration)
   errorsByNode.value = { ...errorsByNode.value, [nodeCode]: undefined }
   try {
-    const candidates = eligibleCandidates(await listWorkflowCandidates(workflowCode, nodeCode))
-    if (candidateRequestOwners.get(nodeCode) !== requestGeneration || workflowCode !== props.workflowCode) return false
+    const candidates = eligibleCandidates(await listWorkflowCandidates(workflowCode, nodeCode, targetType, targetId))
+    if (candidateRequestOwners.get(nodeCode) !== requestGeneration || workflowCode !== props.workflowCode || targetType !== props.targetType || targetId !== props.targetId) return false
     candidatesByNode.value = { ...candidatesByNode.value, [nodeCode]: candidates }
     const nextErrors = { ...errorsByNode.value }
     delete nextErrors[nodeCode]
@@ -192,7 +195,7 @@ async function reloadNode(nodeCode) {
     retainEligibleSelections(selected.value)
     return true
   } catch (error) {
-    if (candidateRequestOwners.get(nodeCode) !== requestGeneration || workflowCode !== props.workflowCode) return false
+    if (candidateRequestOwners.get(nodeCode) !== requestGeneration || workflowCode !== props.workflowCode || targetType !== props.targetType || targetId !== props.targetId) return false
     errorsByNode.value = { ...errorsByNode.value, [nodeCode]: error }
     return false
   }
@@ -202,6 +205,8 @@ async function reloadCandidates({ preserve = true } = {}) {
   const requestGeneration = ++candidateRequestGeneration
   const loadGeneration = ++candidateLoadGeneration
   const workflowCode = props.workflowCode
+  const targetType = props.targetType
+  const targetId = props.targetId
   const nodeSnapshot = nodes.value.map((node) => ({ ...node }))
   nodeSnapshot.forEach((node) => candidateRequestOwners.set(node.code, requestGeneration))
   const previous = preserve ? { ...selected.value } : {}
@@ -210,12 +215,12 @@ async function reloadCandidates({ preserve = true } = {}) {
   if (!preserve) candidatesByNode.value = {}
   const results = await Promise.all(nodeSnapshot.map(async (node) => {
     try {
-      return { status: 'fulfilled', nodeCode: node.code, candidates: eligibleCandidates(await listWorkflowCandidates(workflowCode, node.code)) }
+      return { status: 'fulfilled', nodeCode: node.code, candidates: eligibleCandidates(await listWorkflowCandidates(workflowCode, node.code, targetType, targetId)) }
     } catch (reason) {
       return { status: 'rejected', nodeCode: node.code, reason }
     }
   }))
-  if (loadGeneration !== candidateLoadGeneration || workflowCode !== props.workflowCode) return false
+  if (loadGeneration !== candidateLoadGeneration || workflowCode !== props.workflowCode || targetType !== props.targetType || targetId !== props.targetId) return false
   const nextCandidates = { ...candidatesByNode.value }
   const nextErrors = { ...errorsByNode.value }
   results.forEach((result) => {

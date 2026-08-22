@@ -19,6 +19,12 @@ const candidateFixture = {
   ]
 }
 
+const contractNodes = [
+  { code: 'company_leader', name: '公司负责人', position_name: '指定公司负责人' },
+  { code: 'legal_counsel', name: '外聘法律顾问', position_name: '指定合同法律顾问' },
+  { code: 'supply_governance_leader', name: '供管公司分管领导', position_name: '指定供管分管领导' }
+]
+
 const SelectStub = {
   props: ['modelValue', 'disabled', 'placeholder'],
   emits: ['update:modelValue'],
@@ -40,8 +46,10 @@ function deferred() {
 }
 
 function mountFields(props = {}) {
+  const mergedProps = { workflowCode: 'supply.contract.v2', modelValue: {}, ...props }
+  if (mergedProps.workflowCode === 'supply.contract.v2' && !Object.hasOwn(mergedProps, 'nodes')) mergedProps.nodes = contractNodes
   return mount(DesignatedApproverFields, {
-    props: { workflowCode: 'supply.contract.v2', modelValue: {}, ...props },
+    props: mergedProps,
     global
   })
 }
@@ -53,8 +61,8 @@ describe('DesignatedApproverFields', () => {
     api.listWorkflowCandidates.mockImplementation((_workflowCode, nodeCode) => Promise.resolve(candidates[nodeCode] || []))
   })
 
-  it('renders the three contract designated nodes in workflow order', async () => {
-    const wrapper = mountFields()
+  it('renders contract nodes supplied by the server and carries the target to candidate requests', async () => {
+    const wrapper = mountFields({ workflowCode: 'investment.contract.department.v1', nodes: contractNodes, targetType: 'contract', targetId: 7 })
     await flushPromises()
 
     expect(wrapper.findAll('[data-testid="approver-node"]').map((node) => node.attributes('data-node-code'))).toEqual([
@@ -63,6 +71,7 @@ describe('DesignatedApproverFields', () => {
     expect(wrapper.text()).toContain('公司负责人')
     expect(wrapper.text()).toContain('外聘法律顾问')
     expect(wrapper.text()).toContain('供管公司分管领导')
+    expect(api.listWorkflowCandidates).toHaveBeenCalledWith('investment.contract.department.v1', 'company_leader', 'contract', 7)
   })
 
   it('emits a node-to-user map and prevents one person crossing nodes', async () => {
@@ -119,7 +128,7 @@ describe('DesignatedApproverFields', () => {
 
   it('uses two designated nodes for payment and business workflows', async () => {
     for (const workflowCode of ['supply.payment.v2', 'supply.business.v2']) {
-      const wrapper = mountFields({ workflowCode })
+      const wrapper = mountFields({ workflowCode, nodes: null })
       await flushPromises()
       expect(wrapper.findAll('[data-testid="approver-node"]')).toHaveLength(2)
       expect(wrapper.find('[data-node-code="legal_counsel"]').exists()).toBe(false)
@@ -136,7 +145,7 @@ describe('DesignatedApproverFields', () => {
       return request.promise
     })
     const wrapper = mountFields()
-    await wrapper.setProps({ workflowCode: 'supply.payment.v2' })
+    await wrapper.setProps({ workflowCode: 'supply.payment.v2', nodes: null })
 
     requests.get('supply.payment.v2:company_leader').resolve([
       { user_id: 41, full_name: '付款负责人', organization_name: '供应链公司', position_name: '公司负责人' }

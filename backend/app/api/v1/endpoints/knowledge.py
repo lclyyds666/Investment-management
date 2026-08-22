@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.enums import CompanyCode
 from app.db.session import get_db
@@ -24,30 +24,27 @@ from app.services.assignment_permissions import PermissionContext, has_permissio
 
 router = APIRouter()
 
-_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
-_update_guard = require_permission("supply.contract.update", _supply_context)
-
 _KB_CATEGORIES = ("公司合同法", "集团企业制度", "法律规范", "其他")
 
 
-def _knowledge_view_guard():
-    """Allow contract viewers with either company or assigned scope to read the shared library."""
+def _knowledge_permission_guard(permission_code: str):
     def checker(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> User:
         context = PermissionContext(
-            company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
+            company_code=CompanyCode.INVESTMENT.value,
             assigned_user_id=current_user.id,
         )
-        if not has_permission(db, current_user, "supply.contract.view", context):
+        if not has_permission(db, current_user, permission_code, context):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return current_user
 
     return checker
 
 
-_view_guard = _knowledge_view_guard()
+_view_guard = _knowledge_permission_guard("investment.legal.contracts.view")
+_update_guard = _knowledge_permission_guard("investment.legal.contracts.update")
 
 
 def _kb_dir() -> Path:

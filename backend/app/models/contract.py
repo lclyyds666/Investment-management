@@ -64,6 +64,20 @@ class Contract(Base):
     created_by: Mapped[int] = mapped_column(
         ForeignKey("sys_user.id"), nullable=False, comment="创建人(业务经办)"
     )
+    company_code: Mapped[str] = mapped_column(
+        String(64), default="supplymanagement", nullable=False, index=True
+    )
+    organization_code: Mapped[str] = mapped_column(
+        String(64), default="supplymanagement", nullable=False, index=True
+    )
+    initiator_assignment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sys_user_assignment.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    workflow_route_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
     approvals: Mapped[list["Approval"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"

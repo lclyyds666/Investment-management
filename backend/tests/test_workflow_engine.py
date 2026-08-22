@@ -67,6 +67,14 @@ from scripts.migrate_active_workflows import (
 
 
 class WorkflowCatalogTest(unittest.TestCase):
+    def test_new_contract_workflows_do_not_replace_legacy_catalog(self):
+        self.assertIn("supply.contract.v2", WORKFLOW_CATALOG)
+        self.assertIn("supply.payment.v2", WORKFLOW_CATALOG)
+        self.assertIn("supply.business.v2", WORKFLOW_CATALOG)
+        self.assertIn("investment.contract.department.v1", WORKFLOW_CATALOG)
+        self.assertIn("investment.contract.subsidiary.v1", WORKFLOW_CATALOG)
+        self.assertIn("investment.contract.legal-risk.v1", WORKFLOW_CATALOG)
+
     def test_contract_workflow_matches_confirmed_chain(self):
         nodes = WORKFLOW_CATALOG["supply.contract.v2"]
         self.assertEqual(
@@ -222,7 +230,7 @@ class WorkflowPublicationTest(unittest.TestCase):
         )
         seed_workflow_definitions(self.db, self.publisher.id)
         self.db.commit()
-        self.assertEqual(counts, (3, 3, 17))
+        self.assertEqual(counts, (6, 6, 35))
         self.assertEqual(
             (self.db.query(WorkflowDefinition).count(), self.db.query(WorkflowVersion).count(), self.db.query(WorkflowNode).count()),
             counts,
@@ -242,7 +250,7 @@ class WorkflowPublicationTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "workflow_catalog_drift")
         self.assertEqual(self.db.get(WorkflowNode, node.id).name, "drifted")
-        self.assertEqual(self.db.query(WorkflowVersion).count(), 3)
+        self.assertEqual(self.db.query(WorkflowVersion).count(), 6)
 
     def test_published_version_is_immutable(self):
         seed_workflow_definitions(self.db, self.publisher.id)
@@ -2532,10 +2540,10 @@ class WorkflowPublicationContinuationTest(unittest.TestCase):
         self.assertTrue(self.db.in_transaction())
         self.assert_parent_pending_unflushed(pending)
         with self.db.no_autoflush:
-            self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+            self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
         self.db.commit()
         self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-success")))
-        self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
 
     def test_drift_preserves_pending_caller_object_and_outer_transaction(self):
         seed_workflow_definitions(self.db, self.publisher.id)
@@ -2599,7 +2607,7 @@ class WorkflowPublicationContinuationTest(unittest.TestCase):
             seed_workflow_definitions(self.db, publisher_id)
 
         self.assert_parent_pending_unflushed(pending)
-        self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
 
     def test_unrelated_integrity_error_is_not_swallowed(self):
         with patch(
@@ -2644,7 +2652,7 @@ class WorkflowPublicationContinuationTest(unittest.TestCase):
     def test_catalog_changes_roll_back_with_caller_transaction(self):
         seed_workflow_definitions(self.db, self.publisher.id)
         with self.db.no_autoflush:
-            self.assertEqual(self.db.query(WorkflowDefinition).count(), 3)
+            self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
 
         self.db.rollback()
 

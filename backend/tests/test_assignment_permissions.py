@@ -147,8 +147,13 @@ class AuthorizationCatalogTest(unittest.TestCase):
                 ("supply.contract.view", "assigned", ""),
                 ("supply.contract.review", "assigned", ""),
                 ("investment.portal.enter", "platform", "investment"),
-                ("investment.legal.cases.view", "company", "investment"),
-                ("investment.legal.alerts.view", "company", "investment"),
+                ("investment.legal.cases.view", "assigned", ""),
+                ("investment.legal.cases.review", "assigned", ""),
+                ("investment.legal.alerts.view", "assigned", ""),
+                ("investment.legal.alerts.update", "assigned", ""),
+                ("investment.legal.contracts.view", "assigned", ""),
+                ("investment.legal.contracts.review", "assigned", ""),
+                ("investment.legal.contracts.return", "assigned", ""),
             },
         )
 
@@ -171,13 +176,103 @@ class AuthorizationCatalogTest(unittest.TestCase):
             ],
         )
 
+    def test_replacement_and_governance_positions_receive_legal_permissions(self):
+        full_business_positions = {
+            "investment.asset_finance.middle_manager",
+            "investment.asset_finance.senior_manager",
+            "investment.asset_finance.deputy_director",
+            "investment.legal_risk.deputy_director",
+        }
+        governance_positions = {
+            "governance.fund_leader",
+            "governance.zhanwei_leader",
+        }
+        grants_by_position = {
+            position_code: {
+                item["permission_code"]
+                for item in POSITION_GRANTS
+                if item["position_code"] == position_code
+            }
+            for position_code in full_business_positions | governance_positions
+        }
+
+        for position_code in full_business_positions:
+            self.assertIn(
+                "investment.legal.cases.update",
+                grants_by_position[position_code],
+            )
+            self.assertIn(
+                "investment.legal.contracts.create",
+                grants_by_position[position_code],
+            )
+        for position_code in governance_positions:
+            self.assertTrue({
+                "investment.legal.contracts.view",
+                "investment.legal.contracts.review",
+                "investment.legal.contracts.approve",
+                "investment.legal.contracts.return",
+            }.issubset(grants_by_position[position_code]))
+            self.assertNotIn(
+                "investment.legal.cases.update",
+                grants_by_position[position_code],
+            )
+
+        counsel_returns = [
+            item
+            for item in POSITION_GRANTS
+            if item["position_code"] == "external.legal_counsel"
+            and item["permission_code"] == "investment.legal.contracts.return"
+        ]
+        self.assertEqual(
+            [(item["data_scope"], item["scope_ref"]) for item in counsel_returns],
+            [("assigned", "")],
+        )
+
+    def test_contract_creator_grant_matrix_excludes_xinhua(self):
+        grants_by_position = {
+            position_code: {
+                item["permission_code"]
+                for item in POSITION_GRANTS
+                if item["position_code"] == position_code
+            }
+            for position_code in {
+                item["code"] for item in POSITION_CATALOG
+            }
+        }
+        allowed_positions = {
+            "supply.business_handler", "supply.business_reviewer",
+            "supply.senior_manager", "supply.company_leader",
+            "fund.chairman", "fund.general_manager",
+            "zhanwei.general_manager", "zhanwei.deputy_general_manager",
+            "zhanwei.senior_manager", "zhanwei.middle_manager",
+            "zhanwei.junior_manager", "investment.duty.supply_risk_review",
+            "investment.legal_risk.deputy_director",
+        }
+        xinhua_positions = {
+            item["code"] for item in POSITION_CATALOG
+            if item["code"].startswith("xinhuaproperty.")
+        }
+
+        for position_code in allowed_positions:
+            with self.subTest(position_code=position_code):
+                self.assertTrue({
+                    "investment.legal.contracts.create",
+                    "investment.legal.contracts.submit",
+                }.issubset(grants_by_position[position_code]))
+        for position_code in xinhua_positions:
+            with self.subTest(position_code=position_code):
+                self.assertFalse({
+                    "investment.legal.contracts.create",
+                    "investment.legal.contracts.submit",
+                } & grants_by_position[position_code])
+
     def test_investment_executives_receive_only_cross_platform_read_permissions(self):
         executive_positions = {
             "investment.executive.chairman",
             "investment.executive.general_manager",
             "investment.executive.deputy_general_manager",
         }
-        expected_permissions = {
+        base_read_permissions = {
             "investment.portal.enter",
             "supply.portal.enter",
             "fund.portal.enter",
@@ -193,13 +288,20 @@ class AuthorizationCatalogTest(unittest.TestCase):
             "investment.legal.alerts.view",
             "investment.legal.statistics.view",
         }
+        expected_permissions = base_read_permissions | {
+            "investment.legal.cases.export",
+            "investment.legal.contracts.view",
+            "investment.legal.contracts.export",
+            "investment.legal.contracts.review",
+            "investment.legal.contracts.approve",
+            "investment.legal.contracts.return",
+        }
         forbidden_actions = {
-            "create", "update", "delete", "submit", "review",
-            "approve", "return", "configure",
+            "create", "update", "delete", "submit", "configure",
         }
 
         self.assertEqual(set(INVESTMENT_EXECUTIVE_POSITION_CODES), executive_positions)
-        self.assertEqual(INVESTMENT_EXECUTIVE_READ_PERMISSIONS, expected_permissions)
+        self.assertEqual(INVESTMENT_EXECUTIVE_READ_PERMISSIONS, base_read_permissions)
         for position_code in executive_positions:
             with self.subTest(position_code=position_code):
                 grants = [

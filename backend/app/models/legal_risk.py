@@ -152,6 +152,17 @@ class LegalCase(Base):
     activated_by: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id"), nullable=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("sys_user.id"), nullable=False, index=True)
+    company_code: Mapped[str] = mapped_column(
+        String(64), default="investment", nullable=False, index=True
+    )
+    organization_code: Mapped[str] = mapped_column(
+        String(64), default="investment.legal_risk", nullable=False, index=True
+    )
+    initiator_assignment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sys_user_assignment.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     parties: Mapped[list["LegalCaseParty"]] = relationship(

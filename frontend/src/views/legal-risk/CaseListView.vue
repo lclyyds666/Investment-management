@@ -5,7 +5,7 @@
       <div class="heading-actions">
         <el-button v-if="canExport" :icon="Download" :loading="exporting" @click="doExport">导出</el-button>
         <el-button v-if="canImport" :icon="Upload" @click="importDialog.open()">导入台账</el-button>
-        <el-button v-if="canWrite" type="primary" :icon="Plus" @click="$router.push('/investment/legal-risk/cases/new')">新建草稿</el-button>
+        <el-button v-if="canCreate" type="primary" :icon="Plus" @click="$router.push('/investment/legal-risk/cases/new')">新建草稿</el-button>
       </div>
     </header>
 
@@ -18,6 +18,8 @@
         <el-option v-for="item in CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
       <el-input v-model="filters.court" clearable placeholder="受理法院" />
+      <el-input v-if="canFilterOwnership" v-model="filters.company_name" clearable placeholder="所属公司" />
+      <el-input v-if="canFilterOwnership" v-model="filters.organization_name" clearable placeholder="发起组织" />
       <el-button type="primary" :icon="Search" @click="search">查询</el-button>
       <el-button :icon="Refresh" @click="reset">重置</el-button>
     </div>
@@ -28,6 +30,8 @@
           <template #default="{ row }"><span class="case-no">{{ row.case_no || '草稿未编号' }}</span></template>
         </el-table-column>
         <el-table-column prop="case_name" label="案件名称" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="company_name" label="所属公司" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="organization_name" label="发起组织" min-width="160" show-overflow-tooltip />
         <el-table-column prop="court" label="受理法院" min-width="160" show-overflow-tooltip />
         <el-table-column prop="court_case_no" label="法院案号" min-width="150" show-overflow-tooltip />
         <el-table-column label="主状态" width="110">
@@ -60,17 +64,18 @@ import { useRoute, useRouter } from 'vue-router'
 import { exportCases, listCases } from '@/api/legalRisk'
 import { usePortalStore } from '@/store/portal'
 import { CASE_STATUS_OPTIONS, caseStatusLabel, cleanParams, money } from '@/constants/legalRisk'
-import { LEGAL_CAPABILITIES, hasLegalCapability } from '@/utils/legalCapabilities'
 import ImportDialog from './ImportDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const portalStore = usePortalStore()
-const role = computed(() => portalStore.companyRole('investment'))
-const hasCapability = (capability) => hasLegalCapability(role.value, capability, portalStore.isSuperuser, portalStore.assignments)
-const canWrite = computed(() => hasCapability(LEGAL_CAPABILITIES.EDIT_CASE))
-const canImport = computed(() => hasCapability(LEGAL_CAPABILITIES.IMPORT_EXPORT))
-const canExport = computed(() => canImport.value || hasCapability(LEGAL_CAPABILITIES.EXPORT_MANAGEMENT))
+const canCreate = computed(() => portalStore.hasPermission('investment.legal.cases.create'))
+const canWrite = computed(() => portalStore.hasPermission('investment.legal.cases.update'))
+const canImport = computed(() => portalStore.hasPermission('investment.legal.cases.import'))
+const canExport = computed(() => portalStore.hasPermission('investment.legal.cases.export'))
+const canFilterOwnership = computed(() => portalStore.isSuperuser || portalStore.assignments.some(
+  (assignment) => assignment.organization_code === 'investment.legal_risk'
+))
 const loading = ref(false)
 const exporting = ref(false)
 const importDialog = ref()
@@ -79,6 +84,8 @@ const filters = reactive({
   stage: '',
   status: typeof route.query.status === 'string' ? route.query.status : '',
   court: '',
+  company_name: '',
+  organization_name: '',
   page: 1,
   page_size: 20
 })
@@ -93,7 +100,7 @@ async function load() {
   try { Object.assign(page, await listCases(cleanParams(filters))) } finally { loading.value = false }
 }
 function search() { filters.page = 1; load() }
-function reset() { Object.assign(filters, { keyword: '', stage: '', status: '', court: '', page: 1, page_size: 20 }); load() }
+function reset() { Object.assign(filters, { keyword: '', stage: '', status: '', court: '', company_name: '', organization_name: '', page: 1, page_size: 20 }); load() }
 
 async function doExport() {
   exporting.value = true
@@ -120,7 +127,7 @@ onMounted(load)
 .legal-heading span { color: var(--brand-vermilion); font-family: var(--font-data); font-size: 11px; letter-spacing: 0; }
 .legal-heading h1 { margin: 4px 0 0; font-size: 25px; letter-spacing: 0; }
 .heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.filter-band { display: grid; grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(140px, .8fr)) auto auto; gap: 10px; margin-bottom: 14px; padding: 14px; border: 1px solid var(--el-border-color-lighter); background: var(--surface-solid); }
+.filter-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; padding: 14px; border: 1px solid var(--el-border-color-lighter); background: var(--surface-solid); }
 .table-shell { min-width: 0; padding: 14px; border: 1px solid var(--el-border-color-lighter); background: var(--surface-solid); overflow-x: auto; }
 .case-no, .amount { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 @media (max-width: 1100px) { .filter-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

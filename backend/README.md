@@ -129,6 +129,41 @@ rollback boundary is the new permission feature routing: disable that routing
 and continue reading the untouched legacy role rows while the migration is
 investigated or reversed operationally.
 
+## Legal Contract Organization Authorization Migration
+
+Run the schema migration first, then keep both JSON reports for the production
+change record:
+
+```powershell
+mysql -u USER -p DATABASE < migrations/20260821_legal_contract_organization_authorization.sql
+python -m scripts.migrate_legal_contract_authorization --report legal-contract-authorization-preview.json
+python -m scripts.migrate_legal_contract_authorization --report legal-contract-authorization-applied.json --apply
+```
+
+The command without `--apply` is strictly read-only with respect to the
+database. Its report contains `organizations`, `positions`, `permissions`,
+`ownership_backfill`, `workflow_versions`, and `blocking_issues`. Exit code `2`
+means the operator must resolve a catalog conflict, provide an active
+superuser publisher, or disambiguate overlapping active assignments before
+rerunning the preview. Apply is idempotent: it backfills legacy contracts to
+`supplymanagement`, legacy cases to `investment` / `investment.legal_risk`,
+and publishes only the three `investment.contract.*` workflow definitions.
+It does not rewrite workflow instances, tasks, actions, or assignment/signature
+snapshots, and rerunning it does not restore permissions an administrator later
+removed. Existing databases require the explicit preview/apply sequence; only
+a completely fresh database receives the same catalog during `app.db.init_db`.
+
+The real MySQL 8 migration test is opt-in because it creates and drops a
+temporary database. Provide an administrative SQLAlchemy URL through the
+process environment; the test uses only a random
+`test_legal_contract_auth_<uuid>` database and drops that exact name in
+`finally`:
+
+```powershell
+$env:LEGAL_CONTRACT_MYSQL_TEST_URL='mysql+pymysql://USER:PASSWORD@HOST:3306/mysql'
+python -m pytest tests/test_migrate_legal_contract_authorization_mysql.py -q -s
+```
+
 ## Active Legacy Workflow Cutover
 
 Do not enable version 2 submissions until this sequence finishes successfully:

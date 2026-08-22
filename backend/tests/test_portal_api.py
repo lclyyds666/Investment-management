@@ -1,11 +1,16 @@
 import unittest
 from datetime import date
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
+from app.api.deps import get_current_user
 from app.core.enums import AssignmentStatus, Role
 from app.db.base import Base
+from app.db.session import get_db
+from app.main import create_app
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
 from app.services.organization_catalog import (
@@ -246,24 +251,32 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
             "supplymanagement": "invest_director",
         })
 
-    def test_each_investment_executive_snapshot_has_exact_read_only_boundary(self):
+    def test_each_investment_executive_snapshot_has_exact_authorization_boundary(self):
         for index, position_code in enumerate(INVESTMENT_EXECUTIVE_POSITION_CODES):
             with self.subTest(position_code=position_code):
                 user = self.add_user(f"snapshot-executive-{index}")
                 self.add_assignment(user, "investment", position_code)
 
                 snapshot = permission_snapshot_for_user(self.db, user)
+                expected_permissions = INVESTMENT_EXECUTIVE_READ_PERMISSIONS | {
+                    "investment.legal.cases.export",
+                    "investment.legal.contracts.view",
+                    "investment.legal.contracts.export",
+                    "investment.legal.contracts.review",
+                    "investment.legal.contracts.approve",
+                    "investment.legal.contracts.return",
+                }
 
                 self.assertEqual(
                     {item.code for item in snapshot.permissions},
-                    INVESTMENT_EXECUTIVE_READ_PERMISSIONS,
+                    expected_permissions,
                 )
                 self.assertEqual(
                     set(snapshot.resources),
                     {
                         resource.value
                         for resource, permission_code in RESOURCE_VIEW_PERMISSIONS.items()
-                        if permission_code in INVESTMENT_EXECUTIVE_READ_PERMISSIONS
+                        if permission_code in expected_permissions
                     },
                 )
 
@@ -298,6 +311,72 @@ class PortalPermissionSnapshotTest(unittest.TestCase):
         self.assertEqual(snapshot.permissions, [])
         self.assertEqual(snapshot.resources, [])
         self.assertEqual(snapshot.company_roles, {})
+
+
+class PortalPermissionSnapshotHttpIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = Session(self.engine)
+        seed_authorization_catalog(self.db)
+        self.contract_user = self._add_user(
+            "contract-user", "supplymanagement", "supply.business_handler"
+        )
+        self.case_only_user = self._add_user(
+            "case-only-user",
+            "xinhuaproperty",
+            "xinhuaproperty.department.employee",
+        )
+        self.current_user = self.contract_user
+        self.app = create_app()
+        self.app.dependency_overrides[get_db] = lambda: self.db
+        self.app.dependency_overrides[get_current_user] = lambda: self.current_user
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        self.app.dependency_overrides.clear()
+        self.db.close()
+        self.engine.dispose()
+
+    def _add_user(
+        self, username: str, organization_code: str, position_code: str
+    ) -> User:
+        user = User(
+            username=username,
+            full_name=username,
+            hashed_password="test",
+            role=Role.UNASSIGNED,
+        )
+        self.db.add(user)
+        self.db.flush()
+        self.db.add(UserAssignment(
+            user_id=user.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == organization_code)
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == position_code)
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        self.db.commit()
+        return user
+
+    def test_http_snapshot_exposes_contract_resource_only_with_view_grant(self):
+        allowed = self.client.get("/api/v1/portal/me/permissions")
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        self.assertIn("invest.legal.contracts", allowed.json()["data"]["resources"])
+
+        self.current_user = self.case_only_user
+        denied = self.client.get("/api/v1/portal/me/permissions")
+        self.assertEqual(denied.status_code, 200, denied.text)
+        self.assertNotIn("invest.legal.contracts", denied.json()["data"]["resources"])
 
 
 if __name__ == "__main__":

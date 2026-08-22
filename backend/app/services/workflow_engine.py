@@ -249,13 +249,14 @@ def _active_assignments(
             joinedload(UserAssignment.user),
             joinedload(UserAssignment.organization),
             joinedload(UserAssignment.position),
+            joinedload(UserAssignment.governance_scopes),
             joinedload(UserAssignment.external_detail),
         )
         .order_by(User.full_name, User.id, UserAssignment.id)
     )
     if user_ids is not None:
         statement = statement.where(UserAssignment.user_id.in_(user_ids))
-    return list(db.scalars(statement))
+    return list(db.execute(statement).unique().scalars())
 
 
 def _assignment_has_required_scope(assignment: UserAssignment) -> bool:
@@ -344,6 +345,8 @@ def _catalog_nodes(definition: WorkflowCatalogDefinition) -> tuple[tuple, ...]:
             item.name,
             item.position_code,
             item.mode,
+            item.candidate_rule,
+            item.candidate_position_codes,
             item.auto_complete_on_submit,
             item.allow_reject,
         )
@@ -359,6 +362,8 @@ def _persisted_nodes(version: WorkflowVersion) -> tuple[tuple, ...]:
             item.name,
             item.position_code,
             item.assignee_mode.value,
+            item.candidate_rule,
+            tuple(item.candidate_position_codes or ()),
             item.auto_complete_on_submit,
             item.allow_reject,
         )
@@ -470,6 +475,8 @@ def _seed_workflow_definitions(db: Session, publisher_id: int) -> None:
                 name=item.name,
                 position_code=item.position_code,
                 assignee_mode=WorkflowAssigneeMode(item.mode),
+                candidate_rule=item.candidate_rule,
+                candidate_position_codes=list(item.candidate_position_codes),
                 auto_complete_on_submit=item.auto_complete_on_submit,
                 allow_reject=item.allow_reject,
             )
@@ -672,6 +679,7 @@ def _start_workflow(
     submitter_id: int,
     designated_users: dict[str, int],
     submitted_at: datetime,
+    workflow_code: str | None = None,
 ) -> int:
     submitter = db.get(User, submitter_id)
     if submitter is None:
@@ -706,15 +714,33 @@ def _start_workflow(
             {"target_type": target_type.value, "target_id": target_id},
         )
 
-    workflow_code = WORKFLOW_CODE_BY_TARGET[target_type]
+    workflow_code = workflow_code or WORKFLOW_CODE_BY_TARGET[target_type]
     definition, version = _published_workflow(db, workflow_code)
-    submit_assignment, selected_assignments = _validate_start_assignments(
-        db,
-        version,
-        submitter,
-        designated_users,
-        submitted_at.date(),
-    )
+    if workflow_code.startswith("investment.contract."):
+        if target_type != WorkflowTargetType.CONTRACT:
+            raise WorkflowValidationError(
+                "workflow_target_type_mismatch",
+                "The selected workflow does not support this target type.",
+                {"workflow_code": workflow_code, "target_type": target_type.value},
+            )
+        from app.services.contract_workflow import validate_submission_assignments
+
+        submit_assignment, selected_assignments = validate_submission_assignments(
+            db,
+            target,
+            submitter,
+            version,
+            designated_users,
+            submitted_at.date(),
+        )
+    else:
+        submit_assignment, selected_assignments = _validate_start_assignments(
+            db,
+            version,
+            submitter,
+            designated_users,
+            submitted_at.date(),
+        )
     actor_snapshot = _workflow_actor_snapshot(submitter, submit_assignment)
     nodes = sorted(version.nodes, key=lambda item: item.sequence)
     next_node = next((item for item in nodes if not item.auto_complete_on_submit), None)
@@ -743,6 +769,12 @@ def _start_workflow(
     )).all())
     for node in nodes:
         selected_assignment = selected_assignments.get(node.code)
+        if (
+            workflow_code.startswith("investment.contract.")
+            and node.auto_complete_on_submit
+            and selected_assignment is None
+        ):
+            selected_assignment = submit_assignment
         if node.auto_complete_on_submit:
             task_status = WorkflowTaskStatus.APPROVED
         elif node.sequence == next_node.sequence:
@@ -754,8 +786,16 @@ def _start_workflow(
             node_id=node.id,
             sequence=node.sequence,
             status=task_status,
-            required_position_code=node.position_code,
-            required_position_name=position_names.get(node.position_code, node.position_code),
+            required_position_code=(
+                selected_assignment.position.code
+                if selected_assignment is not None
+                else node.position_code
+            ),
+            required_position_name=(
+                selected_assignment.position.name
+                if selected_assignment is not None
+                else position_names.get(node.position_code, node.position_code)
+            ),
             assignee_mode=node.assignee_mode,
             designated_user_id=(selected_assignment.user_id if selected_assignment else None),
             designated_assignment_id=(selected_assignment.id if selected_assignment else None),
@@ -851,6 +891,7 @@ def start_workflow(
     target_id: int,
     submitter: User,
     designated_users: dict[str, int],
+    workflow_code: str | None = None,
 ) -> WorkflowInstance:
     target_type = WorkflowTargetType(target_type)
     with db.no_autoflush:
@@ -872,6 +913,7 @@ def start_workflow(
             submitter_id,
             dict(designated_users),
             datetime.now(),
+            workflow_code,
         )
         workflow_session.commit()
     except IntegrityError as error:
@@ -1459,6 +1501,15 @@ def _resubmission_assignment(
         or not actor.is_active
     ):
         return None
+    if task.designated_assignment_id is not None:
+        assignment = _designated_task_assignment(db, task)
+        return (
+            assignment
+            if assignment is not None
+            and assignment.user_id == actor.id
+            and _designated_task_assignment_is_effective(task, assignment, on_date)
+            else None
+        )
     return next(
         (
             item

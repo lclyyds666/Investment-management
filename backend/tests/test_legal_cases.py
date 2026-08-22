@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.core.enums import CompanyCode, Role
+from app.core.enums import CompanyCode, OrganizationType, Role
 from app.db.base import Base
 from app.models.legal_risk import (
     LegalCase,
@@ -21,11 +21,12 @@ from app.models.legal_risk import (
     LegalRecoveryType,
 )
 from app.models.portal import UserCompanyRole
+from app.models.organization import Organization
 from app.models.user import User
 from fastapi import HTTPException
 
-from app.api.v1.endpoints.legal_risk import update_progress
-from app.schemas.legal_risk import LegalCaseUpdate, LegalProgressIn
+from app.api.v1.endpoints.legal_risk import create_case, list_cases, update_case, update_progress
+from app.schemas.legal_risk import LegalCaseCreate, LegalCaseUpdate, LegalProgressIn
 from app.services.legal_cases import (
     activate_case,
     calculate_case_money,
@@ -214,6 +215,37 @@ class LegalCaseServiceTest(unittest.TestCase):
 
         self.assertIsNone(case.closed_date)
         self.assertEqual(case.closure_summary, "")
+
+    def test_case_list_returns_and_filters_ownership_names(self):
+        self.db.add_all([
+            Organization(
+                code="xinhuaproperty", name="山东新华置业有限公司",
+                organization_type=OrganizationType.COMPANY, company_code="xinhuaproperty",
+            ),
+            Organization(
+                code="supplymanagement", name="山东供销供应链管理集团有限公司",
+                organization_type=OrganizationType.COMPANY, company_code="supplymanagement",
+            ),
+            LegalCase(
+                case_name="置业案件", created_by=self.actor.id,
+                company_code="xinhuaproperty", organization_code="xinhuaproperty",
+            ),
+            LegalCase(
+                case_name="供管案件", created_by=self.actor.id,
+                company_code="supplymanagement", organization_code="supplymanagement",
+            ),
+        ])
+        self.db.commit()
+
+        page = list_cases(
+            company_name="新华", page=1, page_size=20,
+            db=self.db, current_user=self.actor,
+        ).data
+
+        self.assertEqual(page.total, 1)
+        self.assertEqual(page.items[0].case_name, "置业案件")
+        self.assertEqual(page.items[0].company_name, "山东新华置业有限公司")
+        self.assertEqual(page.items[0].organization_name, "山东新华置业有限公司")
 
 
 if __name__ == "__main__":

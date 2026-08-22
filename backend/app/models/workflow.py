@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -110,6 +110,12 @@ class WorkflowNode(Base):
     position_code: Mapped[str] = mapped_column(String(96), nullable=False)
     assignee_mode: Mapped[WorkflowAssigneeMode] = mapped_column(
         enum_column(WorkflowAssigneeMode, 24), nullable=False
+    )
+    candidate_rule: Mapped[str] = mapped_column(
+        String(32), default="position", nullable=False
+    )
+    candidate_position_codes: Mapped[list[str] | None] = mapped_column(
+        JSON, default=list, nullable=True
     )
     auto_complete_on_submit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     allow_reject: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

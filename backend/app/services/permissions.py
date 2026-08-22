@@ -14,6 +14,7 @@ from app.services.legacy_assignment_migration import LEGACY_TARGETS
 RESOURCE_VIEW_PERMISSIONS: dict[ResourceCode, str] = {
     ResourceCode.INVEST_LEGAL_DASHBOARD: "investment.legal.dashboard.view",
     ResourceCode.INVEST_LEGAL_CASES: "investment.legal.cases.view",
+    ResourceCode.INVEST_LEGAL_CONTRACTS: "investment.legal.contracts.view",
     ResourceCode.INVEST_LEGAL_ALERTS: "investment.legal.alerts.view",
     ResourceCode.INVEST_LEGAL_STATISTICS: "investment.legal.statistics.view",
     ResourceCode.INVEST_LEGAL_ADMIN: "investment.legal.admin.view",

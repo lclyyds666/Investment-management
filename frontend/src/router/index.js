@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { COMPANY_CODES, RESOURCE_CODES } from '@/constants/business'
 import { legacySupplyRedirects } from './legacyRedirects'
-import { LEGAL_CAPABILITIES } from '@/utils/legalCapabilities'
 
 export { ROLES } from '@/constants/business'
 
@@ -73,8 +72,8 @@ const routes = [
         meta: {
           title: '合同管理',
           company: COMPANY_CODES.INVESTMENT,
-          resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
-          permission: 'supply.contract.view'
+          resource: RESOURCE_CODES.INVEST_LEGAL_CONTRACTS,
+          allowCrossCompanyResource: true
         }
       },
       {
@@ -85,7 +84,7 @@ const routes = [
           title: '新建案件草稿',
           company: COMPANY_CODES.INVESTMENT,
           resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
-          legalCapability: LEGAL_CAPABILITIES.EDIT_CASE
+          permission: 'investment.legal.cases.create'
         }
       },
       {
@@ -96,7 +95,7 @@ const routes = [
           title: '编辑案件',
           company: COMPANY_CODES.INVESTMENT,
           resource: RESOURCE_CODES.INVEST_LEGAL_CASES,
-          legalCapability: LEGAL_CAPABILITIES.EDIT_CASE
+          permission: 'investment.legal.cases.update'
         }
       },
       {
@@ -288,19 +287,6 @@ const routes = [
           groupIcon: 'Wallet',
           company: supplyCompany,
           resource: RESOURCE_CODES.SUPPLY_FINANCE
-        }
-      },
-      {
-        path: 'contract',
-        name: 'Contract',
-        component: () => import('@/views/contract/index.vue'),
-        meta: {
-          title: '合同管理',
-          icon: 'Document',
-          group: '经营合规',
-          groupIcon: 'DocumentChecked',
-          company: supplyCompany,
-          resource: RESOURCE_CODES.SUPPLY_CONTRACT
         }
       },
       {

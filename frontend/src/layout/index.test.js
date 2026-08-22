@@ -4,7 +4,6 @@ import SupplyLayout from './index.vue'
 
 const pathByName = {
   Dashboard: '/supplymanagement/dashboard',
-  Contract: '/supplymanagement/contract',
   Profile: '/supplymanagement/profile'
 }
 
@@ -16,7 +15,6 @@ vi.mock('vue-router', () => ({
         path: '/supplymanagement',
         children: [
           { name: 'Dashboard', meta: { title: '战略总览', icon: 'HomeFilled' } },
-          { name: 'Contract', meta: { title: '合同管理', icon: 'Document', group: '经营合规' } },
           { name: 'Profile', meta: { title: '个人设置', icon: 'User' } }
         ]
       }]
@@ -79,7 +77,6 @@ describe('supply layout navigation', () => {
     const indices = wrapper.findAll('[data-menu-index]').map((item) => item.attributes('data-menu-index'))
     expect(indices).toEqual([
       '/supplymanagement/dashboard',
-      '/supplymanagement/contract',
       '/supplymanagement/profile'
     ])
   })

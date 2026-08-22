@@ -1,4 +1,5 @@
 """合同全生命周期与岗位工作流兼容端点。"""
+import csv
 import io
 import uuid
 from pathlib import Path
@@ -9,12 +10,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.enums import (
     ContractStatus,
-    CompanyCode,
-    DataScope,
     WorkflowAction,
     WorkflowTargetType,
     WorkflowTaskStatus,
@@ -31,7 +30,14 @@ from app.schemas.workflow import WorkflowStartRequest
 from app.services import contract_review as review_svc
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
-from app.services.assignment_permissions import PermissionContext, has_permission, permission_grants
+from app.services.contract_workflow import contract_workflow_code
+from app.services.assignment_permissions import PermissionContext, active_assignments, has_permission
+from app.services.legal_ownership import LegalOwnershipError, resolve_legal_ownership
+from app.services.legal_record_scope import (
+    can_access_contract,
+    contract_access_predicate,
+    legal_record_scope,
+)
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
@@ -47,34 +53,28 @@ _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 
 router = APIRouter()
 
-_supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
-
-
 def _contract_permission_guard(permission_code: str):
     def checker(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> User:
-        context = PermissionContext(
-            company_code=CompanyCode.SUPPLY_MANAGEMENT.value,
-            assigned_user_id=current_user.id,
-        )
-        if not has_permission(db, current_user, permission_code, context):
+        if not _has_contract_permission(db, current_user, permission_code):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return current_user
 
     return checker
 
 
-_view_guard = _contract_permission_guard("supply.contract.view")
-_create_guard = require_permission("supply.contract.create", _supply_context)
-_update_guard = require_permission("supply.contract.update", _supply_context)
-_submit_guard = require_permission("supply.contract.submit", _supply_context)
-_export_guard = _contract_permission_guard("supply.contract.export")
+_view_guard = _contract_permission_guard("investment.legal.contracts.view")
+_create_guard = _contract_permission_guard("investment.legal.contracts.create")
+_update_guard = _contract_permission_guard("investment.legal.contracts.update")
+_submit_guard = _contract_permission_guard("investment.legal.contracts.submit")
+_export_guard = _contract_permission_guard("investment.legal.contracts.export")
 
 # 合同附件允许的扩展名（与前端 accept 对齐）
 _ATTACH_EXT = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"}
 _ATTACH_MAX_BYTES = 20 * 1024 * 1024  # 单个附件 ≤ 20MB
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 # --------------------------------------------------------------------------- #
@@ -92,6 +92,11 @@ def _names_map(db: Session, ids: set[int]) -> dict[int, str]:
         return {}
     rows = db.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all()
     return {i: n for i, n in rows}
+
+
+def _csv_cell(value: object) -> str:
+    text = "" if value is None else str(value)
+    return f"'{text}" if text.startswith(_CSV_FORMULA_PREFIXES) else text
 
 
 def _active_task_for_contract(db: Session, contract: Contract) -> WorkflowTask | None:
@@ -131,47 +136,52 @@ def _to_out(
     return out
 
 
-def _assigned_contract_ids(db: Session, user: User) -> set[int]:
-    has_assigned_grant = any(
-        grant.code == "supply.contract.view" and grant.data_scope == DataScope.ASSIGNED
-        for grant in permission_grants(db, user.id)
-    )
-    if not has_assigned_grant:
-        return set()
-    return set(db.scalars(
-        select(WorkflowInstance.target_id)
-        .join(WorkflowTask, WorkflowTask.instance_id == WorkflowInstance.id)
-        .where(
-            WorkflowInstance.target_type == WorkflowTargetType.CONTRACT,
-            WorkflowTask.designated_user_id == user.id,
+def _permission_contexts(db: Session, user: User, contract: Contract | None = None):
+    return (PermissionContext(
+        company_code="investment",
+        participant_ids=frozenset({user.id}),
+        assigned_user_id=user.id,
+    ),) + tuple(
+        PermissionContext(
+            company_code=assignment.organization.company_code,
+            department_code=(
+                assignment.organization.code
+                if assignment.organization.organization_type.value == "department"
+                else None
+            ),
+            assigned_user_id=user.id,
+            participant_ids=frozenset({user.id}),
         )
-    ))
+        for assignment in active_assignments(db, user.id)
+    )
+
+
+def _has_contract_permission(
+    db: Session, user: User, permission_code: str, contract: Contract | None = None
+) -> bool:
+    return any(
+        has_permission(db, user, permission_code, context)
+        for context in _permission_contexts(db, user, contract)
+    )
 
 
 def _visible_contract_ids(db: Session, user: User) -> set[int] | None:
-    if user.is_superuser:
-        if user.is_active:
-            return None
+    """Compatibility helper for callers that still consume an id set."""
+    if not _has_contract_permission(db, user, "investment.legal.contracts.view"):
         raise HTTPException(status_code=403, detail="权限不足")
-    grants = tuple(
-        grant for grant in permission_grants(db, user.id)
-        if grant.code == "supply.contract.view"
-    )
-    if any(
-        grant.data_scope == DataScope.COMPANY
-        and grant.scope_ref == CompanyCode.SUPPLY_MANAGEMENT.value
-        for grant in grants
-    ):
+    scope = legal_record_scope(db, user)
+    if scope.global_access:
         return None
-    if not any(grant.data_scope == DataScope.ASSIGNED for grant in grants):
-        raise HTTPException(status_code=403, detail="权限不足")
-    return _assigned_contract_ids(db, user)
+    return set(db.scalars(
+        select(Contract.id).where(contract_access_predicate(scope))
+    ))
 
 
 def _ensure_contract_visible(db: Session, contract: Contract, user: User) -> None:
-    visible_ids = _visible_contract_ids(db, user)
-    if visible_ids is not None and contract.id not in visible_ids:
-        raise HTTPException(status_code=403, detail="权限不足")
+    if not _has_contract_permission(db, user, "investment.legal.contracts.view", contract):
+        raise HTTPException(status_code=404, detail="合同不存在")
+    if not can_access_contract(db, contract, legal_record_scope(db, user)):
+        raise HTTPException(status_code=404, detail="合同不存在")
 
 
 def _workflow_error(error: WorkflowValidationError) -> HTTPException:
@@ -227,13 +237,53 @@ def list_contracts(
     current_user: User = Depends(get_current_user),
 ):
     """公司范围岗位见全部供管合同，外聘法律顾问仅见被指定合同。"""
-    stmt = select(Contract).order_by(Contract.id.desc())
-    visible_ids = _visible_contract_ids(db, current_user)
-    if visible_ids is not None:
-        stmt = stmt.where(Contract.id.in_(visible_ids))
+    if not _has_contract_permission(db, current_user, "investment.legal.contracts.view"):
+        raise HTTPException(status_code=403, detail="权限不足")
+    stmt = select(Contract).where(
+        contract_access_predicate(legal_record_scope(db, current_user))
+    ).order_by(Contract.id.desc())
     rows = db.scalars(stmt).all()
     names = _names_map(db, {c.created_by for c in rows})
     return Response.ok([_to_out(db, c, current_user, names.get(c.created_by, "")) for c in rows])
+
+
+@router.get("/export", summary="导出合同列表(CSV)")
+def export_contracts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_export_guard),
+):
+    rows = db.scalars(
+        select(Contract)
+        .where(contract_access_predicate(legal_record_scope(db, current_user)))
+        .order_by(Contract.id.desc())
+    ).all()
+    content = io.StringIO()
+    writer = csv.writer(content)
+    writer.writerow([
+        "合同编号", "合同名称", "合同类型", "是否内部合同", "合同标的", "签订日期",
+        "客户社会信用代码", "客户名称", "合同金额", "币种", "付款条件",
+    ])
+    for contract in rows:
+        writer.writerow([_csv_cell(value) for value in (
+            contract.contract_no,
+            contract.title,
+            contract.contract_type,
+            "是" if contract.is_internal else "否",
+            contract.subject,
+            contract.sign_date,
+            contract.customer_credit_code,
+            contract.customer_name,
+            contract.amount,
+            contract.currency,
+            contract.payment_terms,
+        )])
+    data = ("\ufeff" + content.getvalue()).encode("utf-8")
+    filename = quote("合同列表.csv")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 @router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同")
@@ -241,6 +291,8 @@ def list_todo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not _has_contract_permission(db, current_user, "investment.legal.contracts.view"):
+        raise HTTPException(status_code=403, detail="权限不足")
     tasks = my_active_tasks(db, current_user, WorkflowTargetType.CONTRACT)
     contract_ids = [task.instance.target_id for task in tasks]
     rows_by_id = {
@@ -248,6 +300,8 @@ def list_todo(
         for contract in db.scalars(select(Contract).where(Contract.id.in_(contract_ids)))
     }
     rows = [rows_by_id[contract_id] for contract_id in contract_ids if contract_id in rows_by_id]
+    scope = legal_record_scope(db, current_user)
+    rows = [row for row in rows if can_access_contract(db, row, scope)]
     names = _names_map(db, {c.created_by for c in rows})
     return Response.ok([_to_out(db, c, current_user, names.get(c.created_by, "")) for c in rows])
 
@@ -306,8 +360,22 @@ def create_contract(
 ):
     if db.scalar(select(Contract).where(Contract.contract_no == payload.contract_no)):
         raise HTTPException(status_code=400, detail="合同编号已存在")
+    try:
+        ownership = resolve_legal_ownership(
+            db,
+            current_user,
+            "contract",
+            payload.initiator_assignment_id,
+            payload.organization_code,
+        )
+    except LegalOwnershipError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
     contract = Contract(
-        **payload.model_dump(),
+        **payload.model_dump(exclude={"initiator_assignment_id", "organization_code"}),
+        company_code=ownership.company_code,
+        organization_code=ownership.organization_code,
+        initiator_assignment_id=ownership.initiator_assignment_id,
+        workflow_route_version=1,
         status=ContractStatus.DRAFT,
         current_step=0,
         created_by=current_user.id,
@@ -331,6 +399,7 @@ def update_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能修改本人创建的合同")
     if contract.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
@@ -363,7 +432,10 @@ def delete_contract(
 
     if contract.status == ContractStatus.APPROVED:
         raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
-    if not has_permission(db, current_user, "supply.contract.delete", _supply_context()):
+    _ensure_contract_visible(db, contract, current_user)
+    if not _has_contract_permission(
+        db, current_user, "investment.legal.contracts.delete", contract
+    ):
         raise HTTPException(status_code=403, detail="权限不足")
 
     # 其余状态：仅本人创建且仅草稿/被驳回可删；审批中(pending)不可删
@@ -397,6 +469,7 @@ def submit_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     enabled_superuser = bool(current_user.is_active and current_user.is_superuser)
     if contract.created_by != current_user.id and not (
         contract.workflow_instance_id is not None and enabled_superuser
@@ -415,12 +488,18 @@ def submit_contract(
             db, contract, current_user, WorkflowAction.SUBMIT, "重新提交审批"
         ))
     try:
+        workflow_code = (
+            contract_workflow_code(contract)
+            if contract.workflow_route_version >= 1
+            else None
+        )
         start_workflow(
             db,
             WorkflowTargetType.CONTRACT,
             contract.id,
             current_user,
             payload.designated_users if payload is not None else {},
+            workflow_code=workflow_code,
         )
         db.commit()
     except WorkflowValidationError as error:
@@ -442,6 +521,15 @@ def approve_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
+    if not any(
+        _has_contract_permission(db, current_user, permission_code, contract)
+        for permission_code in (
+            "investment.legal.contracts.review",
+            "investment.legal.contracts.approve",
+        )
+    ):
+        raise HTTPException(status_code=403, detail="权限不足")
     return Response.ok(_complete_current_task(
         db, contract, current_user, WorkflowAction.APPROVE, payload.comment.strip()
     ))
@@ -459,6 +547,11 @@ def reject_contract(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
+    if not _has_contract_permission(
+        db, current_user, "investment.legal.contracts.return", contract
+    ):
+        raise HTTPException(status_code=403, detail="权限不足")
     return Response.ok(_complete_current_task(
         db, contract, current_user, WorkflowAction.RETURN, payload.comment.strip()
     ))
@@ -484,6 +577,7 @@ async def upload_attachment(
     current_user: User = Depends(get_current_user),
 ):
     contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
     if contract.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能为本人创建的合同上传附件")
     fname = file.filename or "附件"
@@ -519,7 +613,7 @@ async def upload_attachment(
 
 # 合同附件/法律文书 下载角色：业务经办/业务复核/法务风控/财务经办/供管负责人/投资总经理/法律顾问 + 超管
 # (仅财务复核不可下载)
-_contract_dl_guard = _export_guard
+_contract_dl_guard = _view_guard
 
 
 @router.get("/{contract_id}/attachment", summary="下载合同附件原件(除财务复核)")

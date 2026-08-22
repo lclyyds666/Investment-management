@@ -269,9 +269,13 @@ const caseData = reactive({ parties: [], collaborators: [], judgments: [], asset
 const users = ref([])
 const attachments = ref([])
 const activities = ref([])
-const role = computed(() => portalStore.companyRole('investment'))
 const isSuperuser = computed(() => portalStore.isSuperuser)
-const hasCapability = (capability) => hasLegalCapability(role.value, capability, isSuperuser.value, portalStore.assignments)
+const permissionSnapshot = computed(() => portalStore.permissions?.permissions || [])
+const hasCapability = (capability) => hasLegalCapability(
+  permissionSnapshot.value,
+  capability,
+  isSuperuser.value
+)
 const canManage = computed(() => hasCapability(LEGAL_CAPABILITIES.MANAGE_DETAIL))
 const canEdit = computed(() => hasCapability(LEGAL_CAPABILITIES.EDIT_CASE))
 const canActivate = computed(() => hasCapability(LEGAL_CAPABILITIES.ACTIVATE_CASE))
@@ -298,11 +302,10 @@ const canEditProgress = (row) => canManage.value || (
   && Number(row.registered_by) === Number(userStore.userInfo?.id)
 )
 const mayDeleteAttachment = (row) => canDeleteLegalAttachment({
-  role: role.value,
+  permissions: permissionSnapshot.value,
   isSuperuser: isSuperuser.value,
   currentUserId: userStore.userInfo?.id,
-  archivedAt: caseData.archived_at,
-  assignments: portalStore.assignments
+  archivedAt: caseData.archived_at
 }, row)
 
 async function load() {

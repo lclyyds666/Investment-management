@@ -3,6 +3,7 @@ from datetime import date
 
 from app.core.enums import (
     AssignmentStatus,
+    CompanyCode,
     DataScope,
     OrganizationType,
     PermissionAction,
@@ -18,6 +19,7 @@ from app.models.organization import (
     PositionPermission,
     UserAssignment,
 )
+from app.services.organization_catalog import ORGANIZATION_CATALOG, POSITION_CATALOG
 
 
 class OrganizationModelContractTest(unittest.TestCase):
@@ -28,6 +30,8 @@ class OrganizationModelContractTest(unittest.TestCase):
         self.assertEqual(PermissionAction.APPROVE.value, "approve")
         self.assertEqual(DataScope.ASSIGNED.value, "assigned")
         self.assertEqual(AssignmentStatus.ACTIVE.value, "active")
+        self.assertEqual(CompanyCode.ZHANWEI.value, "zhanwei")
+        self.assertEqual(CompanyCode.XINHUA_PROPERTY.value, "xinhuaproperty")
 
     def test_core_table_names_are_stable(self):
         self.assertEqual(Organization.__tablename__, "sys_organization")
@@ -57,3 +61,18 @@ class OrganizationModelContractTest(unittest.TestCase):
         )
         self.assertTrue(assignment.is_effective_on(date(2026, 12, 31)))
         self.assertFalse(assignment.is_effective_on(date(2027, 1, 1)))
+
+    def test_legal_subsidiaries_and_position_names_are_canonical(self):
+        organizations = {item["code"]: item for item in ORGANIZATION_CATALOG}
+        positions = {item["code"]: item for item in POSITION_CATALOG}
+
+        self.assertEqual(organizations["zhanwei"]["name"], "山东展威科技有限公司")
+        self.assertEqual(organizations["zhanwei"]["parent"], "investment")
+        self.assertEqual(organizations["xinhuaproperty"]["name"], "山东新华置业有限公司")
+        self.assertEqual(organizations["xinhuaproperty"]["parent"], "investment")
+        self.assertEqual(positions["investment.department.director"]["name"], "部门主任")
+        self.assertEqual(positions["investment.department.deputy_director"]["name"], "部门副主任")
+        self.assertEqual(positions["supply.company_leader"]["name"], "供管公司负责人")
+        self.assertEqual(positions["governance.supply_leader"]["name"], "供管公司分管领导")
+        self.assertNotIn("业务经办", {item["name"] for item in POSITION_CATALOG})
+        self.assertNotIn("业务复核", {item["name"] for item in POSITION_CATALOG})

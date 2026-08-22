@@ -16,6 +16,8 @@ from app.core.enums import (
     AssignmentStatus,
     ContractStatus,
     ContractType,
+    DataScope,
+    PositionCategory,
     WorkflowAction,
     WorkflowInstanceStatus,
     WorkflowTargetType,
@@ -27,7 +29,15 @@ from app.main import create_app
 from app.models.approval import Approval
 from app.models.contract import Contract
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
-from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
+from app.models.organization import (
+    ExternalAssignment,
+    GovernanceScope,
+    Organization,
+    Permission,
+    Position,
+    PositionPermission,
+    UserAssignment,
+)
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowTaskAction
 from app.services.approval_print import build_approval_form_xlsx
@@ -201,6 +211,133 @@ class WorkflowApiTest(unittest.TestCase):
             params={"workflow_code": "supply.contract.v2", "node_code": "company_leader"},
         )
         self.assertEqual(denied.status_code, 403)
+
+    def test_contract_submission_plan_and_candidates_use_target_ownership(self):
+        initiator_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.handler.id,
+                UserAssignment.organization_id == self.db.scalar(
+                    select(Organization.id).where(
+                        Organization.code == "supplymanagement"
+                    )
+                ),
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "supply.business_handler"
+                    )
+                ),
+            )
+        )
+        target = Contract(
+            contract_no="WF-API-PLAN",
+            title="Workflow plan contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            company_code="supplymanagement",
+            organization_code="supplymanagement",
+            initiator_assignment_id=initiator_assignment.id,
+            workflow_route_version=1,
+        )
+        self.db.add(target)
+        self.db.commit()
+
+        plan = self.client.get(
+            "/api/v1/workflows/submission-plan",
+            params={"target_type": "contract", "target_id": target.id},
+        )
+        candidates = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={
+                "workflow_code": "investment.contract.subsidiary.v1",
+                "node_code": "company_head",
+                "target_type": "contract",
+                "target_id": target.id,
+            },
+        )
+
+        self.assertEqual(plan.status_code, 200, plan.text)
+        self.assertEqual(
+            plan.json()["data"]["workflow_code"],
+            "investment.contract.subsidiary.v1",
+        )
+        self.assertEqual(
+            [node["name"] for node in plan.json()["data"]["nodes"]],
+            ["公司负责人", "外聘法律顾问", "法务风控部", "分管领导"],
+        )
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(
+            {item["user_id"] for item in candidates.json()["data"]},
+            {self.leader.id, self.other_leader.id},
+        )
+
+    def test_contract_create_marks_new_workflow_route_generation(self):
+        initiator_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.handler.id,
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "supply.business_handler"
+                    )
+                ),
+            )
+        )
+
+        response = self.client.post(
+            "/api/v1/contracts",
+            json={
+                "contract_no": "WF-API-CREATE-ROUTE",
+                "title": "new routed contract",
+                "initiator_assignment_id": initiator_assignment.id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"]["workflow_route_version"], 1)
+        contract = self.db.scalar(
+            select(Contract).where(
+                Contract.contract_no == "WF-API-CREATE-ROUTE"
+            )
+        )
+        self.assertEqual(contract.workflow_route_version, 1)
+
+    def test_legacy_contract_plan_and_candidates_keep_old_designated_chain(self):
+        target = Contract(
+            contract_no="WF-API-LEGACY-PLAN",
+            title="legacy workflow plan",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            company_code="supplymanagement",
+            organization_code="supplymanagement",
+            workflow_route_version=0,
+        )
+        self.db.add(target)
+        self.db.commit()
+
+        plan = self.client.get(
+            "/api/v1/workflows/submission-plan",
+            params={"target_type": "contract", "target_id": target.id},
+        )
+        candidates = self.client.get(
+            "/api/v1/workflows/candidates",
+            params={
+                "workflow_code": "supply.contract.v2",
+                "node_code": "company_leader",
+                "target_type": "contract",
+                "target_id": target.id,
+            },
+        )
+
+        self.assertEqual(plan.status_code, 200, plan.text)
+        self.assertEqual(plan.json()["data"]["workflow_code"], "supply.contract.v2")
+        self.assertEqual(
+            [node["code"] for node in plan.json()["data"]["nodes"]],
+            ["company_leader", "legal_counsel", "supply_governance_leader"],
+        )
+        self.assertEqual(candidates.status_code, 200, candidates.text)
+        self.assertEqual(
+            {item["user_id"] for item in candidates.json()["data"]},
+            {self.leader.id, self.other_leader.id},
+        )
 
     def test_inbox_exposes_shared_task_to_all_position_holders(self):
         payment = ApprovalForm(
@@ -432,7 +569,7 @@ class WorkflowApiTest(unittest.TestCase):
         self.assertIsNotNone(submit_projection.workflow_task_action_id)
         self.assertEqual(submit_projection.approver_role, "supply.business_handler")
         self.assertEqual(submit_projection.position_code, "supply.business_handler")
-        self.assertEqual(submit_projection.position_name, "业务经办")
+        self.assertEqual(submit_projection.position_name, "供管公司初级经理")
 
         task = self.active_task()
         self.current_user = self.leader
@@ -449,7 +586,7 @@ class WorkflowApiTest(unittest.TestCase):
         )
         self.assertEqual(projection.action.value, "approve")
         self.assertEqual(projection.position_code, "supply.company_leader")
-        self.assertEqual(projection.position_name, "供应链公司负责人")
+        self.assertEqual(projection.position_name, "供管公司负责人")
         self.assertEqual(projection.organization_code, "supplymanagement")
 
         legal_task = self.active_task()
@@ -508,7 +645,25 @@ class WorkflowApiTest(unittest.TestCase):
         not_assigned = self.client.get(f"/api/v1/workflows/instances/{other_instance.id}/timeline")
 
         self.assertEqual(assigned.status_code, 200, assigned.text)
-        self.assertEqual(not_assigned.status_code, 403, not_assigned.text)
+        self.assertEqual(not_assigned.status_code, 404, not_assigned.text)
+        self.db.delete(other_contract)
+        self.db.commit()
+        deleted_not_assigned = self.client.get(
+            f"/api/v1/workflows/instances/{other_instance.id}/timeline"
+        )
+        self.assertEqual(deleted_not_assigned.status_code, 404, deleted_not_assigned.text)
+
+    def test_contract_timeline_hides_cross_company_targets(self):
+        fund_reader = self.add_user("fund-timeline-reader", "Fund Timeline Reader")
+        self.assign(fund_reader, "fundmanagement", "fund.general_manager")
+        self.db.commit()
+        self.current_user = fund_reader
+
+        response = self.client.get(
+            f"/api/v1/workflows/instances/{self.instance.id}/timeline"
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
 
     def test_reassignment_requires_superuser_reason_and_exact_effective_position(self):
         task = self.active_task()
@@ -620,7 +775,7 @@ class WorkflowApiTest(unittest.TestCase):
             "invalidation_reason": "原办理人的岗位任职已过期",
             "activated_at": queue.json()["data"][0]["activated_at"],
             "required_position_code": "supply.company_leader",
-            "required_position_name": "供应链公司负责人",
+            "required_position_name": "供管公司负责人",
         }])
         self.assertEqual(candidates.status_code, 200, candidates.text)
         self.assertEqual(
@@ -686,7 +841,7 @@ class WorkflowApiTest(unittest.TestCase):
         item = audits.json()["data"]["items"][0]
         self.assertEqual(item["old_assignee_name"], "Leader")
         self.assertEqual(item["new_assignee_name"], "Other Leader")
-        self.assertEqual(item["required_position_name"], "供应链公司负责人")
+        self.assertEqual(item["required_position_name"], "供管公司负责人")
         self.assertEqual(item["operator_name"], self.admin.full_name)
         self.assertEqual(item["reason"], "原负责人岗位失效")
         self.assertTrue(item["created_at"])
@@ -694,7 +849,7 @@ class WorkflowApiTest(unittest.TestCase):
         position.name = "已改名岗位"
         self.db.commit()
         renamed = self.client.get("/api/v1/workflows/reassignment-audits")
-        self.assertEqual(renamed.json()["data"]["items"][0]["required_position_name"], "供应链公司负责人")
+        self.assertEqual(renamed.json()["data"]["items"][0]["required_position_name"], "供管公司负责人")
 
     def test_reassignment_audits_are_sorted_and_paginated(self):
         task = self.await_reassignment(self.active_task())
@@ -917,6 +1072,56 @@ class ContractWorkflowApiTest(unittest.TestCase):
             .order_by(WorkflowTask.sequence)
         ))
         self.assertEqual(tasks[-1].required_position_code, "governance.supply_leader")
+
+    def test_new_contract_route_version_uses_subsidiary_workflow(self):
+        initiator_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.handler.id,
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "supply.business_handler"
+                    )
+                ),
+            )
+        )
+        governance_assignment = self.db.scalar(
+            select(UserAssignment).where(
+                UserAssignment.user_id == self.governance.id,
+                UserAssignment.position_id == self.db.scalar(
+                    select(Position.id).where(
+                        Position.code == "governance.supply_leader"
+                    )
+                ),
+            )
+        )
+        self.db.add(GovernanceScope(
+            assignment_id=governance_assignment.id,
+            scope_type="company",
+            scope_ref="supplymanagement",
+        ))
+        self.contract.initiator_assignment_id = initiator_assignment.id
+        self.contract.workflow_route_version = 1
+        self.db.commit()
+
+        response = self.client.post(
+            f"/api/v1/contracts/{self.contract.id}/submit",
+            json={
+                "designated_users": {
+                    "company_head": self.leader.id,
+                    "legal_counsel": self.legal.id,
+                    "legal_risk": self.risk.id,
+                    "governance_leader": self.governance.id,
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        instance = self.db.get(
+            WorkflowInstance, response.json()["data"]["workflow_instance_id"]
+        )
+        self.assertEqual(
+            instance.definition.code, "investment.contract.subsidiary.v1"
+        )
 
     def test_todo_and_legacy_wrappers_use_current_workflow_task(self):
         submitted = self.client.post(
@@ -1249,7 +1454,7 @@ class ContractWorkflowApiTest(unittest.TestCase):
         self.assertEqual(listing.status_code, 200, listing.text)
         self.assertEqual([item["id"] for item in listing.json()["data"]], [self.contract.id])
         self.assertEqual(assigned.status_code, 200)
-        self.assertEqual(unassigned.status_code, 403)
+        self.assertEqual(unassigned.status_code, 404)
 
     def test_external_legal_counsel_without_designation_sees_empty_list(self):
         self.current_user = self.legal
@@ -1643,7 +1848,7 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
         )
         self.assertEqual(projection.action.value, "approve")
         self.assertEqual(projection.position_code, "supply.business_reviewer")
-        self.assertEqual(projection.position_name, "业务复核")
+        self.assertEqual(projection.position_name, "供管公司中级经理")
 
         leader_task = self.active_task(self.business)
         before = self.db.query(ApprovalFormAction).count()
@@ -1773,6 +1978,76 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
 
         self.assertEqual(selected["contract"], 1)
         self.assertEqual(unselected["contract"], 0)
+
+    def test_pending_count_splits_legacy_and_ownership_routed_contract_tasks(self):
+        supply_viewer = self.add_user("supply-contract-viewer", "Supply Contract Viewer")
+        legal_viewer = self.add_user("legal-contract-viewer", "Legal Contract Viewer")
+        supply_position = Position(
+            code="test.supply-contract-viewer",
+            name="Supply Contract Viewer",
+            category=PositionCategory.BUSINESS,
+        )
+        legal_position = Position(
+            code="test.legal-contract-viewer",
+            name="Legal Contract Viewer",
+            category=PositionCategory.BUSINESS,
+        )
+        self.db.add_all([supply_position, legal_position])
+        self.db.flush()
+        self.db.add_all([
+            PositionPermission(
+                position_id=supply_position.id,
+                permission_id=self.db.scalar(select(Permission.id).where(
+                    Permission.code == "supply.contract.view"
+                )),
+                data_scope=DataScope.COMPANY,
+                scope_ref="supplymanagement",
+            ),
+            PositionPermission(
+                position_id=legal_position.id,
+                permission_id=self.db.scalar(select(Permission.id).where(
+                    Permission.code == "investment.legal.contracts.view"
+                )),
+                data_scope=DataScope.COMPANY,
+                scope_ref="investment",
+            ),
+        ])
+        self.assign(supply_viewer, "supplymanagement", supply_position.code)
+        self.assign(legal_viewer, "investment.legal_risk", legal_position.code)
+        legacy_contract = Contract(
+            contract_no="WF-FORM-STATS-LEGACY",
+            title="Legacy contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            workflow_route_version=0,
+        )
+        routed_contract = Contract(
+            contract_no="WF-FORM-STATS-ROUTED",
+            title="Ownership-routed contract",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+            workflow_route_version=1,
+        )
+        self.db.add_all([legacy_contract, routed_contract])
+        self.db.commit()
+        actionable_tasks = [
+            SimpleNamespace(instance=SimpleNamespace(target_id=legacy_contract.id)),
+            SimpleNamespace(instance=SimpleNamespace(target_id=routed_contract.id)),
+        ]
+
+        with patch(
+            "app.api.v1.endpoints.approval_stats.my_active_tasks",
+            return_value=actionable_tasks,
+        ):
+            self.current_user = supply_viewer
+            supply_count = self.client.get("/api/v1/approval/pending-count")
+            self.current_user = legal_viewer
+            legal_count = self.client.get("/api/v1/approval/pending-count")
+
+        self.assertEqual(supply_count.status_code, 200, supply_count.text)
+        self.assertEqual(legal_count.status_code, 200, legal_count.text)
+        self.assertEqual(supply_count.json()["data"]["contract"], 1)
+        self.assertEqual(legal_count.json()["data"]["contract"], 2)
 
     def test_delete_returned_forms_cancels_workflow_and_preserves_timeline(self):
         cases = (

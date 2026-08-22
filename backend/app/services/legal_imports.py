@@ -37,6 +37,7 @@ from app.models.user import User
 from app.services.legal_cases import next_case_no, record_activity, set_current_enforcement_basis
 from app.services.legal_alerts import sync_case_alerts
 from app.services.legal_clock import legal_now
+from app.services.legal_ownership import LegalOwnership
 from app.services.permissions import get_company_role
 
 TEMPLATE_VERSION = "legal-case-v1"
@@ -276,7 +277,19 @@ def _validate_row(sheet_name: str, data: dict, known_keys: set[str], db: Session
     return normalized, warnings, errors
 
 
-def preview_import(db: Session, content: bytes, file_name: str, actor: User) -> LegalCaseImportBatch:
+def _ownership_data(ownership: LegalOwnership) -> dict:
+    return {
+        "company_code": ownership.company_code,
+        "organization_code": ownership.organization_code,
+        "initiator_assignment_id": ownership.initiator_assignment_id,
+    }
+
+
+def preview_import(
+    db: Session, content: bytes, file_name: str, actor: User,
+    ownership: LegalOwnership,
+) -> LegalCaseImportBatch:
+    ownership_data = _ownership_data(ownership)
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
@@ -313,6 +326,7 @@ def preview_import(db: Session, content: bytes, file_name: str, actor: User) -> 
             if not any(value not in (None, "") for value in values): continue
             raw = _row_dict(headers, values)
             normalized, warnings, errors = _validate_row(sheet_name, raw, known_keys, db)
+            normalized["ownership"] = ownership_data
             status = "error" if errors else "warning" if warnings else "valid"
             rows.append(LegalCaseImportRow(
                 batch_id=batch.id, sheet_name=sheet_name, row_number=row_number,
@@ -356,7 +370,9 @@ def confirm_import(
     batch: LegalCaseImportBatch,
     actor: User,
     confirmed_warning_rows: list[int],
+    ownership: LegalOwnership,
 ) -> dict:
+    ownership_data = _ownership_data(ownership)
     claimed = db.execute(
         update(LegalCaseImportBatch)
         .where(
@@ -370,6 +386,8 @@ def confirm_import(
     rows = db.scalars(select(LegalCaseImportRow).where(
         LegalCaseImportRow.batch_id == batch.id
     ).order_by(LegalCaseImportRow.id.asc())).all()
+    if any(row.normalized_data.get("ownership") != ownership_data for row in rows):
+        raise HTTPException(status_code=409, detail="导入归属与预检不一致，请重新预检")
     if any(row.validation_status == "error" for row in rows):
         raise HTTPException(status_code=409, detail="批次仍有错误，不能导入")
     warning_ids = {row.id for row in rows if row.validation_status == "warning"}
@@ -389,6 +407,9 @@ def confirm_import(
             court_case_no=data["court_case_no"], subject_amount=Decimal(data["subject_amount"]),
             responsible_user_id=data["responsible_user_id"], case_summary=data["case_summary"],
             claims=data["claims"], created_by=actor.id, activated_by=actor.id, activated_at=legal_now(),
+            company_code=ownership_data["company_code"],
+            organization_code=ownership_data["organization_code"],
+            initiator_assignment_id=ownership_data["initiator_assignment_id"],
         )
         db.add(case); db.flush()
         current_basis_id = None

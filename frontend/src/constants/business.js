@@ -6,9 +6,17 @@ export const COMPANY_CODES = {
   FUND_MANAGEMENT: 'fundmanagement'
 }
 
+export const COMPANY_NAMES = {
+  investment: '山东出版投资有限公司',
+  supplymanagement: '山东出版供应链管理有限公司',
+  fundmanagement: '山东出版股权基金管理有限公司',
+  zhanwei: '山东展威科技有限公司'
+}
+
 export const RESOURCE_CODES = {
   INVEST_LEGAL_DASHBOARD: 'invest.legal.dashboard',
   INVEST_LEGAL_CASES: 'invest.legal.cases',
+  INVEST_LEGAL_CONTRACTS: 'invest.legal.contracts',
   INVEST_LEGAL_ALERTS: 'invest.legal.alerts',
   INVEST_LEGAL_STATISTICS: 'invest.legal.statistics',
   INVEST_LEGAL_ADMIN: 'invest.legal.admin',
