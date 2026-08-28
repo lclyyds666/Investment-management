@@ -64,6 +64,24 @@ class FundApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_create_and_update_cannot_set_settlement_state(self):
+        payload = {
+            "direction": "increase",
+            "category": "company_loan",
+            "amount": "100000",
+            "occurred_on": "2026-08-28",
+            "maturity_date": "2026-09-27",
+        }
+        for method, path, field, value in (
+            ("post", "/api/v1/funds", "settlement_status", "settled"),
+            ("post", "/api/v1/funds", "settled_on", "2026-08-29"),
+            ("put", "/api/v1/funds/1", "settlement_status", "settled"),
+            ("put", "/api/v1/funds/1", "settled_on", "2026-08-29"),
+        ):
+            with self.subTest(method=method, field=field):
+                response = getattr(self.client, method)(path, json={**payload, field: value})
+                self.assertEqual(response.status_code, 422)
+
     def test_create_settle_delete_and_missing(self):
         from app.api.v1.endpoints.fund import (
             create_fund,

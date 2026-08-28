@@ -99,7 +99,12 @@ def create_fund(
     db: Session = Depends(get_db),
     current_user: User = Depends(_update_guard),
 ):
-    row = FundTransaction(**payload.model_dump(), created_by=current_user.id)
+    row = FundTransaction(
+        **payload.model_dump(),
+        settlement_status="open",
+        settled_on=None,
+        created_by=current_user.id,
+    )
     db.add(row)
     db.commit()
     db.refresh(row)
