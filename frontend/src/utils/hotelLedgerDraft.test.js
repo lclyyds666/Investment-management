@@ -19,6 +19,8 @@ const parsed = {
     commission_rate: 0.08,
     rate_hexiao: 0.91,
     rate_settle: 0.95,
+    fee_per_night: 44,
+    fee_algo: 1,
     def_hexiao: 80.08,
     def_service_fee: 44,
     def_jinying: 124.08,
@@ -29,7 +31,7 @@ const parsed = {
 }
 
 describe('hotel ledger scenic config snapshot', () => {
-  it('prefers parsed hotel brands and orders branded platform labels', () => {
+  it('preserves parsed hotel brands and sorts by hotel-platform dimensions', () => {
     const branded = {
       ...parsed,
       platforms: [
@@ -50,27 +52,42 @@ describe('hotel ledger scenic config snapshot', () => {
       { hotel_name: '海洋', platform: '携程' }
     ]
 
-    expect(createHotelDraftRows(branded, '默认酒店').map((row) => row.hotel_name))
+    expect(createHotelDraftRows(branded).map((row) => row.hotel_name))
       .toEqual(['海洋', '海洋', '骑士', '骑士', '长颈鹿', '长颈鹿'])
-    expect(hotelPlatformLabel({ hotel_name: '海洋', platform: '携程' })).toBe('海洋携程')
+    expect(hotelPlatformLabel({ hotel_name: '海洋', platform: '携程' })).toBe('携程')
     expect([...rows].sort(compareHotelLedgerRows).map(hotelPlatformLabel)).toEqual([
-      '海洋携程', '海洋美团', '骑士携程', '骑士美团', '长颈鹿携程', '长颈鹿美团'
+      '携程', '美团', '携程', '美团', '携程', '美团'
     ])
   })
 
-  it('preserves parsed rates through draft and save mapping', () => {
-    const drafts = createHotelDraftRows(parsed, '郑和海洋酒店')
+  it('preserves parsed hotel snapshots through draft and save mapping', () => {
+    const snapshot = {
+      ...parsed,
+      platforms: [{
+        ...parsed.platforms[0],
+        hotel_name: '郑和海洋酒店',
+        fee_per_night: 58,
+        fee_algo: 2
+      }]
+    }
+    const drafts = createHotelDraftRows(snapshot)
 
     expect(drafts[0]).toMatchObject({
+      hotel_name: '郑和海洋酒店',
       commission_rate: 0.08,
       rate_hexiao: 0.91,
-      rate_settle: 0.95
+      rate_settle: 0.95,
+      fee_per_night: 58,
+      fee_algo: 2
     })
 
     expect(createHotelSaveRows(drafts)[0]).toMatchObject({
+      hotel_name: '郑和海洋酒店',
       commission_rate: 0.08,
       rate_hexiao: 0.91,
-      rate_settle: 0.95
+      rate_settle: 0.95,
+      fee_per_night: 58,
+      fee_algo: 2
     })
   })
 

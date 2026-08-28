@@ -275,9 +275,6 @@ const canDelete = computed(() => canUsePermission(portalStore, 'supply.scenic.de
 const canApproveConfirm = computed(() => canUsePermission(portalStore, 'supply.scenic.review'))
 const canExport = computed(() => canUsePermission(portalStore, 'supply.scenic.export'))
 
-const DEFAULT_FEE_PER_NIGHT = 44
-const DEFAULT_HOTEL_NAME = '郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店'
-
 const loading = ref(false)
 const parsing = ref(false)
 const saving = ref(false)
@@ -296,7 +293,7 @@ function settleBase(row) {
 }
 function calcHexiao(row) { return round2(settleBase(row) * numberOr(row.rate_hexiao)) }
 function calcFee(row) {
-  return round2((Number(row.room_nights) || 0) * numberOr(row.fee_per_night, DEFAULT_FEE_PER_NIGHT))
+  return round2((Number(row.room_nights) || 0) * numberOr(row.fee_per_night))
 }
 // 佣金未改 → 展示后端「按日期粒度」精准默认核销；改了 → JS 期级预览(保存时后端按期重算)
 function isDefaultComm(row) {
@@ -449,7 +446,7 @@ async function onFileChange(file) {
   try {
     const res = await parseHotelFile(props.scenicId, raw)
     ;(res.warnings || []).forEach((w) => ElMessage.warning(w))
-    draftRows.value = createHotelDraftRows(res, DEFAULT_HOTEL_NAME, DEFAULT_FEE_PER_NIGHT)
+    draftRows.value = createHotelDraftRows(res)
     ElMessage.success(`解析完成：本期 ${draftRows.value.length} 个品牌平台组合`)
   } catch {
     ElMessage.error('解析失败，请检查文件内容')
@@ -483,7 +480,7 @@ const editForm = reactive({
   base_received: 0, receivedEdited: false,       // 服务商到账/平台毛额(可人工改)
   supplier_commission: 0, room_nights: 0,
   commissionRatePct: 0, commissionEdited: false, // 服务商佣金率(%)/是否手工改过佣金金额
-  ratePctHexiao: 0, fee_algo: 1, fee_per_night: 44, ratePctSettle: 0,
+  ratePctHexiao: 0, fee_algo: 0, fee_per_night: 0, ratePctSettle: 0,
   hexiao_amount: 0, hexiaoEdited: false,         // 景区核销金额(可人工改)
   jinying_amount: 0, jinyingEdited: false,
   payment_amount: 0, payment_date: null, repay_date: null, repay_amount: null,
@@ -559,8 +556,8 @@ function openEdit(row) {
   editForm.commissionEdited = false
   editForm.room_nights = Number(row.room_nights) || 0
   editForm.ratePctHexiao = round2(numberOr(row.rate_hexiao) * 100)
-  editForm.fee_algo = Number(row.fee_algo) || 1
-  editForm.fee_per_night = numberOr(row.fee_per_night, DEFAULT_FEE_PER_NIGHT)
+  editForm.fee_algo = Number(row.fee_algo)
+  editForm.fee_per_night = numberOr(row.fee_per_night)
   editForm.ratePctSettle = round2(numberOr(row.rate_settle) * 100)
   editForm.hexiao_amount = Number(row.hexiao_amount) || 0
   editForm.hexiaoEdited = false
