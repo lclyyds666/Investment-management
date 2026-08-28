@@ -133,6 +133,68 @@ class FundApiTest(unittest.TestCase):
             settle_fund(created.data.id, FundSettleIn(), db, user)
         self.assertEqual(raised.exception.status_code, 400)
 
+    def test_settled_fund_rejects_direction_or_category_changes(self):
+        from app.api.v1.endpoints.fund import create_fund, settle_fund, update_fund
+        from app.schemas.fund import (
+            FundSettleIn,
+            FundTransactionCreate,
+            FundTransactionUpdate,
+        )
+
+        db = FakeSession()
+        user = SimpleNamespace(id=9)
+        create_fund(
+            FundTransactionCreate(
+                direction="increase",
+                category="company_loan",
+                amount=Decimal("100000"),
+                occurred_on=date(2026, 8, 28),
+                maturity_date=date(2026, 9, 27),
+                summary="流动资金借款",
+            ),
+            db,
+            user,
+        )
+        settle_fund(1, FundSettleIn(settled_on=date(2026, 8, 29)), db, user)
+
+        changed_classifications = (
+            FundTransactionUpdate(
+                direction="usage",
+                category="expense",
+                amount=Decimal("100000"),
+                occurred_on=date(2026, 8, 28),
+                summary="改变方向",
+            ),
+            FundTransactionUpdate(
+                direction="increase",
+                category="customer_payment",
+                amount=Decimal("100000"),
+                occurred_on=date(2026, 8, 28),
+                summary="改变类型",
+            ),
+        )
+        for payload in changed_classifications:
+            with self.subTest(direction=payload.direction, category=payload.category):
+                with self.assertRaises(HTTPException) as raised:
+                    update_fund(1, payload, db, user)
+                self.assertEqual(raised.exception.status_code, 409)
+
+        updated = update_fund(
+            1,
+            FundTransactionUpdate(
+                direction="increase",
+                category="company_loan",
+                amount=Decimal("120000"),
+                occurred_on=date(2026, 8, 28),
+                maturity_date=date(2026, 9, 27),
+                summary="只修改金额和摘要",
+            ),
+            db,
+            user,
+        )
+        self.assertEqual(updated.data.amount, Decimal("120000"))
+        self.assertEqual(updated.data.settlement_status, "settled")
+
 
 if __name__ == "__main__":
     unittest.main()

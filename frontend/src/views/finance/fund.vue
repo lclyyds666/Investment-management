@@ -146,13 +146,13 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="104px">
         <div class="form-grid">
           <el-form-item label="资金方向" prop="direction">
-            <el-radio-group v-model="form.direction" @change="onFormDirectionChange">
+            <el-radio-group v-model="form.direction" :disabled="editingSettled" @change="onFormDirectionChange">
               <el-radio-button value="increase">资金增加</el-radio-button>
               <el-radio-button value="usage">资金使用</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="资金类型" prop="category">
-            <el-select v-model="form.category" placeholder="请选择类型" style="width: 100%">
+            <el-select v-model="form.category" :disabled="editingSettled" placeholder="请选择类型" style="width: 100%">
               <el-option v-for="item in formCategoryOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
@@ -224,7 +224,9 @@ const summaryLoading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref(null)
+const editingSettled = ref(false)
 const formRef = ref()
+const lockedClassification = reactive({ direction: '', category: '' })
 const summary = reactive({
   available_funds: 0,
   total_increase: 0,
@@ -272,7 +274,8 @@ const filterCategoryOptions = computed(() => {
   const options = [...CATEGORY_OPTIONS.increase, ...CATEGORY_OPTIONS.usage]
   return options.filter((item, index) => options.findIndex((candidate) => candidate.value === item.value) === index)
 })
-const requiresMaturity = computed(() => DUE_CATEGORIES.has(form.category))
+const effectiveCategory = computed(() => editingSettled.value ? lockedClassification.category : form.category)
+const requiresMaturity = computed(() => DUE_CATEGORIES.has(effectiveCategory.value))
 const rules = {
   direction: [{ required: true, message: '请选择资金方向', trigger: 'change' }],
   category: [{ required: true, message: '请选择资金类型', trigger: 'change' }],
@@ -364,6 +367,11 @@ function onFilterDirectionChange() {
 }
 
 function onFormDirectionChange() {
+  if (editingSettled.value) {
+    form.direction = lockedClassification.direction
+    form.category = lockedClassification.category
+    return
+  }
   const allowed = CATEGORY_OPTIONS[form.direction] || []
   if (!allowed.some((item) => item.value === form.category)) form.category = allowed[0]?.value || ''
   if (!DUE_CATEGORIES.has(form.category)) form.maturity_date = null
@@ -377,6 +385,8 @@ async function onPageSizeChange() {
 function openCreate() {
   if (!canWrite.value) return
   editingId.value = null
+  editingSettled.value = false
+  Object.assign(lockedClassification, { direction: '', category: '' })
   Object.assign(form, emptyForm())
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
@@ -385,6 +395,8 @@ function openCreate() {
 function openEdit(row) {
   if (!canWrite.value) return
   editingId.value = row.id
+  editingSettled.value = row.settlement_status === 'settled'
+  Object.assign(lockedClassification, { direction: row.direction, category: row.category })
   Object.assign(form, {
     direction: row.direction,
     category: row.category,
@@ -401,8 +413,8 @@ function openEdit(row) {
 
 function transactionPayload() {
   return {
-    direction: form.direction,
-    category: form.category,
+    direction: editingSettled.value ? lockedClassification.direction : form.direction,
+    category: editingSettled.value ? lockedClassification.category : form.category,
     amount: wanToYuan(form.amountWan),
     occurred_on: form.occurred_on,
     counterparty: form.counterparty?.trim() || '',
@@ -443,7 +455,7 @@ async function submitForm() {
 }
 
 function canSettle(row) {
-  return canWrite.value && DUE_CATEGORIES.has(row.category) && row.settlement_status !== 'settled'
+  return canWrite.value && DUE_CATEGORIES.has(row.category) && row.settlement_status === 'open'
 }
 
 async function onSettle(row) {

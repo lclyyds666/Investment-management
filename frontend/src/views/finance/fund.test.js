@@ -151,6 +151,9 @@ describe('fund management view', () => {
 
     expect(wrapper.vm.canSettle(row)).toBe(true)
     expect(wrapper.vm.canSettle({ ...row, settlement_status: 'settled' })).toBe(false)
+    expect(wrapper.vm.canSettle({ ...row, settlement_status: '' })).toBe(false)
+    expect(wrapper.vm.canSettle({ ...row, settlement_status: 'unknown' })).toBe(false)
+    expect(wrapper.vm.canSettle({ ...row, settlement_status: undefined })).toBe(false)
     expect(wrapper.vm.canSettle({ ...row, category: 'customer_payment' })).toBe(false)
     await wrapper.vm.onSettle(row)
 
@@ -190,6 +193,41 @@ describe('fund management view', () => {
       maturity_date: '2026-12-31',
       remark: '测试'
     })
+  })
+
+  it('locks direction and category when editing a settled financing record', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openEdit({
+      id: 10,
+      direction: 'increase',
+      category: 'bank_credit',
+      amount: 200000,
+      occurred_on: '2026-08-01',
+      counterparty: '测试银行',
+      summary: '已结清授信',
+      maturity_date: '2026-08-20',
+      remark: '',
+      settlement_status: 'settled',
+      settled_on: '2026-08-21'
+    })
+    expect(wrapper.vm.editingSettled).toBe(true)
+    Object.assign(wrapper.vm.form, {
+      direction: 'usage',
+      category: 'expense',
+      summary: '只允许修改非分类字段'
+    })
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+
+    await wrapper.vm.submitForm()
+
+    expect(fundApi.updateFund).toHaveBeenCalledWith(10, expect.objectContaining({
+      direction: 'increase',
+      category: 'bank_credit',
+      summary: '只允许修改非分类字段'
+    }))
+    expect(fundApi.updateFund.mock.calls[0][1]).not.toHaveProperty('settlement_status')
+    expect(fundApi.updateFund.mock.calls[0][1]).not.toHaveProperty('settled_on')
   })
 
   it('deletes after confirmation and refreshes list and summary', async () => {

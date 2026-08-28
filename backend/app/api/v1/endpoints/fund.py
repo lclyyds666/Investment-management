@@ -121,6 +121,10 @@ def update_fund(
     row = db.get(FundTransaction, fund_id)
     if not row:
         raise HTTPException(status_code=404, detail="资金流水不存在")
+    if row.settlement_status == "settled" and (
+        payload.direction != row.direction or payload.category != row.category
+    ):
+        raise HTTPException(status_code=409, detail="已结清资金流水不能修改资金方向或类型")
     for field, value in payload.model_dump().items():
         setattr(row, field, value)
     db.commit()
