@@ -1,6 +1,6 @@
 -- Fund transaction ledger. This migration is safe to run repeatedly on MySQL 8.
 CREATE TABLE IF NOT EXISTS `biz_fund_transaction` (
-  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `id` INT NOT NULL AUTO_INCREMENT,
   `direction` VARCHAR(16) NOT NULL,
   `category` VARCHAR(32) NOT NULL,
   `amount` DECIMAL(18,2) NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS `biz_fund_transaction` (
   `settlement_status` VARCHAR(16) NOT NULL DEFAULT 'open',
   `settled_on` DATE NULL,
   `remark` TEXT NULL,
-  `created_by` BIGINT NULL,
+  `created_by` INT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

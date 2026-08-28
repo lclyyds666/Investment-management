@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 from pydantic import ValidationError
@@ -62,6 +63,24 @@ class FundManagementTest(unittest.TestCase):
                 amount=Decimal("0"), occurred_on=date(2026, 8, 28),
                 counterparty="customer", summary="invalid direction category pair",
             )
+
+    def test_amount_rejects_values_beyond_database_precision(self):
+        payload = {
+            "direction": "usage",
+            "category": "business_payment",
+            "occurred_on": date(2026, 8, 28),
+        }
+        for amount in (Decimal("99999999999999999.99"), Decimal("1.001")):
+            with self.subTest(amount=amount), self.assertRaises(ValidationError):
+                FundTransactionCreate(amount=amount, **payload)
+
+    def test_migration_ids_match_repository_integer_primary_keys(self):
+        migration = Path(__file__).parents[1] / "migrations" / "20260828_fund_management.sql"
+        sql = migration.read_text(encoding="utf-8")
+
+        self.assertIn("`id` INT NOT NULL AUTO_INCREMENT", sql)
+        self.assertIn("`created_by` INT NULL", sql)
+        self.assertNotIn("`created_by` BIGINT", sql)
 
 
 if __name__ == "__main__":

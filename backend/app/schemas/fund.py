@@ -27,7 +27,7 @@ SETTLEMENT_STATUSES = frozenset({"open", "settled"})
 class FundTransactionWrite(BaseModel):
     direction: str
     category: str
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
     occurred_on: date
     counterparty: str = Field(default="", max_length=200)
     summary: str = Field(default="", max_length=300)
