@@ -66,6 +66,10 @@ class FundTransactionUpdate(FundTransactionWrite):
     pass
 
 
+class FundSettleIn(BaseModel):
+    settled_on: date | None = None
+
+
 class FundTransactionOut(FundTransactionWrite):
     model_config = ConfigDict(from_attributes=True)
 
