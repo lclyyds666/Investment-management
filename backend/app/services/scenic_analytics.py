@@ -114,6 +114,9 @@ def _profit_point(
     row,
     service_fee: Decimal,
     realized_amount: Decimal,
+    existing_scale: Decimal,
+    occupation_weight: Decimal,
+    occupation_amount: Decimal,
 ) -> dict:
     period_date = ledger_period_date(row)
     period = f"{period_date.month}月" if period_date else _period_label(row)
@@ -127,6 +130,9 @@ def _profit_point(
         "month": period_date.month if period_date else None,
         "service_fee": service_fee,
         "realized_amount": realized_amount,
+        "existing_scale": existing_scale,
+        "occupation_weight": occupation_weight,
+        "occupation_amount": occupation_amount,
     }
 
 
@@ -139,6 +145,18 @@ def hotel_period_key(row) -> tuple[str, str]:
         or f"row:{getattr(row, 'id', '')}"
     )
     return row.scenic_id, period
+
+
+def occupation_values(
+    net_investment: Decimal,
+    start: date | None,
+    end: date | None,
+    today: date,
+) -> tuple[Decimal, Decimal]:
+    if net_investment <= 0 or not start:
+        return _ZERO, _ZERO
+    days = max(((end or today) - start).days, 0)
+    return net_investment * Decimal(days), net_investment
 
 
 def build_financial_metrics(
@@ -156,14 +174,10 @@ def build_financial_metrics(
     occupation_amount = _ZERO
     ledger_profit: list[dict] = []
 
-    def add_occupation(net_investment: Decimal, start: date | None, end: date | None) -> None:
+    def add_occupation(weight: Decimal, amount: Decimal) -> None:
         nonlocal occupation_weight, occupation_amount
-        if net_investment <= 0 or not start:
-            return
-        finish = end or today
-        days = max((finish - start).days, 0)
-        occupation_weight += net_investment * Decimal(days)
-        occupation_amount += net_investment
+        occupation_weight += weight
+        occupation_amount += amount
 
     for row in ticket_rows:
         payment = decimal_value(row.payment_amount)
@@ -172,10 +186,14 @@ def build_financial_metrics(
         total_invested += net_investment
         total_realized += decimal_value(row.jinying_amount)
         total_gross += decimal_value(row.service_fee)
-        add_occupation(net_investment, row.pay_date, row.repay_date)
+        row_occupation_weight, row_occupation_amount = occupation_values(
+            net_investment, row.pay_date, row.repay_date, today,
+        )
+        add_occupation(row_occupation_weight, row_occupation_amount)
         ledger_profit.append(_profit_point(
             row.scenic_id, "ticket", row, decimal_value(row.service_fee),
-            decimal_value(row.jinying_amount),
+            decimal_value(row.jinying_amount), net_investment,
+            row_occupation_weight, row_occupation_amount,
         ))
 
     hotel_groups: dict[tuple[str, str], list[HotelLedger]] = defaultdict(list)
@@ -192,11 +210,15 @@ def build_financial_metrics(
         total_invested += net_investment
         payment_date = next((row.payment_date for row in rows if row.payment_date), None)
         repay_date = next((row.repay_date for row in rows if row.repay_date), None)
-        add_occupation(net_investment, payment_date, repay_date)
+        period_occupation_weight, period_occupation_amount = occupation_values(
+            net_investment, payment_date, repay_date, today,
+        )
+        add_occupation(period_occupation_weight, period_occupation_amount)
         total_fee = sum((decimal_value(row.service_fee) for row in rows), _ZERO)
         realized = sum((decimal_value(row.jinying_amount) for row in rows), _ZERO)
         ledger_profit.append(_profit_point(
-            scenic_id, "hotel", representative, total_fee, realized,
+            scenic_id, "hotel", representative, total_fee, realized, net_investment,
+            period_occupation_weight, period_occupation_amount,
         ))
 
     ledger_profit.sort(key=lambda item: (

@@ -48,6 +48,10 @@ class ScenicAnalyticsTest(unittest.TestCase):
         result = aggregate_rows([], hotels, date(2026, 7, 1), date(2026, 7, 31))[0]
         self.assertEqual(result.existing_scale, Decimal("900"))
         self.assertEqual(result.hotel_total, Decimal("900"))
+        point = build_financial_metrics([], hotels)["ledger_profit"][0]
+        self.assertEqual(point["existing_scale"], Decimal("900"))
+        self.assertEqual(point["occupation_amount"], Decimal("0"))
+        self.assertEqual(point["occupation_weight"], Decimal("0"))
 
     def test_dashboard_primitives_preserve_undated_rows(self):
         rows = [TicketLedger(scenic_id="zunyi-zoo", jinying_amount=Decimal("50"))]
