@@ -3,11 +3,12 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from pydantic import ValidationError
+from sqlalchemy.exc import OperationalError
 
 from app.api.v1.endpoints import scenic as scenic_endpoint
 from app.models.scenic_config import ScenicConfig
 from app.schemas.scenic_config import HotelScenicConfigUpdate, ScenicConfigUpdate
-from app.services.scenic_config import get_effective_config
+from app.services.scenic_config import get_effective_config, list_effective_configs
 
 
 class _ConfigSession:
@@ -25,6 +26,22 @@ class _ConfigSession:
 
     def refresh(self, _row):
         return None
+
+
+class _MissingMigrationSession:
+    @staticmethod
+    def _error():
+        return OperationalError(
+            "SELECT biz_scenic_config.hotel_rate_hexiao",
+            {},
+            Exception("Unknown column 'hotel_rate_hexiao'"),
+        )
+
+    def get(self, _model, _scenic_id):
+        raise self._error()
+
+    def scalars(self, _statement):
+        raise self._error()
 
 
 class ScenicConfigTest(unittest.TestCase):
@@ -64,6 +81,50 @@ class ScenicConfigTest(unittest.TestCase):
         self.assertEqual(config.hotel_fee_per_night, Decimal("44"))
         self.assertEqual(config.hotel_fee_algo, 1)
         self.assertEqual(config.hotel_platforms, ("抖音", "美团", "携程"))
+
+    def test_config_list_endpoint_falls_back_when_hotel_columns_are_missing(self):
+        response = scenic_endpoint.get_configs(_MissingMigrationSession(), None)
+        configs = response.data
+
+        self.assertEqual(
+            [config.scenic_id for config in configs],
+            [
+                "quancheng-ouleb",
+                "quanzhou-ouleb",
+                "fuzhou-ouleb",
+                "zunyi-zoo",
+                "nanyang-wildlife",
+                "guanquelou",
+            ],
+        )
+        fuzhou = configs[2]
+        self.assertFalse(fuzhou.configured)
+        self.assertEqual(fuzhou.hotel_rate_hexiao, Decimal("0.90"))
+        self.assertEqual(fuzhou.hotel_platforms, ("抖音", "美团", "携程"))
+
+    def test_list_does_not_hide_non_database_errors(self):
+        db = SimpleNamespace(
+            scalars=lambda _statement: (_ for _ in ()).throw(RuntimeError("programming bug"))
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "programming bug"):
+            list_effective_configs(db)
+
+    def test_hotel_update_does_not_hide_missing_migration_error(self):
+        payload = HotelScenicConfigUpdate(
+            default_hotel_name="郑和海洋酒店",
+            hotel_rate_hexiao=Decimal("0.82"),
+            hotel_rate_settle=Decimal("0.93"),
+            hotel_commission_rate=Decimal("0.05"),
+            hotel_fee_per_night=Decimal("52"),
+            hotel_fee_algo=2,
+            hotel_platforms=["抖音", "携程"],
+        )
+
+        with self.assertRaises(OperationalError):
+            scenic_endpoint.update_hotel_config(
+                "fuzhou-ouleb", payload, _MissingMigrationSession(), SimpleNamespace(id=7)
+            )
 
     def test_hotel_update_schema_normalizes_name_and_platforms(self):
         payload = HotelScenicConfigUpdate(

@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.scenic_config import ScenicConfig
@@ -142,13 +143,18 @@ def get_effective_config(db: Session | None, scenic_id: str) -> EffectiveScenicC
             row = db.get(ScenicConfig, scenic_id)
             if row is not None:
                 return _from_model(row)
-        except Exception:  # noqa: BLE001 - 迁移未执行时仍允许只读解析兜底
+        except Exception:  # noqa: BLE001 - 兼容迁移前数据库与无 get() 的只读解析会话
             pass
     return _seed_config(scenic_id)
 
 
 def list_effective_configs(db: Session) -> list[EffectiveScenicConfig]:
-    rows = db.scalars(select(ScenicConfig).order_by(ScenicConfig.sort_order, ScenicConfig.scenic_id)).all()
+    try:
+        rows = db.scalars(
+            select(ScenicConfig).order_by(ScenicConfig.sort_order, ScenicConfig.scenic_id)
+        ).all()
+    except SQLAlchemyError:
+        rows = []
     by_id = {row.scenic_id: _from_model(row) for row in rows}
     for seed in SCENIC_SEEDS:
         by_id.setdefault(seed[0], _seed_config(seed[0]))
