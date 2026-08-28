@@ -267,10 +267,11 @@ def daily_defaults(
     commission_rate: Decimal,
     scenic_id: str,
     fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
+    fee_algo: int = 1,
 ) -> dict:
-    """解析时的按日精准默认值（算法1；佣金取逐日自动值）。"""
+    """解析时按酒店配置计算逐日精准默认值。"""
     res = recompute_from_days(platform, _days_from_daily(daily), rate_hexiao,
-                              rate_settle, fee_per_night, 1, None, None,
+                              rate_settle, fee_per_night, fee_algo, None, None,
                               commission_rate, scenic_id)
     if res is None:
         return {"commission": Decimal("0"), "hexiao": Decimal("0"),
@@ -287,6 +288,8 @@ def parse_hotel_file(
     rate_hexiao: Decimal,
     rate_settle: Decimal,
     commission_rate: Decimal,
+    fee_per_night: Decimal = DEFAULT_FEE_PER_NIGHT,
+    fee_algo: int = 1,
 ) -> dict:
     """解析一份酒店对账明细，按平台聚合。**按日期分组 → 逐日计算舍入 → 累加**。"""
     wb = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
@@ -402,6 +405,8 @@ def parse_hotel_file(
             rate_settle=rate_settle,
             commission_rate=commission_rate,
             scenic_id=scenic_id,
+            fee_per_night=fee_per_night,
+            fee_algo=fee_algo,
         )
         p_text = ""
         if d["pstart"] and d["pend"]:
@@ -420,6 +425,8 @@ def parse_hotel_file(
             "commission_rate": commission_rate,
             "rate_hexiao": rate_hexiao,
             "rate_settle": rate_settle,
+            "fee_per_night": fee_per_night,
+            "fee_algo": fee_algo,
             "def_hexiao": defs["hexiao"],
             "def_service_fee": defs["service_fee"],
             "def_jinying": defs["jinying"],

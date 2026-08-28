@@ -99,6 +99,13 @@ class HotelScenicConfigTest(unittest.TestCase):
             ticket_rate_settle=Decimal("0.95"),
             ticket_commission_rate=Decimal("0.08"),
             ticket_default_commission=None,
+            default_hotel_name="郑和海洋酒店",
+            hotel_rate_hexiao=Decimal("0.82"),
+            hotel_rate_settle=Decimal("0.93"),
+            hotel_commission_rate=Decimal("0.05"),
+            hotel_fee_per_night=Decimal("52"),
+            hotel_fee_algo=2,
+            hotel_platforms="抖音,美团,携程",
             updated_by=1,
             updated_at=None,
         )
@@ -118,11 +125,16 @@ class HotelScenicConfigTest(unittest.TestCase):
                 ))
 
         douyin = response.data.platforms[0]
-        self.assertEqual(douyin.suggested_commission, Decimal("3.00"))
-        self.assertEqual(douyin.def_hexiao, Decimal("80.08"))
-        self.assertEqual(douyin.rate_hexiao, Decimal("0.91"))
-        self.assertEqual(douyin.rate_settle, Decimal("0.95"))
-        self.assertEqual(douyin.commission_rate, Decimal("0.08"))
+        self.assertEqual(douyin.suggested_commission, Decimal("0.00"))
+        self.assertEqual(douyin.def_hexiao, Decimal("74.62"))
+        self.assertEqual(douyin.def_service_fee, Decimal("10.01"))
+        self.assertEqual(douyin.def_jinying, Decimal("84.63"))
+        self.assertEqual(douyin.rate_hexiao, Decimal("0.82"))
+        self.assertEqual(douyin.rate_settle, Decimal("0.93"))
+        self.assertEqual(douyin.commission_rate, Decimal("0.05"))
+        self.assertEqual(douyin.hotel_name, "郑和海洋酒店")
+        self.assertEqual(douyin.fee_per_night, Decimal("52"))
+        self.assertEqual(douyin.fee_algo, 2)
 
     @staticmethod
     def _fuzhou_config():
@@ -130,13 +142,19 @@ class HotelScenicConfigTest(unittest.TestCase):
             ticket_rate_hexiao=Decimal("0.91"),
             ticket_rate_settle=Decimal("0.95"),
             ticket_commission_rate=Decimal("0.08"),
+            default_hotel_name="郑和海洋酒店",
+            hotel_rate_hexiao=Decimal("0.82"),
+            hotel_rate_settle=Decimal("0.93"),
+            hotel_commission_rate=Decimal("0.05"),
+            hotel_fee_per_night=Decimal("52"),
+            hotel_fee_algo=2,
+            hotel_platforms=("抖音", "美团", "携程"),
         )
 
     def test_save_uses_current_scenic_config_when_legacy_client_omits_rates(self):
         session = _SaveSession()
         payload = HotelSaveIn(rows=[HotelSaveRow(
             platform="抖音",
-            hotel_name="测试酒店",
             base_received=Decimal("100"),
         )])
 
@@ -153,9 +171,12 @@ class HotelScenicConfigTest(unittest.TestCase):
             )
 
         saved = session.rows[0]
-        self.assertEqual(saved.rate_hexiao, Decimal("0.91"))
-        self.assertEqual(saved.rate_settle, Decimal("0.95"))
-        self.assertEqual(saved.commission_rate, Decimal("0.08"))
+        self.assertEqual(saved.hotel_name, "郑和海洋酒店")
+        self.assertEqual(saved.rate_hexiao, Decimal("0.82"))
+        self.assertEqual(saved.rate_settle, Decimal("0.93"))
+        self.assertEqual(saved.commission_rate, Decimal("0.05"))
+        self.assertEqual(saved.fee_per_night, Decimal("52"))
+        self.assertEqual(saved.fee_algo, 2)
 
     def test_save_preserves_explicit_historical_rate_snapshot(self):
         session = _SaveSession()
@@ -166,6 +187,8 @@ class HotelScenicConfigTest(unittest.TestCase):
             rate_hexiao=Decimal("0.80"),
             rate_settle=Decimal("0.85"),
             commission_rate=Decimal("0"),
+            fee_per_night=Decimal("38"),
+            fee_algo=1,
         )])
 
         with patch.object(
@@ -184,6 +207,39 @@ class HotelScenicConfigTest(unittest.TestCase):
         self.assertEqual(saved.rate_hexiao, Decimal("0.80"))
         self.assertEqual(saved.rate_settle, Decimal("0.85"))
         self.assertEqual(saved.commission_rate, Decimal("0"))
+        self.assertEqual(saved.fee_per_night, Decimal("38"))
+        self.assertEqual(saved.fee_algo, 1)
+        self.assertEqual(saved.hotel_name, "测试酒店")
+
+    def test_parse_filters_disabled_platforms_with_warning(self):
+        config = self._fuzhou_config()
+        config.hotel_platforms = ("抖音",)
+        parsed = {
+            "platforms": [
+                {
+                    "platform": "抖音", "hotel_name": "", "commission_rate": Decimal("0.05"),
+                    "rate_hexiao": Decimal("0.82"), "rate_settle": Decimal("0.93"),
+                },
+                {
+                    "platform": "美团", "hotel_name": "", "commission_rate": Decimal("0.05"),
+                    "rate_hexiao": Decimal("0.82"), "rate_settle": Decimal("0.93"),
+                },
+            ],
+            "warnings": [],
+        }
+        upload = UploadFile(filename="酒店.xlsx", file=BytesIO(b"xlsx"))
+
+        with TemporaryDirectory() as temp_dir, \
+             patch.object(hotel_endpoint, "_detail_dir", return_value=Path(temp_dir)), \
+             patch.object(hotel_endpoint, "get_effective_config", return_value=config), \
+             patch.object(hotel_endpoint.hl_svc, "parse_hotel_file", return_value=parsed):
+            response = asyncio.run(hotel_endpoint.parse_file(
+                scenic_id="fuzhou-ouleb", files=[upload], db=SimpleNamespace(), _=None,
+            ))
+
+        self.assertEqual([item.platform for item in response.data.platforms], ["抖音"])
+        self.assertEqual(response.data.platforms[0].hotel_name, "郑和海洋酒店")
+        self.assertIn("美团", response.data.warnings[0])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ class ParsedPlatform(BaseModel):
     commission_rate: Decimal                         # 本次解析采用的景区配置快照
     rate_hexiao: Decimal
     rate_settle: Decimal
+    fee_per_night: Decimal = Decimal("44.00")
+    fee_algo: int = 1
     # 按日期粒度逐日计算后累加的精准默认值
     def_hexiao: Decimal = Decimal("0")
     def_service_fee: Decimal = Decimal("0")
@@ -41,7 +43,7 @@ class ParseResult(BaseModel):
 
 class HotelSaveRow(BaseModel):
     platform: str = ""
-    hotel_name: str = ""
+    hotel_name: Optional[str] = None
     check_date_text: str = ""
     period_text: str = ""
     period_start: Optional[date] = None
@@ -51,8 +53,8 @@ class HotelSaveRow(BaseModel):
     supplier_commission: Decimal = Decimal("0")
     commission_rate: Optional[Decimal] = None       # 缺省时由保存接口读取景区配置
     rate_hexiao: Optional[Decimal] = None
-    fee_per_night: Decimal = Field(default=Decimal("44.00"))
-    fee_algo: int = 1                                # 服务费算法(1=间夜×每间夜服务费;2=结算−核销)
+    fee_per_night: Optional[Decimal] = Field(default=None, ge=0)
+    fee_algo: Optional[int] = Field(default=None, ge=1, le=2)  # 服务费算法(1=间夜×每间夜服务费;2=结算−核销)
     rate_settle: Optional[Decimal] = None           # 缺省时由保存接口读取景区配置
     jinying_amount: Optional[Decimal] = None        # 结算金额：可手工校准；算法1据此反算核销，算法2据此计算服务费
     payment_date: Optional[date] = None             # 付款日期(手工,每期共享)

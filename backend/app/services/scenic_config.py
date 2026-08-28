@@ -15,6 +15,13 @@ SYSTEM_TICKET_PRODUCT = "水上世界/童话世界/海洋王国"
 SYSTEM_RATE_HEXIAO = Decimal("0.90")
 SYSTEM_RATE_SETTLE = Decimal("0.94")
 SYSTEM_COMMISSION_RATE = Decimal("0.06")
+SYSTEM_HOTEL_NAME = "郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店"
+SYSTEM_HOTEL_RATE_HEXIAO = Decimal("0.90")
+SYSTEM_HOTEL_RATE_SETTLE = Decimal("0.94")
+SYSTEM_HOTEL_COMMISSION_RATE = Decimal("0.06")
+SYSTEM_HOTEL_FEE_PER_NIGHT = Decimal("44")
+SYSTEM_HOTEL_FEE_ALGO = 1
+SYSTEM_HOTEL_PLATFORMS = ("抖音", "美团", "携程")
 
 SCENIC_SEEDS = (
     ("quancheng-ouleb", "泉城欧乐堡", 10, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
@@ -36,6 +43,13 @@ class EffectiveScenicConfig:
     ticket_rate_settle: Decimal
     ticket_commission_rate: Decimal
     ticket_default_commission: Decimal | None
+    default_hotel_name: str
+    hotel_rate_hexiao: Decimal
+    hotel_rate_settle: Decimal
+    hotel_commission_rate: Decimal
+    hotel_fee_per_night: Decimal
+    hotel_fee_algo: int
+    hotel_platforms: tuple[str, ...]
     configured: bool
     updated_by: int | None = None
     updated_at: datetime | None = None
@@ -53,6 +67,13 @@ def _seed_config(scenic_id: str) -> EffectiveScenicConfig:
             ticket_rate_settle=SYSTEM_RATE_SETTLE,
             ticket_commission_rate=SYSTEM_COMMISSION_RATE,
             ticket_default_commission=None,
+            default_hotel_name=SYSTEM_HOTEL_NAME,
+            hotel_rate_hexiao=SYSTEM_HOTEL_RATE_HEXIAO,
+            hotel_rate_settle=SYSTEM_HOTEL_RATE_SETTLE,
+            hotel_commission_rate=SYSTEM_HOTEL_COMMISSION_RATE,
+            hotel_fee_per_night=SYSTEM_HOTEL_FEE_PER_NIGHT,
+            hotel_fee_algo=SYSTEM_HOTEL_FEE_ALGO,
+            hotel_platforms=SYSTEM_HOTEL_PLATFORMS,
             configured=False,
         )
     sid, name, order, product, hexiao, settle, commission_rate, commission = seed
@@ -65,8 +86,30 @@ def _seed_config(scenic_id: str) -> EffectiveScenicConfig:
         ticket_rate_settle=Decimal(settle),
         ticket_commission_rate=Decimal(commission_rate),
         ticket_default_commission=Decimal(commission) if commission is not None else None,
+        default_hotel_name=SYSTEM_HOTEL_NAME,
+        hotel_rate_hexiao=SYSTEM_HOTEL_RATE_HEXIAO,
+        hotel_rate_settle=SYSTEM_HOTEL_RATE_SETTLE,
+        hotel_commission_rate=SYSTEM_HOTEL_COMMISSION_RATE,
+        hotel_fee_per_night=SYSTEM_HOTEL_FEE_PER_NIGHT,
+        hotel_fee_algo=SYSTEM_HOTEL_FEE_ALGO,
+        hotel_platforms=SYSTEM_HOTEL_PLATFORMS,
         configured=False,
     )
+
+
+def parse_hotel_platforms(value: str) -> tuple[str, ...]:
+    platforms = tuple(
+        dict.fromkeys(
+            platform.strip()
+            for platform in (value or "").split(",")
+            if platform.strip() in SYSTEM_HOTEL_PLATFORMS
+        )
+    )
+    return platforms or SYSTEM_HOTEL_PLATFORMS
+
+
+def serialize_hotel_platforms(platforms: tuple[str, ...]) -> str:
+    return ",".join(platforms)
 
 
 def _from_model(row: ScenicConfig) -> EffectiveScenicConfig:
@@ -79,6 +122,13 @@ def _from_model(row: ScenicConfig) -> EffectiveScenicConfig:
         ticket_rate_settle=row.ticket_rate_settle,
         ticket_commission_rate=row.ticket_commission_rate,
         ticket_default_commission=row.ticket_default_commission,
+        default_hotel_name=row.default_hotel_name,
+        hotel_rate_hexiao=row.hotel_rate_hexiao,
+        hotel_rate_settle=row.hotel_rate_settle,
+        hotel_commission_rate=row.hotel_commission_rate,
+        hotel_fee_per_night=row.hotel_fee_per_night,
+        hotel_fee_algo=row.hotel_fee_algo,
+        hotel_platforms=parse_hotel_platforms(row.hotel_platforms),
         configured=True,
         updated_by=row.updated_by,
         updated_at=row.updated_at,

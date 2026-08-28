@@ -21,7 +21,11 @@ from app.models.scenic_config import ScenicConfig
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.scenic import ScenicLedgerOut, ScenicLedgerRow, ScenicUploadResult
-from app.schemas.scenic_config import ScenicConfigOut, ScenicConfigUpdate
+from app.schemas.scenic_config import (
+    HotelScenicConfigUpdate,
+    ScenicConfigOut,
+    ScenicConfigUpdate,
+)
 from app.services import scenic_config as scenic_config_svc
 from app.services.scenic_analytics import ScenicAnalyticsService
 from app.services.assignment_permissions import PermissionContext
@@ -107,6 +111,13 @@ def _config_out(config) -> ScenicConfigOut:
         ticket_rate_settle=config.ticket_rate_settle,
         ticket_commission_rate=config.ticket_commission_rate,
         ticket_default_commission=config.ticket_default_commission,
+        default_hotel_name=config.default_hotel_name,
+        hotel_rate_hexiao=config.hotel_rate_hexiao,
+        hotel_rate_settle=config.hotel_rate_settle,
+        hotel_commission_rate=config.hotel_commission_rate,
+        hotel_fee_per_night=config.hotel_fee_per_night,
+        hotel_fee_algo=config.hotel_fee_algo,
+        hotel_platforms=config.hotel_platforms,
         configured=config.configured,
         updated_by=config.updated_by,
         updated_at=config.updated_at,
@@ -136,6 +147,27 @@ def get_config(
     return Response.ok(_config_out(scenic_config_svc.get_effective_config(db, sid)))
 
 
+def _new_config_from_fallback(sid: str) -> ScenicConfig:
+    fallback = scenic_config_svc.get_effective_config(None, sid)
+    return ScenicConfig(
+        scenic_id=sid,
+        scenic_name=fallback.scenic_name,
+        sort_order=fallback.sort_order,
+        default_ticket_product=fallback.default_ticket_product,
+        ticket_rate_hexiao=fallback.ticket_rate_hexiao,
+        ticket_rate_settle=fallback.ticket_rate_settle,
+        ticket_commission_rate=fallback.ticket_commission_rate,
+        ticket_default_commission=fallback.ticket_default_commission,
+        default_hotel_name=fallback.default_hotel_name,
+        hotel_rate_hexiao=fallback.hotel_rate_hexiao,
+        hotel_rate_settle=fallback.hotel_rate_settle,
+        hotel_commission_rate=fallback.hotel_commission_rate,
+        hotel_fee_per_night=fallback.hotel_fee_per_night,
+        hotel_fee_algo=fallback.hotel_fee_algo,
+        hotel_platforms=scenic_config_svc.serialize_hotel_platforms(fallback.hotel_platforms),
+    )
+
+
 @router.put(
     "/{scenic_id}/config",
     response_model=Response[ScenicConfigOut],
@@ -150,17 +182,7 @@ def update_config(
     sid = _valid_scenic_id(scenic_id)
     row = db.get(ScenicConfig, sid)
     if row is None:
-        fallback = scenic_config_svc.get_effective_config(None, sid)
-        row = ScenicConfig(
-            scenic_id=sid,
-            scenic_name=fallback.scenic_name,
-            sort_order=fallback.sort_order,
-            default_ticket_product=fallback.default_ticket_product,
-            ticket_rate_hexiao=fallback.ticket_rate_hexiao,
-            ticket_rate_settle=fallback.ticket_rate_settle,
-            ticket_commission_rate=fallback.ticket_commission_rate,
-            ticket_default_commission=fallback.ticket_default_commission,
-        )
+        row = _new_config_from_fallback(sid)
         db.add(row)
     row.default_ticket_product = payload.default_ticket_product
     row.ticket_rate_hexiao = payload.ticket_rate_hexiao
@@ -173,6 +195,38 @@ def update_config(
     return Response.ok(
         _config_out(scenic_config_svc.get_effective_config(db, sid)),
         message="景区配置已保存，后续新解析将使用最新值",
+    )
+
+
+@router.put(
+    "/{scenic_id}/hotel-config",
+    response_model=Response[ScenicConfigOut],
+    summary="修改景区酒店默认配置",
+)
+def update_hotel_config(
+    scenic_id: str,
+    payload: HotelScenicConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_update_guard),
+):
+    sid = _valid_scenic_id(scenic_id)
+    row = db.get(ScenicConfig, sid)
+    if row is None:
+        row = _new_config_from_fallback(sid)
+        db.add(row)
+    row.default_hotel_name = payload.default_hotel_name
+    row.hotel_rate_hexiao = payload.hotel_rate_hexiao
+    row.hotel_rate_settle = payload.hotel_rate_settle
+    row.hotel_commission_rate = payload.hotel_commission_rate
+    row.hotel_fee_per_night = payload.hotel_fee_per_night
+    row.hotel_fee_algo = payload.hotel_fee_algo
+    row.hotel_platforms = scenic_config_svc.serialize_hotel_platforms(payload.hotel_platforms)
+    row.updated_by = current_user.id
+    db.commit()
+    db.refresh(row)
+    return Response.ok(
+        _config_out(scenic_config_svc.get_effective_config(db, sid)),
+        message="景区酒店配置已保存，后续新解析将使用最新值",
     )
 
 

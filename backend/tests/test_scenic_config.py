@@ -2,9 +2,29 @@ import unittest
 from decimal import Decimal
 from types import SimpleNamespace
 
+from pydantic import ValidationError
+
+from app.api.v1.endpoints import scenic as scenic_endpoint
 from app.models.scenic_config import ScenicConfig
-from app.schemas.scenic_config import ScenicConfigUpdate
+from app.schemas.scenic_config import HotelScenicConfigUpdate, ScenicConfigUpdate
 from app.services.scenic_config import get_effective_config
+
+
+class _ConfigSession:
+    def __init__(self):
+        self.row = None
+
+    def get(self, _model, _scenic_id):
+        return self.row
+
+    def add(self, row):
+        self.row = row
+
+    def commit(self):
+        return None
+
+    def refresh(self, _row):
+        return None
 
 
 class ScenicConfigTest(unittest.TestCase):
@@ -34,6 +54,65 @@ class ScenicConfigTest(unittest.TestCase):
         self.assertEqual(nanyang.ticket_rate_hexiao, Decimal("0.80"))
         self.assertEqual(nanyang.ticket_rate_settle, Decimal("0.85"))
 
+    def test_hotel_defaults_are_independent_from_ticket_defaults(self):
+        config = get_effective_config(None, "fuzhou-ouleb")
+
+        self.assertEqual(config.ticket_rate_hexiao, Decimal("0.91"))
+        self.assertEqual(config.hotel_rate_hexiao, Decimal("0.90"))
+        self.assertEqual(config.hotel_rate_settle, Decimal("0.94"))
+        self.assertEqual(config.hotel_commission_rate, Decimal("0.06"))
+        self.assertEqual(config.hotel_fee_per_night, Decimal("44"))
+        self.assertEqual(config.hotel_fee_algo, 1)
+        self.assertEqual(config.hotel_platforms, ("抖音", "美团", "携程"))
+
+    def test_hotel_update_schema_normalizes_name_and_platforms(self):
+        payload = HotelScenicConfigUpdate(
+            default_hotel_name="  郑和海洋酒店  ",
+            hotel_rate_hexiao=Decimal("0.82"),
+            hotel_rate_settle=Decimal("0.93"),
+            hotel_commission_rate=Decimal("0.05"),
+            hotel_fee_per_night=Decimal("52"),
+            hotel_fee_algo=2,
+            hotel_platforms=[" 抖音 ", "携程"],
+        )
+
+        self.assertEqual(payload.default_hotel_name, "郑和海洋酒店")
+        self.assertEqual(payload.hotel_platforms, ("抖音", "携程"))
+
+        for platforms in ([], ["抖音", "抖音"], ["同程"]):
+            with self.subTest(platforms=platforms), self.assertRaises(ValidationError):
+                HotelScenicConfigUpdate(
+                    default_hotel_name="郑和海洋酒店",
+                    hotel_rate_hexiao=Decimal("0.82"),
+                    hotel_rate_settle=Decimal("0.93"),
+                    hotel_commission_rate=Decimal("0.05"),
+                    hotel_fee_per_night=Decimal("52"),
+                    hotel_fee_algo=2,
+                    hotel_platforms=platforms,
+                )
+
+    def test_hotel_update_endpoint_creates_complete_independent_config(self):
+        db = _ConfigSession()
+        payload = HotelScenicConfigUpdate(
+            default_hotel_name="郑和海洋酒店",
+            hotel_rate_hexiao=Decimal("0.82"),
+            hotel_rate_settle=Decimal("0.93"),
+            hotel_commission_rate=Decimal("0.05"),
+            hotel_fee_per_night=Decimal("52"),
+            hotel_fee_algo=2,
+            hotel_platforms=["抖音", "携程"],
+        )
+
+        response = scenic_endpoint.update_hotel_config(
+            "fuzhou-ouleb", payload, db, SimpleNamespace(id=7)
+        )
+
+        self.assertEqual(db.row.ticket_rate_hexiao, Decimal("0.91"))
+        self.assertEqual(db.row.hotel_rate_hexiao, Decimal("0.82"))
+        self.assertEqual(db.row.hotel_platforms, "抖音,携程")
+        self.assertEqual(response.data.hotel_platforms, ("抖音", "携程"))
+        self.assertEqual(response.data.updated_by, 7)
+
     def test_update_schema_strips_ticket_product(self):
         payload = ScenicConfigUpdate(
             default_ticket_product="  遵义动物园  ",
@@ -54,6 +133,13 @@ class ScenicConfigTest(unittest.TestCase):
             ticket_rate_settle=Decimal("0.86"),
             ticket_commission_rate=Decimal("0.01"),
             ticket_default_commission=Decimal("10"),
+            default_hotel_name="测试酒店",
+            hotel_rate_hexiao=Decimal("0.81"),
+            hotel_rate_settle=Decimal("0.92"),
+            hotel_commission_rate=Decimal("0.04"),
+            hotel_fee_per_night=Decimal("50"),
+            hotel_fee_algo=2,
+            hotel_platforms="抖音,携程",
             updated_by=7,
             updated_at=None,
         )
@@ -66,6 +152,9 @@ class ScenicConfigTest(unittest.TestCase):
         self.assertEqual(config.ticket_rate_settle, Decimal("0.86"))
         self.assertEqual(config.ticket_commission_rate, Decimal("0.01"))
         self.assertEqual(config.ticket_default_commission, Decimal("10"))
+        self.assertEqual(config.default_hotel_name, "测试酒店")
+        self.assertEqual(config.hotel_rate_hexiao, Decimal("0.81"))
+        self.assertEqual(config.hotel_platforms, ("抖音", "携程"))
 
 
 if __name__ == "__main__":

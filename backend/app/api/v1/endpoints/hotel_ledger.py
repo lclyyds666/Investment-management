@@ -399,23 +399,41 @@ async def parse_file(
                 content,
                 fname,
                 scenic_id=sid,
-                rate_hexiao=config.ticket_rate_hexiao,
-                rate_settle=config.ticket_rate_settle,
-                commission_rate=config.ticket_commission_rate,
+                rate_hexiao=config.hotel_rate_hexiao,
+                rate_settle=config.hotel_rate_settle,
+                commission_rate=config.hotel_commission_rate,
+                fee_per_night=config.hotel_fee_per_night,
+                fee_algo=config.hotel_fee_algo,
             )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"解析失败：{exc}")
     finally:
         del content
 
-    platforms = [ParsedPlatform(**p) for p in info["platforms"]]
+    enabled_platforms = set(config.hotel_platforms)
+    platform_rows = []
+    disabled_platforms = []
+    for platform_row in info["platforms"]:
+        if platform_row.get("platform") not in enabled_platforms:
+            disabled_platforms.append(platform_row.get("platform") or "未知平台")
+            continue
+        platform_rows.append({
+            **platform_row,
+            "hotel_name": platform_row.get("hotel_name") or config.default_hotel_name,
+            "fee_per_night": config.hotel_fee_per_night,
+            "fee_algo": config.hotel_fee_algo,
+        })
+    warnings = list(info.get("warnings", []))
+    for platform in dict.fromkeys(disabled_platforms):
+        warnings.append(f"{platform}：未在当前景区酒店配置中启用，已忽略")
+    platforms = [ParsedPlatform(**platform_row) for platform_row in platform_rows]
     if not platforms:
-        raise HTTPException(status_code=400, detail="未识别到抖音/美团/携程任一平台的明细数据")
+        raise HTTPException(status_code=400, detail="未识别到已启用的酒店平台明细数据")
     return Response.ok(
         ParseResult(
             scenic_id=sid, source_file=fname,
             detail_stored=detail_stored, detail_name=fname,
-            platforms=platforms, warnings=info["warnings"],
+            platforms=platforms, warnings=warnings,
         ),
         message=f"解析完成：本期识别 {len(platforms)} 个平台",
     )
@@ -463,31 +481,37 @@ def save_ledger(
         ) or 0
 
     for i, r in enumerate(payload.rows, start=1):
-        rate_hexiao = r.rate_hexiao if r.rate_hexiao is not None else config.ticket_rate_hexiao
-        rate_settle = r.rate_settle if r.rate_settle is not None else config.ticket_rate_settle
+        rate_hexiao = r.rate_hexiao if r.rate_hexiao is not None else config.hotel_rate_hexiao
+        rate_settle = r.rate_settle if r.rate_settle is not None else config.hotel_rate_settle
         commission_rate = (
             r.commission_rate
             if r.commission_rate is not None
-            else config.ticket_commission_rate
+            else config.hotel_commission_rate
         )
+        fee_per_night = (
+            r.fee_per_night
+            if r.fee_per_night is not None
+            else config.hotel_fee_per_night
+        )
+        fee_algo = r.fee_algo if r.fee_algo is not None else config.hotel_fee_algo
         # 逐日重算：有逐日明细则按天累加，否则回退期级公式
         calc = hl_svc.recompute_from_json(
             r.platform, r.daily_json, rate_hexiao, rate_settle,
-            r.fee_per_night, r.fee_algo, r.supplier_commission, r.room_nights,
+            fee_per_night, fee_algo, r.supplier_commission, r.room_nights,
             commission_rate, sid,
         ) or hl_svc.compute_row(
             r.platform, r.base_received, r.supplier_commission,
-            r.room_nights, rate_hexiao, r.fee_per_night, r.fee_algo, rate_settle,
+            r.room_nights, rate_hexiao, fee_per_night, fee_algo, rate_settle,
             scenic_id=sid,
         )
         hexiao_val = calc["hexiao_amount"]
         # 算法1：服务费固定为「间夜×每间夜服务费」；手工校准结算金额时反算核销金额。
         # 算法2：结算金额可编辑；显式覆盖后，服务费=结算−核销。
-        if int(r.fee_algo or 1) == 1 and r.jinying_amount is not None:
+        if fee_algo == 1 and r.jinying_amount is not None:
             jinying_val = r.jinying_amount
             fee_val = calc["service_fee"]
             hexiao_val = jinying_val - fee_val
-        elif int(r.fee_algo or 1) == 2 and r.jinying_amount is not None:
+        elif fee_algo == 2 and r.jinying_amount is not None:
             jinying_val = r.jinying_amount
             fee_val = r.jinying_amount - calc["hexiao_amount"]
         else:
@@ -495,7 +519,8 @@ def save_ledger(
             fee_val = calc["service_fee"]
         db.add(HotelLedger(
             scenic_id=sid, row_no=base_no + i,
-            platform=r.platform or "", hotel_name=r.hotel_name or "",
+            platform=r.platform or "",
+            hotel_name=(r.hotel_name if r.hotel_name is not None else config.default_hotel_name),
             check_date_text=r.check_date_text or "", period_text=r.period_text or "",
             period_start=r.period_start, period_end=r.period_end,
             room_nights=r.room_nights or 0,
@@ -505,8 +530,8 @@ def save_ledger(
             settle_base=calc["settle_base"],
             rate_hexiao=rate_hexiao,
             hexiao_amount=hexiao_val,
-            fee_algo=r.fee_algo or 1,
-            fee_per_night=r.fee_per_night,
+            fee_algo=fee_algo,
+            fee_per_night=fee_per_night,
             rate_settle=rate_settle,
             service_fee=fee_val,
             jinying_amount=jinying_val,
