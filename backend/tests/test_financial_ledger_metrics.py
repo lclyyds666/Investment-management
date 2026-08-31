@@ -94,6 +94,20 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
         self.assertEqual(hotel_points[0]["service_fee"], Decimal("500"))
         self.assertEqual(hotel_points[0]["realized_amount"], Decimal("2200"))
 
+        ticket_point = next(
+            point for point in result["ledger_profit"]
+            if point["scenic_id"] == "quancheng-ouleb"
+            and point["business_type"] == "ticket"
+        )
+        self.assertEqual(ticket_point["existing_scale"], Decimal("800"))
+        self.assertEqual(ticket_point["occupation_amount"], Decimal("800"))
+        self.assertEqual(ticket_point["occupation_weight"], Decimal("8000"))
+
+        hotel_point = hotel_points[0]
+        self.assertEqual(hotel_point["existing_scale"], Decimal("1500"))
+        self.assertEqual(hotel_point["occupation_amount"], Decimal("1500"))
+        self.assertEqual(hotel_point["occupation_weight"], Decimal("30000"))
+
     def test_cross_month_period_belongs_to_end_month(self):
         tickets = [
             TicketLedger(
@@ -144,6 +158,32 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
                 "ledger_profit",
                 "available_years",
                 "scenic_ids",
+            },
+        )
+
+        point = FinancialDashboard.model_validate({
+            **result,
+            "ledger_profit": [{
+                "scenic_id": "quancheng-ouleb",
+                "business_type": "ticket",
+                "period": "1月",
+                "period_key": "2026-01",
+            }],
+        }).model_dump()["ledger_profit"][0]
+        self.assertEqual(
+            set(point),
+            {
+                "scenic_id",
+                "business_type",
+                "period",
+                "period_key",
+                "year",
+                "month",
+                "service_fee",
+                "realized_amount",
+                "existing_scale",
+                "occupation_weight",
+                "occupation_amount",
             },
         )
 

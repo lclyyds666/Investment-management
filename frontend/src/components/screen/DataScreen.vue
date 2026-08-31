@@ -71,7 +71,7 @@
                 <div class="metric-value" :style="{ color: metric.color }">
                   <CountTo :value="metric.value" :decimals="2" prefix="¥" />
                 </div>
-                <div class="metric-unit">人民币 · 元</div>
+                <div class="metric-unit">人民币 · 万元</div>
               </div>
             </article>
           </div>
@@ -99,6 +99,7 @@ import CountTo from '@/components/screen/CountTo.vue'
 import ScreenMap from '@/components/screen/ScreenMap.vue'
 import { getFinancial } from '@/api/operation'
 import { getScenicById, scenicSpots } from '@/constants/scenic'
+import { yuanToWan } from '@/utils/money'
 import { chartVisualTokens as visual } from '@/utils/visualTokens'
 
 const props = defineProps({
@@ -193,13 +194,13 @@ function resetNational() {
 const metricCards = computed(() => {
   if (mode.value === 'region') {
     return [
-      { label: '营收', value: selectedProvince.value.revenue, color: visual.screenSecondary, code: '营' },
-      { label: '区域利润', value: selectedProvince.value.profit, color: visual.screenAccent, code: '利' }
+      { label: '营收', value: yuanToWan(selectedProvince.value.revenue), color: visual.screenSecondary, code: '营' },
+      { label: '区域利润', value: yuanToWan(selectedProvince.value.profit), color: visual.screenAccent, code: '利' }
     ]
   }
   return [
-    { label: '已实现业务规模', value: Number(fin.value.total_realized_scale || 0), color: visual.screenSecondary, code: '规' },
-    { label: '已实现业务毛利润', value: Number(fin.value.total_gross_income || 0), color: visual.screenAccent, code: '毛' }
+    { label: '已实现业务规模', value: yuanToWan(fin.value.total_realized_scale), color: visual.screenSecondary, code: '规' },
+    { label: '已实现业务毛利润', value: yuanToWan(fin.value.total_gross_income), color: visual.screenAccent, code: '毛' }
   ]
 })
 

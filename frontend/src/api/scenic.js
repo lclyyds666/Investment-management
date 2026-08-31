@@ -39,3 +39,11 @@ export function updateScenicConfig(scenicId, payload) {
     payload
   )
 }
+
+/** 修改单个景区酒店默认配置 */
+export function updateHotelScenicConfig(scenicId, payload) {
+  return request.put(
+    `/scenic-spots/${encodeURIComponent(scenicId)}/hotel-config`,
+    payload
+  )
+}

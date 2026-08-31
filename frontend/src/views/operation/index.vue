@@ -66,6 +66,62 @@
       </el-col>
     </el-row>
 
+    <section class="ledger-section mt" data-testid="scenic-operation-ledger">
+      <el-card shadow="never" class="ledger-card">
+        <template #header>
+          <div class="ledger-header">
+            <div>
+              <div class="card-title">景区经营数据台账</div>
+              <div class="ledger-subtitle">按当前年份与景区条件汇总，可与上方经营指标逐项核对</div>
+            </div>
+            <span class="ledger-unit">金额单位：万元 · 占用时长：天</span>
+          </div>
+        </template>
+
+        <div v-if="!sharedFilteredPoints.length" class="ledger-empty-note">
+          当前筛选条件下暂无经营数据，以下景区金额按 0 展示。
+        </div>
+
+        <div class="ledger-table-wrap">
+          <el-table
+            :data="ledgerTableRows"
+            :show-summary="false"
+            :row-class-name="ledgerRowClassName"
+            empty-text="暂无景区经营数据"
+            class="ledger-table"
+          >
+            <el-table-column prop="scenic_name" label="景区" min-width="180" fixed="left" />
+            <el-table-column label="已投入业务规模" min-width="150" align="right">
+              <template #default="{ row }">{{ formatWanFromYuan(row.existing_scale) }}</template>
+            </el-table-column>
+            <el-table-column label="已实现业务规模" min-width="150" align="right">
+              <template #default="{ row }">{{ formatWanFromYuan(row.total_realized_scale) }}</template>
+            </el-table-column>
+            <el-table-column label="已实现业务毛利润" min-width="160" align="right">
+              <template #default="{ row }">{{ formatWanFromYuan(row.total_gross_income) }}</template>
+            </el-table-column>
+            <el-table-column label="资金占用时长" min-width="140" align="right">
+              <template #default="{ row }">{{ formatOccupationDays(row.capital_occupation_days) }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div class="ledger-mobile" aria-label="景区经营数据台账移动版">
+          <article
+            v-for="row in ledgerTableRows" :key="row.scenic_id"
+            class="ledger-mobile-row" :class="{ 'is-total': row.is_total }"
+          >
+            <div class="ledger-mobile-title">{{ row.scenic_name }}</div>
+            <dl class="ledger-mobile-grid">
+              <div><dt>已投入业务规模</dt><dd>{{ formatWanFromYuan(row.existing_scale) }}</dd></div>
+              <div><dt>已实现业务规模</dt><dd>{{ formatWanFromYuan(row.total_realized_scale) }}</dd></div>
+              <div><dt>已实现业务毛利润</dt><dd>{{ formatWanFromYuan(row.total_gross_income) }}</dd></div>
+              <div><dt>资金占用时长</dt><dd>{{ formatOccupationDays(row.capital_occupation_days) }}</dd></div>
+            </dl>
+          </article>
+        </div>
+      </el-card>
+    </section>
   </div>
 </template>
 
@@ -73,7 +129,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import BaseChart from '@/components/BaseChart.vue'
 import { getFinancial } from '@/api/operation'
-import { getScenicById } from '@/constants/scenic'
+import { getScenicById, scenicSpots } from '@/constants/scenic'
+import { formatWanFromYuan, formatWanValue, yuanToWan } from '@/utils/money'
 import { getScenicColor } from '@/utils/scenicColors'
 import { chartVisualTokens } from '@/utils/visualTokens'
 
@@ -87,11 +144,15 @@ const dash = ref({
   available_years: [], scenic_ids: []
 })
 
-const yuan = (v) => '¥' + Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const yearOptions = computed(() => dash.value.available_years || [])
-const scenicOptions = computed(() => (dash.value.scenic_ids || []).map((id) => ({
+const availableScenicIds = computed(() => [...new Set([
+  ...scenicSpots.map((item) => item.id),
+  ...(dash.value.scenic_ids || []),
+  ...(dash.value.ledger_profit || []).map((item) => item.scenic_id).filter(Boolean)
+])])
+const scenicOptions = computed(() => availableScenicIds.value.map((id) => ({
   id,
-  name: getScenicById(id)?.name || id
+  name: scenicName(id)
 })))
 
 function scenicName(id) {
@@ -116,6 +177,55 @@ function matchesSharedFilters(point) {
 }
 
 const sharedFilteredPoints = computed(() => (dash.value.ledger_profit || []).filter(matchesSharedFilters))
+
+function aggregatePoints(points) {
+  const summary = {
+    existing_scale: 0,
+    total_realized_scale: 0,
+    total_gross_income: 0,
+    occupation_weight: 0,
+    occupation_amount: 0
+  }
+  for (const point of points) {
+    summary.existing_scale += Number(point.existing_scale || 0)
+    summary.total_realized_scale += Number(point.realized_amount || 0)
+    summary.total_gross_income += Number(point.service_fee || 0)
+    summary.occupation_weight += Number(point.occupation_weight || 0)
+    summary.occupation_amount += Number(point.occupation_amount || 0)
+  }
+  summary.capital_occupation_days = summary.occupation_amount > 0
+    ? Math.round(summary.occupation_weight / summary.occupation_amount * 10) / 10
+    : null
+  return summary
+}
+
+const filteredSummary = computed(() => aggregatePoints(sharedFilteredPoints.value))
+const scenicLedgerRows = computed(() => {
+  const ids = selectedScenicIds.value.length
+    ? availableScenicIds.value.filter((id) => selectedScenicIds.value.includes(id))
+    : availableScenicIds.value
+  return ids.map((id) => ({
+    scenic_id: id,
+    scenic_name: scenicName(id),
+    ...aggregatePoints(sharedFilteredPoints.value.filter((point) => point.scenic_id === id))
+  }))
+})
+const ledgerTotalRow = computed(() => ({
+  scenic_id: '__total__',
+  scenic_name: '合计',
+  is_total: true,
+  ...filteredSummary.value
+}))
+const ledgerTableRows = computed(() => [...scenicLedgerRows.value, ledgerTotalRow.value])
+
+function formatOccupationDays(value) {
+  return value != null ? `${value} 天` : '—'
+}
+
+function ledgerRowClassName({ row }) {
+  return row.is_total ? 'ledger-total-row' : ''
+}
+
 const monthOptions = computed(() => [...new Set(
   sharedFilteredPoints.value.map((item) => item.month).filter((value) => value != null)
 )].sort((a, b) => a - b))
@@ -129,12 +239,12 @@ watch([selectedYear, selectedScenicIds], () => {
 }, { deep: true })
 
 const kpiCards = computed(() => {
-  const d = dash.value
+  const d = filteredSummary.value
   return [
-    { label: '已投入业务规模', value: yuan(d.existing_scale), tone: 'invested', hint: '门票及酒店付款金额减跟投金额；酒店同期只计一次' },
-    { label: '已实现业务规模', value: yuan(d.total_realized_scale), tone: 'realized', hint: '所有景区门票及酒店销售额合计' },
-    { label: '已实现业务毛利润', value: yuan(d.total_gross_income), tone: 'profit', hint: '所有景区门票及酒店服务费合计' },
-    { label: '资金占用时长', value: d.capital_occupation_days != null ? d.capital_occupation_days + ' 天' : '—', tone: 'duration', hint: '按净投入金额加权的平均占用天数' }
+    { label: '已投入业务规模', value: formatWanFromYuan(d.existing_scale), tone: 'invested', hint: '门票及酒店付款金额减跟投金额；酒店同期只计一次' },
+    { label: '已实现业务规模', value: formatWanFromYuan(d.total_realized_scale), tone: 'realized', hint: '所有景区门票及酒店销售额合计' },
+    { label: '已实现业务毛利润', value: formatWanFromYuan(d.total_gross_income), tone: 'profit', hint: '所有景区门票及酒店服务费合计' },
+    { label: '资金占用时长', value: formatOccupationDays(d.capital_occupation_days), tone: 'duration', hint: '按净投入金额加权的平均占用天数' }
   ]
 })
 
@@ -163,7 +273,7 @@ const barOption = computed(() => {
       const [id, type] = key.split(':')
       return getScenicColor(id, type)
     }),
-    tooltip: { trigger: 'axis', valueFormatter: (value) => yuan(value) },
+    tooltip: { trigger: 'axis', valueFormatter: (value) => formatWanValue(value) },
     legend: { type: 'scroll', top: 0, data: seriesKeys.map(seriesLabel) },
     grid: { left: 76, right: 24, top: 58, bottom: periodList.length > 6 ? 92 : 70 },
     xAxis: {
@@ -171,7 +281,7 @@ const barOption = computed(() => {
       data: periodList.map(([, value]) => value.label),
       axisLabel: { interval: 0, rotate: periodList.length > 5 ? 28 : 0, width: 120, overflow: 'truncate' }
     },
-    yAxis: { type: 'value', name: '服务费(元)', axisLabel: { formatter: (value) => Number(value).toLocaleString('zh-CN') } },
+    yAxis: { type: 'value', name: '服务费（万元）', axisLabel: { formatter: (value) => formatWanValue(value, { prefix: '', suffix: '' }) } },
     dataZoom: periodList.length > 10 ? [{ type: 'slider', height: 18, bottom: 10 }, { type: 'inside' }] : [],
     graphic: emptyGraphic(!points.length),
     series: seriesKeys.map((key) => {
@@ -179,7 +289,7 @@ const barOption = computed(() => {
       return {
         name: seriesLabel(key), type: 'bar', barMaxWidth: 30,
         itemStyle: { color: getScenicColor(id, type) },
-        data: periodList.map(([, value]) => value.values.get(key) || 0)
+        data: periodList.map(([, value]) => yuanToWan(value.values.get(key) || 0))
       }
     })
   }
@@ -196,10 +306,10 @@ const pieOption = computed(() => {
     .sort((a, b) => b[1] - a[1])
     .map(([key, value]) => {
       const [id, type] = key.split(':')
-      return { name: seriesLabel(key), value, itemStyle: { color: getScenicColor(id, type) } }
+      return { name: seriesLabel(key), value: yuanToWan(value), itemStyle: { color: getScenicColor(id, type) } }
     })
   return {
-    tooltip: { trigger: 'item', formatter: (params) => `${params.name}<br/>${yuan(params.value)} (${params.percent}%)` },
+    tooltip: { trigger: 'item', formatter: (params) => `${params.name}<br/>${formatWanValue(params.value)} (${params.percent}%)` },
     legend: { type: 'scroll', bottom: 0 },
     graphic: emptyGraphic(!data.length),
     series: [{
@@ -256,6 +366,23 @@ onMounted(load)
   .pie-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
   .pie-filters { display: flex; gap: 8px; flex-wrap: wrap; }
   .small-filter { width: 110px; }
+  .ledger-card { border-color: var(--surface-border); }
+  .ledger-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .ledger-subtitle { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
+  .ledger-unit {
+    padding: 5px 9px; border: 1px solid var(--el-border-color-lighter); border-radius: var(--radius-sm);
+    color: var(--el-text-color-secondary); background: var(--el-fill-color-extra-light); font-size: 12px; white-space: nowrap;
+  }
+  .ledger-empty-note {
+    margin-bottom: 12px; padding: 9px 12px; border-radius: var(--radius-sm);
+    color: var(--el-text-color-secondary); background: var(--el-fill-color-extra-light); font-size: 12px;
+  }
+  .ledger-table-wrap { max-width: 100%; overflow-x: auto; }
+  .ledger-table { min-width: 780px; }
+  .ledger-table :deep(.ledger-total-row td.el-table__cell) {
+    border-top: 1px solid var(--el-border-color); background: var(--el-fill-color-light); font-weight: 700;
+  }
+  .ledger-mobile { display: none; }
 }
 
 @media (max-width: 768px) {
@@ -263,6 +390,16 @@ onMounted(load)
     .filter-control, .scenic-filter { width: 100%; }
     .pie-filters { width: 100%; }
     .small-filter { flex: 1 1 140px; }
+    .ledger-unit { white-space: normal; }
+    .ledger-table-wrap { display: none; }
+    .ledger-mobile { display: grid; gap: 10px; }
+    .ledger-mobile-row { padding: 13px; border: 1px solid var(--el-border-color-lighter); border-radius: var(--radius-sm); }
+    .ledger-mobile-row.is-total { border-color: var(--el-border-color); background: var(--el-fill-color-light); font-weight: 700; }
+    .ledger-mobile-title { margin-bottom: 10px; font-weight: 700; }
+    .ledger-mobile-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; margin: 0; }
+    .ledger-mobile-grid > div { display: flex; justify-content: space-between; gap: 12px; }
+    .ledger-mobile-grid dt { color: var(--el-text-color-secondary); font-size: 12px; }
+    .ledger-mobile-grid dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   }
 }
 </style>

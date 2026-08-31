@@ -7,6 +7,14 @@
   </div>
 </template>
 
+<script>
+import { formatWanFromYuan as formatScreenMapMoneyValue } from '@/utils/money'
+
+export function formatScreenMapMoney(value) {
+  return formatScreenMapMoneyValue(value)
+}
+</script>
+
 <script setup>
 import { ref, shallowRef, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
@@ -76,13 +84,6 @@ async function ensureMap() {
   return false
 }
 
-function money(value) {
-  return `¥${Number(value || 0).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`
-}
-
 function buildOption() {
   const maximumRevenue = Math.max(
     1,
@@ -139,8 +140,8 @@ function buildOption() {
         const business = matchBusinessProvince(province)
         return [
           `<strong>${province}</strong>`,
-          `营收：${money(business?.revenue)}`,
-          `区域利润：${money(business?.profit)}`,
+          `营收：${formatScreenMapMoney(business?.revenue)}`,
+          `区域利润：${formatScreenMapMoney(business?.profit)}`,
           `景区数量：${Number(business?.scenicCount || 0)}`
         ].join('<br/>')
       }

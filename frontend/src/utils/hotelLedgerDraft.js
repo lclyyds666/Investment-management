@@ -16,7 +16,7 @@ function requiredRate(value, field) {
 }
 
 export function hotelPlatformLabel(row) {
-  return `${row?.hotel_name || ''}${row?.platform || ''}` || '—'
+  return row?.platform || '—'
 }
 
 export function compareHotelLedgerRows(left, right) {
@@ -34,10 +34,10 @@ export function compareHotelLedgerRows(left, right) {
   return legacyPlatforms.indexOf(left?.platform) - legacyPlatforms.indexOf(right?.platform)
 }
 
-export function createHotelDraftRows(parseResult, defaultHotelName, feePerNight = 44) {
+export function createHotelDraftRows(parseResult) {
   return (parseResult.platforms || []).map((platform) => ({
     platform: platform.platform,
-    hotel_name: platform.hotel_name || defaultHotelName,
+    hotel_name: platform.hotel_name,
     check_date_text: platform.check_date_text,
     period_text: platform.period_text,
     period_start: platform.period_start,
@@ -48,8 +48,8 @@ export function createHotelDraftRows(parseResult, defaultHotelName, feePerNight 
     commission_rate: requiredRate(platform.commission_rate, 'commission_rate'),
     rate_hexiao: requiredRate(platform.rate_hexiao, 'rate_hexiao'),
     rate_settle: requiredRate(platform.rate_settle, 'rate_settle'),
-    fee_algo: 1,
-    fee_per_night: feePerNight,
+    fee_algo: requiredRate(platform.fee_algo, 'fee_algo'),
+    fee_per_night: requiredRate(platform.fee_per_night, 'fee_per_night'),
     def_commission: numberOr(platform.suggested_commission),
     def_hexiao: numberOr(platform.def_hexiao),
     def_service_fee: numberOr(platform.def_service_fee),
@@ -83,8 +83,8 @@ export function createHotelSaveRows(draftRows) {
     commission_rate: requiredRate(row.commission_rate, 'commission_rate'),
     rate_hexiao: requiredRate(row.rate_hexiao, 'rate_hexiao'),
     rate_settle: requiredRate(row.rate_settle, 'rate_settle'),
-    fee_algo: row.fee_algo || 1,
-    fee_per_night: numberOr(row.fee_per_night, 44),
+    fee_algo: requiredRate(row.fee_algo, 'fee_algo'),
+    fee_per_night: requiredRate(row.fee_per_night, 'fee_per_night'),
     daily_json: row.daily_json,
     jinying_amount: row.jinyingEdited ? row.jinying_amount : null,
     def_commission: row.def_commission,

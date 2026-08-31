@@ -16,6 +16,9 @@ class LedgerProfitPoint(BaseModel):
     month: Optional[int] = None
     service_fee: Decimal = Decimal("0")
     realized_amount: Decimal = Decimal("0")
+    existing_scale: Decimal = Decimal("0")
+    occupation_weight: Decimal = Decimal("0")
+    occupation_amount: Decimal = Decimal("0")
 
 
 class FinancialDashboard(BaseModel):
