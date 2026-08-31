@@ -2,7 +2,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
@@ -72,15 +72,22 @@ def list_funds(
             )
         )
 
-    rows = db.scalars(
-        statement.order_by(FundTransaction.occurred_on.desc(), FundTransaction.id.desc())
-    ).all()
+    ordered_statement = statement.order_by(
+        FundTransaction.occurred_on.desc(), FundTransaction.id.desc()
+    )
     today = date.today()
     if maturity_status:
+        rows = db.scalars(ordered_statement).all()
         rows = [row for row in rows if maturity_state(row, today) == maturity_status]
-    total = len(rows)
-    start = (page - 1) * page_size
-    items = [_out(row, today) for row in rows[start:start + page_size]]
+        total = len(rows)
+        start = (page - 1) * page_size
+        page_rows = rows[start:start + page_size]
+    else:
+        total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+        page_rows = db.scalars(
+            ordered_statement.offset((page - 1) * page_size).limit(page_size)
+        ).all()
+    items = [_out(row, today) for row in page_rows]
     return Response.ok({"items": items, "total": total, "page": page, "page_size": page_size})
 
 
@@ -121,10 +128,11 @@ def update_fund(
     row = db.get(FundTransaction, fund_id)
     if not row:
         raise HTTPException(status_code=404, detail="资金流水不存在")
-    if row.settlement_status == "settled" and (
-        payload.direction != row.direction or payload.category != row.category
-    ):
-        raise HTTPException(status_code=409, detail="已结清资金流水不能修改资金方向或类型")
+    if row.settlement_status == "settled":
+        if payload.direction != row.direction or payload.category != row.category:
+            raise HTTPException(status_code=409, detail="已结清资金流水不能修改资金方向或类型")
+        if row.settled_on is None or payload.occurred_on > row.settled_on:
+            raise HTTPException(status_code=409, detail="已结清资金流水的发生日期不能晚于结清日期")
     for field, value in payload.model_dump().items():
         setattr(row, field, value)
     db.commit()
@@ -153,9 +161,11 @@ def settle_fund(
     db: Session = Depends(get_db),
     _: User = Depends(_update_guard),
 ):
-    row = db.get(FundTransaction, fund_id)
+    row = db.get(FundTransaction, fund_id, with_for_update=True)
     if not row:
         raise HTTPException(status_code=404, detail="资金流水不存在")
+    if row.settlement_status != "open":
+        raise HTTPException(status_code=409, detail="资金流水已结清，不能重复结清")
     if row.category not in DUE_CATEGORIES:
         raise HTTPException(status_code=400, detail="只有银行授信和公司借款可以结清")
     settled_on = payload.settled_on or date.today()

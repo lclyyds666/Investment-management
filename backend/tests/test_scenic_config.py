@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 from pydantic import ValidationError
@@ -71,16 +72,87 @@ class ScenicConfigTest(unittest.TestCase):
         self.assertEqual(nanyang.ticket_rate_hexiao, Decimal("0.80"))
         self.assertEqual(nanyang.ticket_rate_settle, Decimal("0.85"))
 
-    def test_hotel_defaults_are_independent_from_ticket_defaults(self):
-        config = get_effective_config(None, "fuzhou-ouleb")
+    def test_hotel_seed_defaults_snapshot_each_scenics_ticket_rates(self):
+        expected_rates = {
+            "fuzhou-ouleb": ("0.91", "0.95", "0.08"),
+            "zunyi-zoo": ("0.84", "0.87", "0"),
+            "nanyang-wildlife": ("0.80", "0.85", "0"),
+        }
 
-        self.assertEqual(config.ticket_rate_hexiao, Decimal("0.91"))
-        self.assertEqual(config.hotel_rate_hexiao, Decimal("0.90"))
-        self.assertEqual(config.hotel_rate_settle, Decimal("0.94"))
-        self.assertEqual(config.hotel_commission_rate, Decimal("0.06"))
-        self.assertEqual(config.hotel_fee_per_night, Decimal("44"))
-        self.assertEqual(config.hotel_fee_algo, 1)
-        self.assertEqual(config.hotel_platforms, ("抖音", "美团", "携程"))
+        for scenic_id, expected in expected_rates.items():
+            with self.subTest(scenic_id=scenic_id):
+                config = get_effective_config(None, scenic_id)
+                rates = tuple(Decimal(value) for value in expected)
+                self.assertEqual(config.hotel_rate_hexiao, rates[0])
+                self.assertEqual(config.hotel_rate_settle, rates[1])
+                self.assertEqual(config.hotel_commission_rate, rates[2])
+                self.assertEqual(config.hotel_rate_hexiao, config.ticket_rate_hexiao)
+                self.assertEqual(config.hotel_rate_settle, config.ticket_rate_settle)
+                self.assertEqual(
+                    config.hotel_commission_rate,
+                    config.ticket_commission_rate,
+                )
+                self.assertEqual(config.hotel_fee_per_night, Decimal("44"))
+                self.assertEqual(config.hotel_fee_algo, 1)
+                self.assertEqual(config.hotel_platforms, ("抖音", "美团", "携程"))
+
+        unknown = get_effective_config(None, "unknown-scenic")
+        self.assertEqual(unknown.hotel_rate_hexiao, Decimal("0.90"))
+        self.assertEqual(unknown.hotel_rate_settle, Decimal("0.94"))
+        self.assertEqual(unknown.hotel_commission_rate, Decimal("0.06"))
+        self.assertEqual(unknown.hotel_rate_hexiao, unknown.ticket_rate_hexiao)
+
+    def test_persisted_hotel_snapshots_do_not_follow_later_ticket_changes(self):
+        for scenic_id in ("fuzhou-ouleb", "zunyi-zoo", "nanyang-wildlife"):
+            with self.subTest(scenic_id=scenic_id):
+                seed = get_effective_config(None, scenic_id)
+                row = SimpleNamespace(
+                    **{
+                        **seed.__dict__,
+                        "ticket_rate_hexiao": seed.ticket_rate_hexiao - Decimal("0.01"),
+                        "ticket_rate_settle": seed.ticket_rate_settle - Decimal("0.01"),
+                        "ticket_commission_rate": Decimal("0.01"),
+                        "hotel_platforms": ",".join(seed.hotel_platforms),
+                        "updated_by": 7,
+                        "updated_at": None,
+                    }
+                )
+                config = get_effective_config(
+                    SimpleNamespace(get=lambda _model, _scenic_id: row),
+                    scenic_id,
+                )
+
+                self.assertEqual(config.hotel_rate_hexiao, seed.hotel_rate_hexiao)
+                self.assertEqual(config.hotel_rate_settle, seed.hotel_rate_settle)
+                self.assertEqual(
+                    config.hotel_commission_rate,
+                    seed.hotel_commission_rate,
+                )
+                self.assertNotEqual(config.hotel_rate_hexiao, config.ticket_rate_hexiao)
+
+    def test_hotel_migration_only_backfills_new_rate_columns(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "20260828_hotel_config.sql"
+        ).read_text(encoding="utf-8")
+
+        expected_backfills = {
+            "hotel_rate_hexiao": "rate_hexiao",
+            "hotel_rate_settle": "rate_settle",
+            "hotel_commission_rate": "commission_rate",
+        }
+        for hotel_column, ticket_column in expected_backfills.items():
+            with self.subTest(hotel_column=hotel_column):
+                self.assertIn(
+                    f"@has_{hotel_column} = 0",
+                    migration,
+                )
+                self.assertIn(
+                    f"SET `{hotel_column}` = `{ticket_column}`",
+                    migration,
+                )
+        self.assertNotIn("COALESCE(`hotel_rate_", migration)
 
     def test_config_list_endpoint_falls_back_when_hotel_columns_are_missing(self):
         response = scenic_endpoint.get_configs(_MissingMigrationSession(), None)
@@ -99,7 +171,7 @@ class ScenicConfigTest(unittest.TestCase):
         )
         fuzhou = configs[2]
         self.assertFalse(fuzhou.configured)
-        self.assertEqual(fuzhou.hotel_rate_hexiao, Decimal("0.90"))
+        self.assertEqual(fuzhou.hotel_rate_hexiao, Decimal("0.91"))
         self.assertEqual(fuzhou.hotel_platforms, ("抖音", "美团", "携程"))
 
     def test_list_does_not_hide_non_database_errors(self):

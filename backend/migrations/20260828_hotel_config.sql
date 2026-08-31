@@ -33,6 +33,14 @@ SET @add_hotel_rate_hexiao = IF(
 PREPARE scenic_stmt FROM @add_hotel_rate_hexiao;
 EXECUTE scenic_stmt;
 DEALLOCATE PREPARE scenic_stmt;
+SET @backfill_hotel_rate_hexiao = IF(
+  @has_hotel_rate_hexiao = 0,
+  'UPDATE `biz_scenic_config` SET `hotel_rate_hexiao` = `rate_hexiao`',
+  'SELECT 1'
+);
+PREPARE scenic_stmt FROM @backfill_hotel_rate_hexiao;
+EXECUTE scenic_stmt;
+DEALLOCATE PREPARE scenic_stmt;
 
 SET @has_hotel_rate_settle = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
@@ -48,6 +56,14 @@ SET @add_hotel_rate_settle = IF(
 PREPARE scenic_stmt FROM @add_hotel_rate_settle;
 EXECUTE scenic_stmt;
 DEALLOCATE PREPARE scenic_stmt;
+SET @backfill_hotel_rate_settle = IF(
+  @has_hotel_rate_settle = 0,
+  'UPDATE `biz_scenic_config` SET `hotel_rate_settle` = `rate_settle`',
+  'SELECT 1'
+);
+PREPARE scenic_stmt FROM @backfill_hotel_rate_settle;
+EXECUTE scenic_stmt;
+DEALLOCATE PREPARE scenic_stmt;
 
 SET @has_hotel_commission_rate = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
@@ -61,6 +77,14 @@ SET @add_hotel_commission_rate = IF(
   'SELECT 1'
 );
 PREPARE scenic_stmt FROM @add_hotel_commission_rate;
+EXECUTE scenic_stmt;
+DEALLOCATE PREPARE scenic_stmt;
+SET @backfill_hotel_commission_rate = IF(
+  @has_hotel_commission_rate = 0,
+  'UPDATE `biz_scenic_config` SET `hotel_commission_rate` = `commission_rate`',
+  'SELECT 1'
+);
+PREPARE scenic_stmt FROM @backfill_hotel_commission_rate;
 EXECUTE scenic_stmt;
 DEALLOCATE PREPARE scenic_stmt;
 
@@ -108,22 +132,5 @@ SET @add_hotel_platforms = IF(
 PREPARE scenic_stmt FROM @add_hotel_platforms;
 EXECUTE scenic_stmt;
 DEALLOCATE PREPARE scenic_stmt;
-
-UPDATE `biz_scenic_config`
-SET `default_hotel_name` = CASE
-      WHEN `default_hotel_name` IS NULL OR TRIM(`default_hotel_name`) = ''
-      THEN '郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店'
-      ELSE `default_hotel_name`
-    END,
-    `hotel_rate_hexiao` = COALESCE(`hotel_rate_hexiao`, 0.9000),
-    `hotel_rate_settle` = COALESCE(`hotel_rate_settle`, 0.9400),
-    `hotel_commission_rate` = COALESCE(`hotel_commission_rate`, 0.0600),
-    `hotel_fee_per_night` = COALESCE(`hotel_fee_per_night`, 44.00),
-    `hotel_fee_algo` = COALESCE(`hotel_fee_algo`, 1),
-    `hotel_platforms` = CASE
-      WHEN `hotel_platforms` IS NULL OR TRIM(`hotel_platforms`) = ''
-      THEN '抖音,美团,携程'
-      ELSE `hotel_platforms`
-    END;
 
 SELECT '景区酒店独立配置迁移完成，历史酒店台账未修改。' AS message;
