@@ -31,7 +31,15 @@ def render_review_markdown(result: dict) -> str:
     checks = result.get("fact_checks") or []
     risks = result.get("risk_findings") or []
     if not checks and not risks:
-        lines.append("未发现可核验的风险主张。")
+        if result.get("fallback_reason"):
+            lines.extend([
+                "规则引擎未完成完整 AI 审查，不能据此认定合同无风险；请人工逐条核对：",
+                "- 是否存在单方面加重我方义务、免除或减轻对方责任的条款。",
+                "- 违约责任、付款、交付、验收条件是否对我方不利。",
+                "- 争议解决与管辖地、保密、知识产权、赔偿责任是否损害我方权益。",
+            ])
+        else:
+            lines.append("未发现可核验的风险主张。")
     for item in [*checks, *risks]:
         lines.extend([
             f"- **条款定位**：{item.get('contract_quote') or item.get('claim') or '未明确'}",
@@ -39,6 +47,8 @@ def render_review_markdown(result: dict) -> str:
             f"- **不利点/风险**：{item.get('reason') or '知识库未找到依据'}",
             f"- **修改建议**：{item.get('suggestion') or '请补充依据并人工复核。'}",
         ])
+        if item.get("model_quote"):
+            lines.append(f"- **模型摘录（未经合同正文校验）**：{item['model_quote']}")
         for source in item.get("evidence") or []:
             lines.append(f"  - **法规依据｜{source.get('title', '')} {source.get('section', '')}**：{source.get('text', '')}")
     lines.extend(["## 二、总体风险等级与优先修改清单", f"- 风险等级：{('高' if any(i.get('risk_level') == 'high' or i.get('verdict') == 'contradicted' for i in [*checks, *risks]) else '中' if checks or risks else '低')}"])

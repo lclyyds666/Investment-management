@@ -44,10 +44,17 @@ def _parse_json(content: Any) -> dict[str, Any]:
         raise ValueError("invalid_response") from exc
     if not isinstance(parsed, dict):
         raise ValueError("invalid_response")
+    if not isinstance(parsed.get("fact_checks"), list) or not isinstance(parsed.get("risk_findings"), list):
+        raise ValueError("invalid_response")
     return parsed
 
 
-def _normalise_item(item: Any, evidence_map: dict[str, EvidenceChunk], risk: bool = False) -> dict[str, Any] | None:
+def _normalise_item(
+    item: Any,
+    evidence_map: dict[str, EvidenceChunk],
+    risk: bool = False,
+    contract_text: str = "",
+) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
     claim = str(item.get("claim") or item.get("title") or "").strip()
@@ -66,32 +73,63 @@ def _normalise_item(item: Any, evidence_map: dict[str, EvidenceChunk], risk: boo
     # A knowledge-base assertion without a server-verified source is unproven.
     if not valid_ids and verdict in {"supported", "contradicted"}:
         verdict = "not_found"
+    raw_quote = str(item.get("contract_quote") or "").strip()
+    contract_quote = raw_quote if raw_quote and raw_quote in (contract_text or "") else ""
     result: dict[str, Any] = {
+        "code": str(item.get("code") or "").strip(),
         "claim": claim,
         "verdict": verdict,
         "reason": str(item.get("reason") or "").strip(),
-        "contract_quote": str(item.get("contract_quote") or "").strip(),
+        "contract_quote": contract_quote,
         "evidence_ids": valid_ids,
         "evidence": [_evidence_dict(evidence_map[chunk_id]) for chunk_id in valid_ids],
         "risk_level": level,
         "suggestion": str(item.get("suggestion") or "").strip(),
     }
+    if raw_quote and not contract_quote:
+        result["model_quote"] = raw_quote
     if risk:
         result["title"] = claim
     return result
 
 
-def _merge_findings(items: list[dict[str, Any]], findings: list[dict[str, Any]], evidence_map: dict[str, EvidenceChunk]) -> list[dict[str, Any]]:
-    existing = {(str(item.get("code") or ""), str(item.get("claim") or "")) for item in items}
+def _claim_key(item: dict[str, Any]) -> str:
+    return re.sub(r"\s+", " ", str(item.get("claim") or "").strip()).lower()
+
+
+def _finding_key(item: dict[str, Any]) -> tuple[str, str]:
+    return str(item.get("code") or "").strip().lower(), _claim_key(item)
+
+
+def _dedupe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for item in items:
+        code, claim = _finding_key(item)
+        key = (code, claim)
+        if key in seen_keys or (not code and any(existing_claim == claim for _, existing_claim in seen_keys if claim)):
+            continue
+        result.append(item)
+        seen_keys.add(key)
+    return result
+
+
+def _merge_findings(
+    items: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    evidence_map: dict[str, EvidenceChunk],
+    contract_text: str = "",
+) -> list[dict[str, Any]]:
     for finding in findings or []:
         if not isinstance(finding, dict):
             continue
         code = str(finding.get("code") or "deterministic_check")
         claim = str(finding.get("claim") or code)
-        key = (code, claim)
-        if key in existing:
-            continue
-        item = _normalise_item({**finding, "claim": claim, "evidence_ids": finding.get("evidence_ids", [])}, evidence_map)
+        item = _normalise_item(
+            {**finding, "code": code, "claim": claim, "evidence_ids": finding.get("evidence_ids", [])},
+            evidence_map,
+            contract_text=contract_text,
+        )
         if item is None:
             continue
         # Deterministic checks are authoritative local validations and do not
@@ -100,17 +138,31 @@ def _merge_findings(items: list[dict[str, Any]], findings: list[dict[str, Any]],
         if deterministic_verdict in _VERDICTS:
             item["verdict"] = deterministic_verdict
         item["code"] = code
-        items.append(item)
-        existing.add(key)
+        matching_index = next(
+            (index for index, existing_item in enumerate(items)
+             if _finding_key(existing_item) == _finding_key(item)
+             or (not str(existing_item.get("code") or "").strip() and _claim_key(existing_item) == _claim_key(item))),
+            None,
+        )
+        if matching_index is None:
+            items.append(item)
+        else:
+            existing_item = items[matching_index]
+            if not item.get("reason"):
+                item["reason"] = existing_item.get("reason", "")
+            if not item.get("suggestion"):
+                item["suggestion"] = existing_item.get("suggestion", "")
+            items[matching_index] = item
     return items
 
 
-def _coverage(fact_checks: list[dict[str, Any]]) -> dict[str, Any]:
-    count = len(fact_checks)
-    supported = sum(item["verdict"] == "supported" for item in fact_checks)
-    contradicted = sum(item["verdict"] == "contradicted" for item in fact_checks)
-    not_found = sum(item["verdict"] == "not_found" for item in fact_checks)
-    evidenced = sum(bool(item.get("evidence")) for item in fact_checks)
+def _coverage(fact_checks: list[dict[str, Any]], risk_findings: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    all_items = [*fact_checks, *(risk_findings or [])]
+    count = len(all_items)
+    supported = sum(item["verdict"] == "supported" for item in all_items)
+    contradicted = sum(item["verdict"] == "contradicted" for item in all_items)
+    not_found = sum(item["verdict"] == "not_found" for item in all_items)
+    evidenced = sum(bool(item.get("evidence")) for item in all_items)
     return {
         "claim_count": count,
         "supported_count": supported,
@@ -122,11 +174,11 @@ def _coverage(fact_checks: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _fallback(contract_text: str, evidence: list[EvidenceChunk], findings: list[dict[str, Any]], reason: str) -> dict[str, Any]:
     evidence_map = {chunk.chunk_id: chunk for chunk in evidence}
-    fact_checks = _merge_findings([], findings, evidence_map)
+    fact_checks = _merge_findings([], findings, evidence_map, contract_text=contract_text)
     return {
         "fact_checks": fact_checks,
         "risk_findings": [],
-        "coverage": _coverage(fact_checks),
+        "coverage": _coverage(fact_checks, []),
         "engine": "rule",
         "fallback_reason": reason,
     }
@@ -166,12 +218,17 @@ def review_with_evidence(
         )
         raw = response.choices[0].message.content
         payload = _parse_json(raw)
-        fact_checks = [_normalise_item(item, evidence_map) for item in (payload.get("fact_checks") or [])]
-        risks = [_normalise_item(item, evidence_map, risk=True) for item in (payload.get("risk_findings") or [])]
+        fact_checks = [_normalise_item(item, evidence_map, contract_text=contract_text) for item in payload["fact_checks"]]
+        risks = [_normalise_item(item, evidence_map, risk=True, contract_text=contract_text) for item in payload["risk_findings"]]
         fact_checks = [item for item in fact_checks if item is not None]
         risks = [item for item in risks if item is not None]
-        _merge_findings(fact_checks, findings, evidence_map)
-        return {"fact_checks": fact_checks, "risk_findings": risks, "coverage": _coverage(fact_checks), "engine": "deepseek", "fallback_reason": None}
+        fact_checks = _dedupe_items(fact_checks)
+        risks = _dedupe_items(risks)
+        _merge_findings(fact_checks, findings, evidence_map, contract_text=contract_text)
+        fact_keys = {_finding_key(item) for item in fact_checks}
+        fact_claims = {_claim_key(item) for item in fact_checks}
+        risks = [item for item in risks if _finding_key(item) not in fact_keys and _claim_key(item) not in fact_claims]
+        return {"fact_checks": fact_checks, "risk_findings": risks, "coverage": _coverage(fact_checks, risks), "engine": "deepseek", "fallback_reason": None}
     except ValueError as exc:
         if str(exc) == "invalid_response":
             logger.warning("DeepSeek contract review returned invalid JSON")

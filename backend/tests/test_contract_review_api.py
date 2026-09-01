@@ -54,3 +54,57 @@ def test_ai_review_http_returns_legacy_and_evidence_metadata():
     app.dependency_overrides.clear()
     db.close()
     engine.dispose()
+
+
+def test_attachment_review_retrieval_uses_truncated_text_and_structured_fields():
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    user = User(id=2, username="review-admin-2", full_name="Review Admin", hashed_password="test", is_superuser=True, is_active=True)
+    contract = Contract(
+        id=2,
+        contract_no="CN-2",
+        title="景区酒店采购",
+        party_a="甲方",
+        party_b="乙方",
+        amount=100,
+        contract_type="酒店采购",
+        subject="酒店客房",
+        payment_terms="验收后付款",
+        remark="重点审查",
+        created_by=2,
+    )
+    db.add_all([user, contract])
+    db.commit()
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+    captured: dict[str, str] = {}
+    source = EvidenceChunk("4:1", 4, "酒店采购制度", "制度", "付款", 1, "验收后付款")
+
+    def capture_query(_db, query):
+        captured["query"] = query
+        return [source]
+
+    result = {
+        "fact_checks": [], "risk_findings": [],
+        "coverage": {"claim_count": 0, "evidence_rate": 0},
+        "engine": "rule", "fallback_reason": "not_configured",
+    }
+    with patch("app.api.v1.endpoints.contract._contract_text_for_review", return_value=("正文" * 8000, True)), patch(
+        "app.api.v1.endpoints.contract.retrieve_evidence", side_effect=capture_query
+    ), patch("app.api.v1.endpoints.contract.deterministic_findings", return_value=[]), patch(
+        "app.api.v1.endpoints.contract.review_with_evidence", return_value=result
+    ):
+        response = client.post("/api/v1/contracts/2/ai-review")
+    assert response.status_code == 200, response.text
+    assert len(captured["query"].split("\n【结构化合同字段】", 1)[0]) == 12000
+    assert "景区酒店采购" in captured["query"]
+    assert "酒店采购" in captured["query"]
+    assert "酒店客房" in captured["query"]
+    assert "验收后付款" in captured["query"]
+    client.close()
+    app.dependency_overrides.clear()
+    db.close()
+    engine.dispose()

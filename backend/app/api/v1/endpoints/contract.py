@@ -712,6 +712,7 @@ def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
         f"合同标的：{contract.subject or '未填写'}",
         f"客户名称：{contract.customer_name or '未填写'}",
         f"合同金额：{contract.amount} {contract.currency or ''}",
+        f"签订日期：{contract.sign_date or '未填写'}",
         f"付款条件：{contract.payment_terms or '未填写'}",
         f"备注：{contract.remark or '无'}",
     ]
@@ -727,6 +728,7 @@ def ai_review_contract(
     contract = _get_contract_or_404(db, contract_id)
     _ensure_contract_visible(db, contract, current_user)
     contract_text, has_attachment = _contract_text_for_review(contract)
+    review_text = (contract_text or "")[:12000]
     structured_fields = {
         "contract_no": contract.contract_no,
         "title": contract.title,
@@ -742,16 +744,20 @@ def ai_review_contract(
         "remark": contract.remark,
         "is_internal": contract.is_internal,
     }
+    structured_query = "\n".join(
+        f"{key}: {value}" for key, value in structured_fields.items() if value not in (None, "")
+    )
+    retrieval_text = f"{review_text}\n【结构化合同字段】\n{structured_query}".strip()
     try:
-        evidence = retrieve_evidence(db, contract_text)
-        findings = deterministic_findings(contract_text, structured_fields, evidence)
-        result = review_with_evidence(contract_text, structured_fields, evidence, findings)
+        evidence = retrieve_evidence(db, retrieval_text)
+        findings = deterministic_findings(review_text, structured_fields, evidence)
+        result = review_with_evidence(review_text, structured_fields, evidence, findings)
     except Exception as exc:  # noqa: BLE001 - local retrieval must never break review endpoint
         # Keep the endpoint available if the knowledge store is temporarily
         # unavailable; deterministic checks still provide a safe fallback.
         evidence = []
         try:
-            findings = deterministic_findings(contract_text, structured_fields, evidence)
+            findings = deterministic_findings(review_text, structured_fields, evidence)
         except Exception:  # noqa: BLE001
             findings = []
         count = len(findings)

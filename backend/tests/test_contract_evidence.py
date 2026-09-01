@@ -48,3 +48,28 @@ def test_supports_contract_model_field_aliases_and_caps_results():
         [],
     )
     assert {item["code"] for item in findings} >= {"contract_number_mismatch", "party_mismatch", "amount_mismatch"}
+
+
+def test_amount_matching_uses_decimal_and_field_context_not_substrings():
+    assert not {
+        item["code"]
+        for item in deterministic_findings("合同金额：100.00元；第一期付款金额：50元。", {"amount": "100"}, [])
+    } & {"amount_mismatch", "amount_conflict"}
+    findings = deterministic_findings("合同金额：1000元。", {"amount": "100"}, [])
+    assert "amount_mismatch" in {item["code"] for item in findings}
+
+
+def test_checks_customer_sign_date_and_semantic_term_conflicts():
+    text = (
+        "客户名称：甲客户（以下简称客户）。签订日期：2026年1月2日。"
+        "履行期限：2026/01/01-2026/12/31。履行期限：2027-01-01至2027-12-31。"
+        "交付日期：2027-01-01。"
+    )
+    findings = deterministic_findings(
+        text,
+        {"customer_name": "乙客户", "sign_date": "2026-01-01"},
+        [],
+    )
+    codes = {item["code"] for item in findings}
+    assert {"customer_name_mismatch", "sign_date_mismatch", "term_conflict"} <= codes
+    assert "date_conflict" not in codes
