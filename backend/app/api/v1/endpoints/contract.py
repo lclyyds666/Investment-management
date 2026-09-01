@@ -27,7 +27,6 @@ from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
 from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 from app.schemas.workflow import WorkflowStartRequest
-from app.services import contract_review as review_svc
 from app.services.contract_evidence import deterministic_findings, retrieve_evidence
 from app.services.contract_review import render_review_markdown
 from app.services.contract_review_llm import review_with_evidence
@@ -743,9 +742,26 @@ def ai_review_contract(
         "remark": contract.remark,
         "is_internal": contract.is_internal,
     }
-    evidence = retrieve_evidence(db, contract_text)
-    findings = deterministic_findings(contract_text, structured_fields, evidence)
-    result = review_with_evidence(contract_text, structured_fields, evidence, findings)
+    try:
+        evidence = retrieve_evidence(db, contract_text)
+        findings = deterministic_findings(contract_text, structured_fields, evidence)
+        result = review_with_evidence(contract_text, structured_fields, evidence, findings)
+    except Exception as exc:  # noqa: BLE001 - local retrieval must never break review endpoint
+        # Keep the endpoint available if the knowledge store is temporarily
+        # unavailable; deterministic checks still provide a safe fallback.
+        evidence = []
+        try:
+            findings = deterministic_findings(contract_text, structured_fields, evidence)
+        except Exception:  # noqa: BLE001
+            findings = []
+        count = len(findings)
+        result = {
+            "fact_checks": findings,
+            "risk_findings": [],
+            "coverage": {"claim_count": count, "supported_count": 0, "contradicted_count": sum(f.get("verdict") == "contradicted" for f in findings), "not_found_count": sum(f.get("verdict") == "not_found" for f in findings), "evidence_rate": 0},
+            "engine": "rule",
+            "fallback_reason": "provider_error",
+        }
     kb_titles: list[str] = []
     for chunk in evidence:
         if chunk.title and chunk.title not in kb_titles:

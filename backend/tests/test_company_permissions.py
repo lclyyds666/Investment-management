@@ -743,11 +743,7 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         with self.subTest(contract="assigned", endpoint="attachment"):
             response = self.client.get(f"/api/v1/contracts/{assigned.id}/attachment")
             self.assertEqual(response.status_code, 404, response.text)
-        with patch(
-            "app.api.v1.endpoints.contract.review_svc.review",
-            return_value={"markdown": "Review", "engine": "test"},
-        ):
-            response = self.client.post(f"/api/v1/contracts/{assigned.id}/ai-review")
+        response = self.client.post(f"/api/v1/contracts/{assigned.id}/ai-review")
         self.assertEqual(response.status_code, 200, response.text)
         with self.subTest(contract="assigned", endpoint="legal-doc"):
             response = self.client.get(f"/api/v1/contracts/{assigned.id}/legal-doc")
