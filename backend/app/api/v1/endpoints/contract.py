@@ -28,6 +28,9 @@ from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 from app.schemas.workflow import WorkflowStartRequest
 from app.services import contract_review as review_svc
+from app.services.contract_evidence import deterministic_findings, retrieve_evidence
+from app.services.contract_review import render_review_markdown
+from app.services.contract_review_llm import review_with_evidence
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
 from app.services.contract_workflow import contract_workflow_code
@@ -723,11 +726,47 @@ def ai_review_contract(
     contract = _get_contract_or_404(db, contract_id)
     _ensure_contract_visible(db, contract, current_user)
     contract_text, has_attachment = _contract_text_for_review(contract)
-    kb_text, kb_titles = review_svc.aggregate_kb_text(db)
-    result = review_svc.review(contract_text, kb_text)
+    structured_fields = {
+        "contract_no": contract.contract_no,
+        "title": contract.title,
+        "party_a": contract.party_a,
+        "party_b": contract.party_b,
+        "amount": str(contract.amount) if contract.amount is not None else "",
+        "sign_date": str(contract.sign_date) if contract.sign_date else "",
+        "contract_type": contract.contract_type,
+        "customer_name": contract.customer_name,
+        "subject": contract.subject,
+        "currency": contract.currency,
+        "payment_terms": contract.payment_terms,
+        "remark": contract.remark,
+        "is_internal": contract.is_internal,
+    }
+    evidence = retrieve_evidence(db, contract_text)
+    findings = deterministic_findings(contract_text, structured_fields, evidence)
+    result = review_with_evidence(contract_text, structured_fields, evidence, findings)
+    kb_titles: list[str] = []
+    for chunk in evidence:
+        if chunk.title and chunk.title not in kb_titles:
+            kb_titles.append(chunk.title)
     return Response.ok({
-        "markdown": result["markdown"],
+        "markdown": render_review_markdown(result),
         "engine": result["engine"],
         "has_attachment": has_attachment,
         "kb_used": kb_titles,
+        "retrieved_sources": [
+            {
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "title": chunk.title,
+                "category": chunk.category,
+                "section": chunk.section,
+                "ordinal": chunk.ordinal,
+                "text": chunk.text,
+            }
+            for chunk in evidence
+        ],
+        "fact_checks": result.get("fact_checks", []),
+        "risk_findings": result.get("risk_findings", []),
+        "coverage": result.get("coverage", {}),
+        "fallback_reason": result.get("fallback_reason"),
     })

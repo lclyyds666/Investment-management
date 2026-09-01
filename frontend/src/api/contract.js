@@ -83,7 +83,7 @@ export async function fetchLegalDocBlob(id) {
   return await resp.blob()
 }
 
-/** AI 合同审查（DeepSeek + 法规知识库），返回 { markdown, engine, has_attachment, kb_used } */
+/** AI 合同审查（DeepSeek + 证据召回），返回 markdown、引擎、证据来源、事实核验及覆盖率元数据。 */
 export function aiReviewContract(id) {
   return request.post(`/contracts/${id}/ai-review`, {}, { timeout: 120000 })
 }

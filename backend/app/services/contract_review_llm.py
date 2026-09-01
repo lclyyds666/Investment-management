@@ -38,7 +38,10 @@ def _parse_json(content: Any) -> dict[str, Any]:
     text = content.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
-    parsed = json.loads(text)
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_response") from exc
     if not isinstance(parsed, dict):
         raise ValueError("invalid_response")
     return parsed
@@ -169,6 +172,12 @@ def review_with_evidence(
         risks = [item for item in risks if item is not None]
         _merge_findings(fact_checks, findings, evidence_map)
         return {"fact_checks": fact_checks, "risk_findings": risks, "coverage": _coverage(fact_checks), "engine": "deepseek", "fallback_reason": None}
+    except ValueError as exc:
+        if str(exc) == "invalid_response":
+            logger.warning("DeepSeek contract review returned invalid JSON")
+            return _fallback(contract_text, evidence, findings, "invalid_response")
+        logger.warning("DeepSeek contract review failed (%s)", type(exc).__name__)
+        return _fallback(contract_text, evidence, findings, "provider_error")
     except Exception as exc:  # noqa: BLE001
         logger.warning("DeepSeek contract review failed (%s)", type(exc).__name__)
         return _fallback(contract_text, evidence, findings, "provider_error")
