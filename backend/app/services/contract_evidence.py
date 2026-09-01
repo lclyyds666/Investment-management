@@ -69,7 +69,17 @@ def _split_document(content: str) -> list[tuple[str, str]]:
 
 
 def _tokens(text: str) -> set[str]:
-    return {t.lower() for t in _TOKEN_RE.findall(text or "") if len(t) > 1}
+    tokens: set[str] = set()
+    for token in _TOKEN_RE.findall(text or ""):
+        token = token.lower()
+        if len(token) > 1:
+            tokens.add(token)
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            # Chinese text often has no whitespace; overlapping n-grams
+            # provide stable lexical matches without an external tokenizer.
+            for size in (2, 3, 4):
+                tokens.update(token[i : i + size] for i in range(len(token) - size + 1))
+    return tokens
 
 
 def retrieve_evidence(db: Any, contract_text: str, limit: int = 12, max_chars: int = 12000) -> list[EvidenceChunk]:
@@ -146,13 +156,21 @@ def deterministic_findings(contract_text: str, structured_fields: dict[str, Any]
         if law not in evidence_text:
             findings.append({"code": "citation_not_found", "claim": f"《{law}》", "verdict": "not_found", "reason": "知识库召回片段中未找到该法规", "evidence_ids": []})
 
-    checks = (("amount", "amount_mismatch", "金额"), ("party", "party_mismatch", "主体"), ("contract_number", "contract_number_mismatch", "合同编号"))
-    for key, code, label in checks:
-        expected = fields.get(key)
-        if expected in (None, ""):
-            continue
-        expected_s = str(expected)
-        if expected_s not in text:
+    checks = (
+        (("amount",), "amount_mismatch", "金额"),
+        (("party", "party_a", "party_b"), "party_mismatch", "主体"),
+        (("contract_number", "contract_no"), "contract_number_mismatch", "合同编号"),
+    )
+    for keys, code, label in checks:
+        expected_values = [fields.get(key) for key in keys if fields.get(key) not in (None, "")]
+        for expected in expected_values:
+            expected_s = str(expected)
+            # Decimal and formatted currency representations are compared
+            # both literally and by their digit sequence.
+            normalized_expected = re.sub(r"[^\d.]", "", expected_s)
+            normalized_text = re.sub(r"[^\d.]", "", text)
+            if expected_s in text or (normalized_expected and normalized_expected in normalized_text):
+                continue
             findings.append({"code": code, "claim": f"{label}: {expected_s}", "verdict": "contradicted", "reason": "结构化字段与合同正文不一致", "evidence_ids": []})
 
     for label, pattern, code in (("金额", r"(?:金额|价款|总价)[^\d]{0,12}(\d[\d,.]*)", "amount_conflict"), ("日期", r"(20\d{2}[年/-]\d{1,2}[月/-]\d{1,2}日?)", "date_conflict")):

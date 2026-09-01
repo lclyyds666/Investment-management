@@ -35,3 +35,16 @@ def test_detects_invalid_percentage_and_missing_cited_law():
         [],
     )
     assert {item["code"] for item in findings} >= {"invalid_percentage", "citation_not_found"}
+
+
+def test_supports_contract_model_field_aliases_and_caps_results():
+    docs = [SimpleNamespace(id=i, title=f"制度{i}", category="法律规范", content="付款违约招标。" * 500) for i in range(1, 20)]
+    chunks = retrieve_evidence(FakeDb(docs), "付款违约招标", limit=12, max_chars=12000)
+    assert len(chunks) <= 12
+    assert sum(len(chunk.text) for chunk in chunks) <= 12000
+    findings = deterministic_findings(
+        "合同编号 CN-2，甲方：乙公司。",
+        {"contract_no": "CN-1", "party_a": "甲公司", "party_b": "乙公司", "amount": "100000"},
+        [],
+    )
+    assert {item["code"] for item in findings} >= {"contract_number_mismatch", "party_mismatch", "amount_mismatch"}
