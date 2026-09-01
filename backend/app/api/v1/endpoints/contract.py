@@ -706,6 +706,8 @@ def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
     fields = [
         f"合同名称：{contract.title}",
         f"合同编号：{contract.contract_no}",
+        f"甲方：{contract.party_a or '未填写'}",
+        f"乙方：{contract.party_b or '未填写'}",
         f"合同类型：{contract.contract_type or '未填写'}",
         f"是否内部合同：{'是' if contract.is_internal else '否'}",
         f"合同标的：{contract.subject or '未填写'}",
