@@ -294,16 +294,59 @@
       <div v-loading="aiLoading" element-loading-text="AI 审查中，请稍候（约 20-60 秒）…" class="ai-wrap">
         <template v-if="aiResult">
           <div class="ai-meta">
-            <el-tag :type="aiResult.engine === 'deepseek' ? 'success' : 'info'" size="small" effect="plain">
+            <span class="ai-meta-tag" :class="aiResult.engine === 'deepseek' ? 'is-success' : 'is-info'">
               {{ aiResult.engine === 'deepseek' ? 'DeepSeek 综合' : '规则引擎(未接大模型)' }}
-            </el-tag>
-            <el-tag size="small" :type="aiResult.has_attachment ? 'success' : 'warning'" effect="plain">
+            </span>
+            <span class="ai-meta-tag" :class="aiResult.has_attachment ? 'is-success' : 'is-warning'">
               {{ aiResult.has_attachment ? '基于合同附件全文' : '基于合同字段(未上传附件)' }}
-            </el-tag>
-            <el-tag v-if="aiResult.kb_used && aiResult.kb_used.length" size="small" type="primary" effect="plain">
+            </span>
+            <span v-if="aiResult.kb_used && aiResult.kb_used.length" class="ai-meta-tag is-primary">
               参照法规库 {{ aiResult.kb_used.length }} 篇
-            </el-tag>
+            </span>
+            <span v-if="aiResult.retrieved_sources && aiResult.retrieved_sources.length" class="ai-meta-tag is-primary">
+              检索证据 {{ aiResult.retrieved_sources.length }} 篇
+            </span>
+            <span v-if="aiResult.coverage" class="ai-meta-tag is-warning">
+              证据覆盖率 {{ coverageRate }}
+            </span>
           </div>
+          <div
+            v-if="aiResult.fallback_reason"
+            class="ai-fallback"
+            role="alert"
+          >{{ fallbackLabel }}</div>
+          <section v-if="allAiFindings.length" class="ai-findings" aria-label="事实核验结果">
+            <div class="ai-section-title">事实核验与风险发现</div>
+            <div v-for="(item, index) in allAiFindings" :key="`${item.claim || item.title || 'finding'}-${index}`" class="ai-finding">
+              <div class="ai-finding-head">
+                <span class="ai-claim">{{ item.claim || item.title || '未命名主张' }}</span>
+                <span class="ai-verdict" :class="`is-${verdictMeta(item.verdict).type}`">
+                  {{ verdictMeta(item.verdict).label }}
+                </span>
+                <span v-if="item.risk_level" class="ai-verdict ai-risk" :class="`is-${riskMeta(item.risk_level).type}`">
+                  {{ riskMeta(item.risk_level).label }}风险
+                </span>
+              </div>
+              <div v-if="item.contract_quote" class="ai-quote">合同原文：{{ item.contract_quote }}</div>
+              <div v-if="item.reason" class="ai-finding-line">核验说明：{{ item.reason }}</div>
+              <div v-if="item.suggestion" class="ai-finding-line">修改建议：{{ item.suggestion }}</div>
+              <details v-if="item.evidence && item.evidence.length" class="ai-evidence">
+                <summary>查看证据原文（{{ item.evidence.length }}）</summary>
+                <div v-for="source in item.evidence" :key="source.chunk_id || `${source.title}-${source.section}`" class="ai-evidence-item">
+                  <div class="ai-evidence-title">{{ source.title || '法规知识库' }}<span v-if="source.section"> · {{ source.section }}</span></div>
+                  <div class="ai-evidence-text">{{ source.text }}</div>
+                </div>
+              </details>
+              <div v-else-if="item.verdict === 'not_found'" class="ai-not-found">知识库未找到支持该主张的依据</div>
+            </div>
+          </section>
+          <details v-if="aiResult.retrieved_sources && aiResult.retrieved_sources.length" class="ai-evidence ai-all-evidence">
+            <summary>查看本次召回的法规原文（{{ aiResult.retrieved_sources.length }} 篇）</summary>
+            <div v-for="source in aiResult.retrieved_sources" :key="source.chunk_id || `${source.title}-${source.section}`" class="ai-evidence-item">
+              <div class="ai-evidence-title">{{ source.title || '法规知识库' }}<span v-if="source.section"> · {{ source.section }}</span></div>
+              <div class="ai-evidence-text">{{ source.text }}</div>
+            </div>
+          </details>
           <div class="md-body" v-html="aiHtml"></div>
         </template>
         <el-empty v-else-if="!aiLoading" :image-size="60" description="暂无审查结果" />
@@ -762,6 +805,39 @@ const aiLoading = ref(false)
 const aiResult = ref(null)
 const aiCurrent = ref(null)
 const aiHtml = computed(() => renderSafeMarkdown(aiResult.value?.markdown || ''))
+const allAiFindings = computed(() => [
+  ...(aiResult.value?.fact_checks || []),
+  ...(aiResult.value?.risk_findings || [])
+])
+const coverageRate = computed(() => {
+  const value = Number(aiResult.value?.coverage?.evidence_rate)
+  if (!Number.isFinite(value)) return '0%'
+  return `${Math.round((value > 1 ? value / 100 : value) * 100)}%`
+})
+const fallbackLabel = computed(() => {
+  const labels = {
+    not_configured: '未配置 DeepSeek，本次结果由规则引擎生成，请人工复核。',
+    provider_error: 'DeepSeek 调用失败，本次结果由规则引擎生成，请人工复核。',
+    invalid_response: 'DeepSeek 返回格式无法校验，本次结果由规则引擎生成，请人工复核。',
+    no_text: '未提取到合同正文，本次仅依据合同字段核验，请人工复核。'
+  }
+  return labels[aiResult.value?.fallback_reason] || '本次未使用 DeepSeek，结果由规则引擎生成，请人工复核。'
+})
+function verdictMeta(verdict) {
+  return {
+    supported: { label: '有依据', type: 'success' },
+    contradicted: { label: '存在矛盾', type: 'danger' },
+    not_found: { label: '未找到依据', type: 'warning' },
+    not_applicable: { label: '不适用', type: 'info' }
+  }[verdict] || { label: '未找到依据', type: 'warning' }
+}
+function riskMeta(level) {
+  return {
+    high: { label: '高', type: 'danger' },
+    medium: { label: '中', type: 'warning' },
+    low: { label: '低', type: 'info' }
+  }[level] || { label: '中', type: 'warning' }
+}
 function openAiReview(row) {
   aiCurrent.value = row
   aiResult.value = null
@@ -865,6 +941,28 @@ onMounted(() => { load(); loadCustomers(); loadInitiatorOptions() })
 /* AI 审查 */
 .ai-wrap { min-height: 120px; }
 .ai-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.ai-meta-tag, .ai-verdict { display: inline-flex; align-items: center; border: 1px solid var(--el-border-color); border-radius: 4px; padding: 0 7px; min-height: 22px; font-size: 12px; line-height: 20px; }
+.ai-meta-tag.is-success, .ai-verdict.is-success { color: var(--el-color-success); border-color: var(--el-color-success-light-5); background: var(--el-color-success-light-9); }
+.ai-meta-tag.is-info, .ai-verdict.is-info { color: var(--el-color-info); border-color: var(--el-color-info-light-5); background: var(--el-color-info-light-9); }
+.ai-meta-tag.is-primary { color: var(--el-color-primary); border-color: var(--el-color-primary-light-5); background: var(--el-color-primary-light-9); }
+.ai-meta-tag.is-warning, .ai-verdict.is-warning { color: var(--el-color-warning); border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.ai-verdict.is-danger { color: var(--el-color-danger); border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.ai-risk { font-weight: 500; }
+.ai-fallback { margin-bottom: 12px; }
+.ai-findings { margin: 4px 0 16px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; padding: 10px 12px; }
+.ai-section-title { color: var(--el-text-color-primary); font-weight: 600; margin-bottom: 8px; }
+.ai-finding { padding: 10px 0; border-top: 1px solid var(--el-border-color-lighter); }
+.ai-finding:first-of-type { border-top: 0; padding-top: 2px; }
+.ai-finding-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-claim { flex: 1; min-width: 180px; color: var(--el-text-color-primary); font-weight: 500; }
+.ai-finding-line, .ai-quote { margin-top: 5px; color: var(--el-text-color-regular); font-size: 13px; line-height: 1.6; }
+.ai-quote { color: var(--el-text-color-secondary); }
+.ai-evidence { margin-top: 7px; font-size: 13px; }
+.ai-evidence summary { cursor: pointer; color: var(--el-color-primary); user-select: none; }
+.ai-evidence-item { margin: 8px 0 0 16px; padding-left: 8px; border-left: 2px solid var(--el-color-primary-light-7); }
+.ai-evidence-title { color: var(--el-text-color-primary); font-weight: 500; }
+.ai-evidence-text { margin-top: 3px; color: var(--el-text-color-regular); line-height: 1.6; white-space: pre-wrap; }
+.ai-not-found { margin-top: 7px; color: var(--el-color-warning); font-size: 12px; }
 .md-body { line-height: 1.75; color: var(--el-text-color-primary); max-height: 62vh; overflow: auto; }
 .md-body :deep(h2) { font-size: 16px; margin: 16px 0 8px; color: var(--el-color-primary); }
 .md-body :deep(h3) { font-size: 14px; margin: 12px 0 6px; }

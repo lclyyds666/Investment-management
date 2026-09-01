@@ -380,4 +380,39 @@ describe('contract AI review output', () => {
     expect(html).toContain('<strong>风险提示</strong>')
     expect(html).not.toMatch(/<img|onerror|href=/i)
   })
+
+  it('renders contradiction, not-found and evidence metadata', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.aiResult = {
+      markdown: '审查',
+      engine: 'deepseek',
+      has_attachment: true,
+      fact_checks: [
+        {
+          claim: '违约金 120%',
+          verdict: 'contradicted',
+          risk_level: 'high',
+          reason: '超过允许范围',
+          suggestion: '修改比例',
+          evidence: [{ title: '公司合同法', section: '第一条', text: '原文证据' }]
+        },
+        {
+          claim: '依据某办法',
+          verdict: 'not_found',
+          risk_level: 'medium',
+          reason: '知识库未找到依据',
+          suggestion: '补充依据',
+          evidence: []
+        }
+      ],
+      coverage: { claim_count: 2, evidence_rate: 0.5 },
+      fallback_reason: null
+    }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('存在矛盾')
+    expect(wrapper.text()).toContain('知识库未找到支持该主张的依据')
+    expect(wrapper.text()).toContain('原文证据')
+    expect(wrapper.text()).toContain('证据覆盖率 50%')
+  })
 })
