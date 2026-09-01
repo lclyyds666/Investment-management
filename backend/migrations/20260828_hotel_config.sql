@@ -19,6 +19,10 @@ PREPARE scenic_stmt FROM @add_default_hotel_name;
 EXECUTE scenic_stmt;
 DEALLOCATE PREPARE scenic_stmt;
 
+UPDATE `biz_scenic_config`
+SET `default_hotel_name` = '郑和海洋酒店、宝船酒店、水上酒店、长颈鹿酒店'
+WHERE COALESCE(TRIM(`default_hotel_name`), '') = '';
+
 SET @has_hotel_rate_hexiao = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE()

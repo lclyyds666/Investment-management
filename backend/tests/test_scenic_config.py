@@ -154,6 +154,18 @@ class ScenicConfigTest(unittest.TestCase):
                 )
         self.assertNotIn("COALESCE(`hotel_rate_", migration)
 
+    def test_hotel_migration_backfills_only_empty_default_names(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "20260828_hotel_config.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "WHERE COALESCE(TRIM(`default_hotel_name`), '') = ''",
+            migration,
+        )
+
     def test_config_list_endpoint_falls_back_when_hotel_columns_are_missing(self):
         response = scenic_endpoint.get_configs(_MissingMigrationSession(), None)
         configs = response.data
