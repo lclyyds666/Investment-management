@@ -300,10 +300,10 @@
             <span class="ai-meta-tag" :class="aiResult.has_attachment ? 'is-success' : 'is-warning'">
               {{ aiResult.has_attachment ? '基于合同附件全文' : '基于合同字段(未上传附件)' }}
             </span>
-            <span v-if="aiResult.kb_used && aiResult.kb_used.length" class="ai-meta-tag is-primary">
+            <span v-if="Array.isArray(aiResult.kb_used)" class="ai-meta-tag is-primary">
               参照法规库 {{ aiResult.kb_used.length }} 篇
             </span>
-            <span v-if="aiResult.retrieved_sources && aiResult.retrieved_sources.length" class="ai-meta-tag is-primary">
+            <span v-if="Array.isArray(aiResult.retrieved_sources)" class="ai-meta-tag is-primary">
               检索证据 {{ aiResult.retrieved_sources.length }} 篇
             </span>
             <span v-if="aiResult.coverage" class="ai-meta-tag is-warning">
@@ -337,7 +337,7 @@
                   <div class="ai-evidence-text">{{ source.text }}</div>
                 </div>
               </details>
-              <div v-else-if="item.verdict === 'not_found'" class="ai-not-found">知识库未找到支持该主张的依据</div>
+              <div v-else-if="item.verdict === 'not_found'" class="ai-not-found">知识库未找到依据</div>
             </div>
           </section>
           <details v-if="aiResult.retrieved_sources && aiResult.retrieved_sources.length" class="ai-evidence ai-all-evidence">
