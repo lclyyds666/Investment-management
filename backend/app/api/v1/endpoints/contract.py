@@ -27,7 +27,9 @@ from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
 from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 from app.schemas.workflow import WorkflowStartRequest
-from app.services import contract_review as review_svc
+from app.services.contract_evidence import deterministic_findings, retrieve_evidence
+from app.services.contract_review import render_review_markdown
+from app.services.contract_review_llm import review_with_evidence
 from app.services import customer_research as research_svc
 from app.services import legal_doc as legal_doc_svc
 from app.services.contract_workflow import contract_workflow_code
@@ -703,11 +705,14 @@ def _contract_text_for_review(contract: Contract) -> tuple[str, bool]:
     fields = [
         f"合同名称：{contract.title}",
         f"合同编号：{contract.contract_no}",
+        f"甲方：{contract.party_a or '未填写'}",
+        f"乙方：{contract.party_b or '未填写'}",
         f"合同类型：{contract.contract_type or '未填写'}",
         f"是否内部合同：{'是' if contract.is_internal else '否'}",
         f"合同标的：{contract.subject or '未填写'}",
         f"客户名称：{contract.customer_name or '未填写'}",
         f"合同金额：{contract.amount} {contract.currency or ''}",
+        f"签订日期：{contract.sign_date or '未填写'}",
         f"付款条件：{contract.payment_terms or '未填写'}",
         f"备注：{contract.remark or '无'}",
     ]
@@ -723,11 +728,69 @@ def ai_review_contract(
     contract = _get_contract_or_404(db, contract_id)
     _ensure_contract_visible(db, contract, current_user)
     contract_text, has_attachment = _contract_text_for_review(contract)
-    kb_text, kb_titles = review_svc.aggregate_kb_text(db)
-    result = review_svc.review(contract_text, kb_text)
+    review_text = (contract_text or "")[:12000]
+    structured_fields = {
+        "contract_no": contract.contract_no,
+        "title": contract.title,
+        "party_a": contract.party_a,
+        "party_b": contract.party_b,
+        "amount": str(contract.amount) if contract.amount is not None else "",
+        "sign_date": str(contract.sign_date) if contract.sign_date else "",
+        "contract_type": contract.contract_type,
+        "customer_name": contract.customer_name,
+        "subject": contract.subject,
+        "currency": contract.currency,
+        "payment_terms": contract.payment_terms,
+        "remark": contract.remark,
+        "is_internal": contract.is_internal,
+    }
+    structured_query = "\n".join(
+        f"{key}: {value}" for key, value in structured_fields.items() if value not in (None, "")
+    )
+    retrieval_text = f"{review_text}\n【结构化合同字段】\n{structured_query}".strip()
+    try:
+        evidence = retrieve_evidence(db, retrieval_text)
+        findings = deterministic_findings(review_text, structured_fields, evidence)
+        result = review_with_evidence(review_text, structured_fields, evidence, findings)
+    except Exception as exc:  # noqa: BLE001 - local retrieval must never break review endpoint
+        # Keep the endpoint available if the knowledge store is temporarily
+        # unavailable; deterministic checks still provide a safe fallback.
+        evidence = []
+        try:
+            findings = deterministic_findings(review_text, structured_fields, evidence)
+        except Exception:  # noqa: BLE001
+            findings = []
+        count = len(findings)
+        result = {
+            "fact_checks": findings,
+            "risk_findings": [],
+            "coverage": {"claim_count": count, "supported_count": 0, "contradicted_count": sum(f.get("verdict") == "contradicted" for f in findings), "not_found_count": sum(f.get("verdict") == "not_found" for f in findings), "evidence_rate": 0},
+            "engine": "rule",
+            "fallback_reason": "provider_error",
+        }
+    kb_titles: list[str] = []
+    for chunk in evidence:
+        if chunk.title and chunk.title not in kb_titles:
+            kb_titles.append(chunk.title)
     return Response.ok({
-        "markdown": result["markdown"],
+        "markdown": render_review_markdown(result),
         "engine": result["engine"],
         "has_attachment": has_attachment,
         "kb_used": kb_titles,
+        "retrieved_sources": [
+            {
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "title": chunk.title,
+                "category": chunk.category,
+                "section": chunk.section,
+                "ordinal": chunk.ordinal,
+                "text": chunk.text,
+            }
+            for chunk in evidence
+        ],
+        "fact_checks": result.get("fact_checks", []),
+        "risk_findings": result.get("risk_findings", []),
+        "coverage": result.get("coverage", {}),
+        "fallback_reason": result.get("fallback_reason"),
     })
