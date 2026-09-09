@@ -179,12 +179,23 @@ class ScenicConfigTest(unittest.TestCase):
                 "zunyi-zoo",
                 "nanyang-wildlife",
                 "guanquelou",
+                "changsha-dongqu",
             ],
         )
         fuzhou = configs[2]
         self.assertFalse(fuzhou.configured)
         self.assertEqual(fuzhou.hotel_rate_hexiao, Decimal("0.91"))
         self.assertEqual(fuzhou.hotel_platforms, ("抖音", "美团", "携程"))
+
+    def test_changsha_dongqu_uses_ticket_defaults(self):
+        changsha = get_effective_config(None, "changsha-dongqu")
+
+        self.assertEqual(changsha.scenic_name, "长沙动趣王国")
+        self.assertEqual(changsha.sort_order, 70)
+        self.assertEqual(changsha.default_ticket_product, "水上世界/童话世界/海洋王国")
+        self.assertEqual(changsha.ticket_rate_hexiao, Decimal("0.90"))
+        self.assertEqual(changsha.ticket_rate_settle, Decimal("0.94"))
+        self.assertEqual(changsha.ticket_commission_rate, Decimal("0.06"))
 
     def test_list_does_not_hide_non_database_errors(self):
         db = SimpleNamespace(
