@@ -125,6 +125,55 @@ def _year_from_filename(filename: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _period_from_filename(
+    filename: str,
+    reference_start: date | None = None,
+    reference_end: date | None = None,
+) -> tuple[date | None, date | None]:
+    """从文件名解析整份明细的对账周期，支持完整或省略结束年份的写法。"""
+    if not filename:
+        return None, None
+    full_match = re.search(
+        r"(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})\D+"
+        r"(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})",
+        filename,
+    )
+    if full_match:
+        try:
+            start = date(
+                int(full_match.group(1)),
+                int(full_match.group(2)),
+                int(full_match.group(3)),
+            )
+            end = date(
+                int(full_match.group(4)),
+                int(full_match.group(5)),
+                int(full_match.group(6)),
+            )
+            return start, end
+        except ValueError:
+            pass
+
+    reference = reference_start or reference_end
+    if reference is None:
+        return None, None
+    short_match = re.search(
+        r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})\D+"
+        r"(\d{1,2})[.\-/](\d{1,2})(?!\d)",
+        filename,
+    )
+    if not short_match:
+        return None, None
+    try:
+        start_month, start_day, end_month, end_day = map(int, short_match.groups())
+        start = date(reference.year, start_month, start_day)
+        end_year = reference.year + int((end_month, end_day) < (start_month, start_day))
+        end = date(end_year, end_month, end_day)
+        return start, end
+    except ValueError:
+        return None, None
+
+
 def _dates_from_title(title: str, year: int | None) -> tuple[date | None, date | None]:
     """从 sheet 标题解析日期跨度，如 '携程6.15-6.21' / '抖音明细1.14-1.20'。"""
     if not year:
@@ -398,6 +447,11 @@ def parse_hotel_file(
             continue
         d = agg[(hotel_name, plat)]
         base_received = _q(d["base_received"])
+        file_start, file_end = _period_from_filename(
+            filename, d["pstart"], d["pend"]
+        )
+        period_start = file_start or d["pstart"]
+        period_end = file_end or d["pend"]
         defs = daily_defaults(
             plat,
             d["daily"],
@@ -409,8 +463,8 @@ def parse_hotel_file(
             fee_algo=fee_algo,
         )
         p_text = ""
-        if d["pstart"] and d["pend"]:
-            s, e = d["pstart"], d["pend"]
+        if period_start and period_end:
+            s, e = period_start, period_end
             p_text = f"{s.year}/{s.month}/{s.day}-{e.year}/{e.month}/{e.day}"
         if d["order_count"] == 0:
             warnings.append(f"{plat}：未解析到有效明细")
@@ -431,8 +485,8 @@ def parse_hotel_file(
             "def_service_fee": defs["service_fee"],
             "def_jinying": defs["jinying"],
             "daily_json": serialize_daily(d["daily"]),
-            "period_start": d["pstart"],
-            "period_end": d["pend"],
+            "period_start": period_start,
+            "period_end": period_end,
             "period_text": p_text,
             "check_date_text": p_text,
         })

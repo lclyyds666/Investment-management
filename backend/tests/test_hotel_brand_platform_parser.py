@@ -100,6 +100,27 @@ class HotelBrandPlatformParserTest(unittest.TestCase):
             [("100", 2), ("-20", 1)],
         )
 
+    def test_full_cross_year_filename_controls_period_dates(self):
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        worksheet = workbook.create_sheet("海洋携程明细1.18-1.24")
+        worksheet.append(["结算价", "间夜", "入住日期", "离店日期"])
+        worksheet.append([100, 1, datetime(2026, 1, 18), datetime(2026, 1, 19)])
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+
+        parsed = parse_hotel_file(
+            output.getvalue(),
+            "海洋骑士长颈鹿2025.12.21-2026.1.24.xlsx",
+            **RATES,
+        )
+
+        platform = parsed["platforms"][0]
+        self.assertEqual(platform["period_start"].isoformat(), "2025-12-21")
+        self.assertEqual(platform["period_end"].isoformat(), "2026-01-24")
+        self.assertEqual(platform["check_date_text"], "2025/12/21-2026/1/24")
+
     def test_daily_recovery_matches_hotel_name_and_platform(self):
         row = SimpleNamespace(
             platform="携程", hotel_name="骑士", daily_json="",
