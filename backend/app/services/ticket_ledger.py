@@ -41,12 +41,15 @@ DEFAULT_COMMISSION_RATE = CALC_DEFAULT_COMMISSION_RATE
 
 # 明细表关键列的表头名（按名定位，抗列数差异）
 COL_SHISHOU = "订单实收金额"
+COL_SHISHOU_CURRENT = "订单实收"
 COL_RUANJIAN = "软件服务费"
 COL_DAREN = "达人服务费"
 COL_TUANZHANG = "团长服务费"
+COL_CUOHE = "撮合经纪服务费"
 COL_FUWUSHANG = "服务商服务费"
 COL_HEXIAO_TIME = "核销时间"
 COL_PRODUCT_ID = "商品ID"
+COL_DY_SCENIC = "核销门店"
 # 携程门票对账明细。携程没有抖音的订单实收/佣金列，结算价即服务商到账口径。
 COL_XC_JIESUAN = "结算价金额"
 COL_XC_FLOW_TYPE = "流水类型"
@@ -60,16 +63,18 @@ COL_MT_TECH_FEE = "技术服务费"
 COL_MT_SETTLE_TYPE = "结算方式"
 COL_MT_COUNT = "张数"
 COL_MT_TIME = "时间"
+COL_MT_PRODUCT = "产品名称"
 MT_CONSUMPTION_SETTLEMENT = "消费结算"
 # 同程门票结算明细。订单金额是服务商到账口径；商家应收仅用于识别账单。
 COL_TC_ORDER_AMOUNT = "订单金额"
 COL_TC_MERCHANT_RECEIVABLE = "商家应收"
 COL_TC_COUNT = "订单票数"
 COL_TC_DATE = "旅游日期"
+COL_TC_SCENIC = "景区名称"
+COL_XC_RESOURCE = "资源名称"
 _HEADER_SCAN_ROWS = 20
-# 服务商到账金额 = 订单实收 − 软件 − 达人 − 团长（明细中费用列为负数，直接相加）。
-# 注意：明细里的「服务商服务费」列其实是 -(服务商到账金额)，若一并相加会把结果抵消为 0，故不纳入。
-_FEE_COLS = (COL_RUANJIAN, COL_DAREN, COL_TUANZHANG)
+# 历史抖音明细的费用列为负数，按原始符号相加；鹳雀楼新明细为正数费用，按减项归一。
+# 「服务商服务费」在历史格式中为到账的相反数，鹳雀楼新格式中则直接表示到账净额。
 
 # 公式不属于运营配置，只能随代码评审和发布调整。
 _RECEIVED_RULES = {
@@ -80,6 +85,15 @@ _RECEIVED_RULES = {
 
 _COMMISSION_EXEMPT_PRODUCTS = {
     ("fuzhou-ouleb", "1870851250521100"),
+}
+
+_SCENIC_FILTER_RULES = {
+    "guanquelou": {
+        "抖音": (COL_DY_SCENIC, "鹳雀楼", False),
+        "美团": (COL_MT_PRODUCT, "鹳雀楼", False),
+        "携程": (COL_XC_RESOURCE, "鹳雀楼", False),
+        "同程": (COL_TC_SCENIC, "鹳雀楼", True),
+    },
 }
 
 
@@ -141,6 +155,36 @@ def _header_index(header: list, name: str) -> int:
     return -1
 
 
+def _header_index_any(header: list, names: tuple[str, ...]) -> int:
+    """按优先级匹配同一业务字段的多个表头名称。"""
+    for name in names:
+        index = _header_index(header, name)
+        if index >= 0:
+            return index
+    return -1
+
+
+def _scenic_filter(header: list, scenic_id: str, platform: str):
+    """返回景区筛选列及匹配规则；未配置的景区保持原解析行为。"""
+    rule = _SCENIC_FILTER_RULES.get(scenic_id, {}).get(platform)
+    if rule is None:
+        return None
+    column, keyword, exact = rule
+    index = _header_index(header, column)
+    if index < 0:
+        raise ValueError(f"{keyword}{platform}明细缺少必要列：{column}")
+    return index, keyword, exact
+
+
+def _matches_scenic(raw: tuple, rule) -> bool:
+    if rule is None:
+        return True
+    index, keyword, exact = rule
+    raw_value = raw[index] if index < len(raw) else ""
+    value = str(raw_value or "").strip()
+    return value == keyword if exact else keyword in value
+
+
 def _detect_platform(header: list) -> str | None:
     """根据关键表头识别平台，不依赖 Sheet 名称。"""
     names = {
@@ -148,8 +192,12 @@ def _detect_platform(header: list) -> str | None:
         for value in header
         if value is not None and str(value).strip()
     }
+    if (
+        COL_HEXIAO_TIME in names
+        and {COL_SHISHOU, COL_SHISHOU_CURRENT} & names
+    ):
+        return "抖音"
     signatures = (
-        ("抖音", {COL_SHISHOU, COL_HEXIAO_TIME}),
         ("美团", {COL_MT_AMOUNT, COL_MT_SETTLE_TYPE, COL_MT_COUNT, COL_MT_TIME}),
         ("携程", {COL_XC_JIESUAN, COL_XC_FLOW_TYPE}),
     )
@@ -228,6 +276,14 @@ def _row_count(value, default: int = 1) -> int:
     return max(int(parsed), 0)
 
 
+def _signed_row_count(value, default: int = 1) -> int:
+    """退款行保留负票数，仅用于需要净核销数的景区规则。"""
+    parsed = _num(value)
+    if parsed is None:
+        return default
+    return int(parsed)
+
+
 def parse_reconciliation(
     content: bytes,
     filename: str = "",
@@ -293,8 +349,15 @@ def parse_reconciliation(
             if platform == "抖音":
                 aggregate = platform_aggregate("抖音")
                 aggregate["sheets"].append(ws.title)
-                i_shishou = _header_index(header, COL_SHISHOU)
-                i_fees = [_header_index(header, c) for c in _FEE_COLS]
+                scenic_filter = _scenic_filter(header, scenic_id, "抖音")
+                i_shishou = _header_index_any(
+                    header, (COL_SHISHOU_CURRENT, COL_SHISHOU)
+                )
+                i_fees = [
+                    _header_index(header, COL_RUANJIAN),
+                    _header_index(header, COL_DAREN),
+                    _header_index_any(header, (COL_TUANZHANG, COL_CUOHE)),
+                ]
                 i_fuwushang = _header_index(header, COL_FUWUSHANG)
                 i_time = _header_index(header, COL_HEXIAO_TIME)
                 i_product_id = _header_index(header, COL_PRODUCT_ID)
@@ -316,6 +379,8 @@ def parse_reconciliation(
                 for raw in rows_iter:
                     if not raw:
                         continue
+                    if not _matches_scenic(raw, scenic_filter):
+                        continue
                     shishou = _num(raw[i_shishou]) if i_shishou < len(raw) else None
                     fee_vals = [
                         (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
@@ -334,10 +399,33 @@ def parse_reconciliation(
                         )
                     elif received_rule == "nanyang_douyin":
                         base = shishou or Decimal("0")
+                    elif scenic_id == "guanquelou":
+                        inferred_positive_fees = (
+                            fuwushang is not None
+                            and fuwushang > 0
+                            and all(fee is None or fee >= 0 for fee in fee_vals)
+                        )
+                        positive_fee_format = inferred_positive_fees
+                        if positive_fee_format:
+                            component_base = shishou or Decimal("0")
+                            for fee in fee_vals:
+                                component_base -= fee or Decimal("0")
+                            base = fuwushang if fuwushang is not None else component_base
+                            commission_daren = -(fee_vals[1] or Decimal("0"))
+                            commission_tuanzhang = -(fee_vals[2] or Decimal("0"))
+                        else:
+                            base = shishou or Decimal("0")
+                            for fee in fee_vals:
+                                base += fee or Decimal("0")
+                            commission_daren = fee_vals[1] or Decimal("0")
+                            commission_tuanzhang = fee_vals[2] or Decimal("0")
                     else:
                         base = shishou or Decimal("0")
                         for fee in fee_vals:
                             base += fee or Decimal("0")  # 通用账单费用为负数，直接相加
+                    if scenic_id != "guanquelou":
+                        commission_daren = fee_vals[1] or Decimal("0")
+                        commission_tuanzhang = fee_vals[2] or Decimal("0")
                     aggregate["supplier_received"] += base
                     aggregate["order_count"] += 1
                     if shishou is not None and shishou > 0:
@@ -364,13 +452,14 @@ def parse_reconciliation(
                     )
                     if (scenic_id, product_id) not in _COMMISSION_EXEMPT_PRODUCTS:
                         dd["commission_shishou"] += shishou or Decimal("0")
-                        dd["commission_daren"] += fee_vals[1] or Decimal("0")
-                        dd["commission_tuanzhang"] += fee_vals[2] or Decimal("0")
+                        dd["commission_daren"] += commission_daren
+                        dd["commission_tuanzhang"] += commission_tuanzhang
                 continue
 
             if platform == "携程":
                 aggregate = platform_aggregate("携程")
                 aggregate["sheets"].append(ws.title)
+                scenic_filter = _scenic_filter(header, scenic_id, "携程")
                 i_xc_jiesuan = _header_index(header, COL_XC_JIESUAN)
                 i_flow = _header_index(header, COL_XC_FLOW_TYPE)
                 i_count = _header_index(header, "使用份数")
@@ -380,6 +469,8 @@ def parse_reconciliation(
                 for raw in rows_iter:
                     if not raw:
                         continue
+                    if not _matches_scenic(raw, scenic_filter):
+                        continue
                     # 携程账单可能混有调账等流水，只将订单成本计入核销台账。
                     if 0 <= i_flow < len(raw):
                         flow_type = str(raw[i_flow] or "").strip()
@@ -388,7 +479,12 @@ def parse_reconciliation(
                     base = _num(raw[i_xc_jiesuan]) if i_xc_jiesuan < len(raw) else None
                     if base is None:
                         continue
-                    count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
+                    count_value = raw[i_count] if 0 <= i_count < len(raw) else None
+                    count = (
+                        _signed_row_count(count_value, default=0)
+                        if scenic_id == "guanquelou"
+                        else _row_count(count_value)
+                    )
                     d = None
                     for idx in (i_service, i_departure, i_payment):
                         if 0 <= idx < len(raw):
@@ -398,7 +494,7 @@ def parse_reconciliation(
                     aggregate["supplier_received"] += base
                     aggregate["order_count"] += count
                     if base > 0:
-                        aggregate["positive_count"] += count
+                        aggregate["positive_count"] += max(count, 0)
                     add_date(aggregate, d)
                     key = d.isoformat() if d else "NA"
                     dd = aggregate["daily"].setdefault(key, {
@@ -414,6 +510,7 @@ def parse_reconciliation(
             if platform == "美团":
                 aggregate = platform_aggregate("美团")
                 aggregate["sheets"].append(ws.title)
+                scenic_filter = _scenic_filter(header, scenic_id, "美团")
                 i_amount = _header_index(header, COL_MT_AMOUNT)
                 i_tech_fee = _header_index(header, COL_MT_TECH_FEE)
                 i_settle_type = _header_index(header, COL_MT_SETTLE_TYPE)
@@ -424,6 +521,8 @@ def parse_reconciliation(
                     raise ValueError(f"遵义动物园美团明细缺少必要列：{COL_MT_TECH_FEE}")
                 for raw in rows_iter:
                     if not raw:
+                        continue
+                    if not _matches_scenic(raw, scenic_filter):
                         continue
                     settle_type = (
                         str(raw[i_settle_type] or "").strip()
@@ -440,13 +539,18 @@ def parse_reconciliation(
                             _num(raw[i_tech_fee]) if 0 <= i_tech_fee < len(raw) else None
                         )
                         base += tech_fee or Decimal("0")
-                    count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
+                    count_value = raw[i_count] if 0 <= i_count < len(raw) else None
+                    count = (
+                        _signed_row_count(count_value, default=0)
+                        if scenic_id == "guanquelou"
+                        else _row_count(count_value)
+                    )
                     d = _to_date(raw[i_time]) if 0 <= i_time < len(raw) else None
                     add_date(aggregate, d)
                     aggregate["supplier_received"] += base
                     aggregate["order_count"] += count
                     if base > 0:
-                        aggregate["positive_count"] += count
+                        aggregate["positive_count"] += max(count, 0)
                     key = d.isoformat() if d else "NA"
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),
@@ -461,6 +565,7 @@ def parse_reconciliation(
             if platform == "同程":
                 aggregate = platform_aggregate("同程")
                 aggregate["sheets"].append(ws.title)
+                scenic_filter = _scenic_filter(header, scenic_id, "同程")
                 i_amount = _header_index(header, COL_TC_ORDER_AMOUNT)
                 i_count = _header_index(header, COL_TC_COUNT)
                 i_date = _header_index(header, COL_TC_DATE)
@@ -469,16 +574,23 @@ def parse_reconciliation(
                 for raw in rows_iter:
                     if not raw:
                         continue
+                    if not _matches_scenic(raw, scenic_filter):
+                        continue
                     base = _num(raw[i_amount]) if 0 <= i_amount < len(raw) else None
                     if base is None:
                         continue
-                    count = _row_count(raw[i_count] if 0 <= i_count < len(raw) else None)
+                    count_value = raw[i_count] if 0 <= i_count < len(raw) else None
+                    count = (
+                        _signed_row_count(count_value, default=0)
+                        if scenic_id == "guanquelou"
+                        else _row_count(count_value)
+                    )
                     d = _to_date(raw[i_date]) if 0 <= i_date < len(raw) else None
                     add_date(aggregate, d)
                     aggregate["supplier_received"] += base
                     aggregate["order_count"] += count
                     if base > 0:
-                        aggregate["positive_count"] += count
+                        aggregate["positive_count"] += max(count, 0)
                     key = d.isoformat() if d else "NA"
                     dd = aggregate["daily"].setdefault(key, {
                         "received": Decimal("0"), "shishou": Decimal("0"),

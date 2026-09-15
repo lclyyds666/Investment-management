@@ -43,8 +43,8 @@
       )
       by_platform = {item["platform"]: item for item in parsed["platforms"]}
       self.assertEqual(set(by_platform), {"抖音", "美团", "携程", "同程"})
-      self.assertEqual(by_platform["抖音"]["supplier_received"], Decimal("90.00"))
-      self.assertEqual(by_platform["抖音"]["suggested_commission"], Decimal("4.80"))
+      self.assertEqual(by_platform["抖音"]["supplier_received"], Decimal("93.00"))
+      self.assertEqual(by_platform["抖音"]["suggested_commission"], Decimal("3.00"))
       self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("40.00"))
       self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("50.00"))
       self.assertEqual(by_platform["同程"]["supplier_received"], Decimal("60.00"))

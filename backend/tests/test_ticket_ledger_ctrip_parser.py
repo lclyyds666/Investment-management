@@ -325,6 +325,231 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
                 scenic_id="zunyi-zoo",
             )
 
+    @staticmethod
+    def _guanquelou_mixed_workbook() -> bytes:
+        wb = Workbook()
+
+        douyin = wb.active
+        douyin.title = "抖音7.31-8.7"
+        douyin.append([
+            "订单实收", "软件服务费", "达人服务费", "撮合经纪服务费",
+            "服务商服务费", "核销时间", "核销门店",
+        ])
+        douyin.append([100, 4, 2, 1, 93, datetime(2026, 8, 1, 10, 0), "鹳雀楼"])
+        douyin.append([1000, 40, 20, 10, 930, datetime(2026, 8, 2, 10, 0), "普救寺"])
+
+        meituan = wb.create_sheet("美团7.31-8.9")
+        meituan.append(["结算方式", "应付金额", "技术服务费", "张数", "时间", "产品名称"])
+        meituan.append(["消费结算", 40, 3, 2, datetime(2026, 8, 1, 11, 0), "鹳雀楼景区-成人票"])
+        meituan.append(["消费结算", 400, 30, 4, datetime(2026, 8, 2, 11, 0), "普救寺-成人票"])
+
+        ctrip = wb.create_sheet("携程7.31-8.9")
+        ctrip.append([
+            "结算价金额", "流水类型", "使用份数", "服务完成日期",
+            "出发时间", "付款日期", "资源名称",
+        ])
+        ctrip.append([50, "订单成本", 3, None, datetime(2026, 8, 1), None, "鹳雀楼门票成人票"])
+        ctrip.append([500, "订单成本", 5, None, datetime(2026, 8, 2), None, "普救寺门票成人票"])
+
+        tongcheng = wb.create_sheet("同程7.31-8.15")
+        tongcheng.append(["订单金额", "商家应收", "订单票数", "旅游日期", "景区名称"])
+        tongcheng.append([60, 57, 2, datetime(2026, 8, 1), "鹳雀楼"])
+        tongcheng.append([600, 570, 6, datetime(2026, 8, 2), "普救寺"])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+        return output.getvalue()
+
+    def test_guanquelou_filters_mixed_scenics_and_real_douyin_headers(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._guanquelou_mixed_workbook(),
+            "鹳雀楼7.31-8.23.xlsx",
+            scenic_id="guanquelou",
+            ticket_product="鹳雀楼",
+        )
+        by_platform = {item["platform"]: item for item in parsed["platforms"]}
+
+        self.assertEqual(list(by_platform), ["抖音", "美团", "携程", "同程"])
+        self.assertEqual(by_platform["抖音"]["supplier_received"], Decimal("93.00"))
+        self.assertEqual(by_platform["抖音"]["suggested_commission"], Decimal("3.00"))
+        self.assertEqual(by_platform["抖音"]["def_hexiao"], Decimal("81.00"))
+        self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("40.00"))
+        self.assertEqual(by_platform["美团"]["order_count"], 2)
+        self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("50.00"))
+        self.assertEqual(by_platform["携程"]["order_count"], 3)
+        self.assertEqual(by_platform["同程"]["supplier_received"], Decimal("60.00"))
+        self.assertEqual(by_platform["同程"]["order_count"], 2)
+        for item in by_platform.values():
+            self.assertEqual(item["period_text"], "2026/7/31-2026/8/23")
+            self.assertEqual(item["positive_count"], item["order_count"])
+            self.assertEqual(len(json.loads(item["daily_json"])), 1)
+        douyin_daily = json.loads(by_platform["抖音"]["daily_json"])[0]
+        self.assertEqual(douyin_daily["cs"], "100")
+        self.assertEqual(douyin_daily["cd"], "-2")
+        self.assertEqual(douyin_daily["ct"], "-1")
+
+    def test_guanquelou_requires_platform_scenic_column(self):
+        wb = Workbook()
+        douyin = wb.active
+        douyin.append([
+            "订单实收", "软件服务费", "达人服务费", "撮合经纪服务费",
+            "服务商服务费", "核销时间",
+        ])
+        douyin.append([100, 4, 2, 1, 93, datetime(2026, 8, 1, 10, 0)])
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        with self.assertRaisesRegex(ValueError, "核销门店"):
+            ticket_ledger.parse_reconciliation(
+                output.getvalue(), "鹳雀楼8.1-8.1.xlsx", scenic_id="guanquelou"
+            )
+
+    def test_guanquelou_requires_each_platform_scenic_column(self):
+        cases = (
+            (
+                "美团",
+                ["结算方式", "应付金额", "张数", "时间"],
+                ["消费结算", 40, 1, datetime(2026, 8, 1)],
+                "产品名称",
+            ),
+            (
+                "携程",
+                ["结算价金额", "流水类型", "使用份数", "出发时间"],
+                [50, "订单成本", 1, datetime(2026, 8, 1)],
+                "资源名称",
+            ),
+            (
+                "同程",
+                ["订单金额", "商家应收", "订单票数", "旅游日期"],
+                [60, 57, 1, datetime(2026, 8, 1)],
+                "景区名称",
+            ),
+        )
+        for title, headers, values, missing_column in cases:
+            with self.subTest(platform=title):
+                wb = Workbook()
+                ws = wb.active
+                ws.title = title
+                ws.append(headers)
+                ws.append(values)
+                output = BytesIO()
+                wb.save(output)
+                wb.close()
+
+                with self.assertRaisesRegex(ValueError, missing_column):
+                    ticket_ledger.parse_reconciliation(
+                        output.getvalue(),
+                        "鹳雀楼8.1-8.1.xlsx",
+                        scenic_id="guanquelou",
+                    )
+
+    def test_guanquelou_uses_signed_ticket_counts_when_available(self):
+        wb = Workbook()
+        meituan = wb.active
+        meituan.title = "美团"
+        meituan.append(["结算方式", "应付金额", "张数", "时间", "产品名称"])
+        meituan.append(["消费结算", 40, 2, datetime(2026, 8, 1), "鹳雀楼成人票"])
+        meituan.append(["消费结算", -5, "-", datetime(2026, 8, 1), "鹳雀楼成人票"])
+
+        ctrip = wb.create_sheet("携程")
+        ctrip.append(["结算价金额", "流水类型", "使用份数", "出发时间", "资源名称"])
+        ctrip.append([50, "订单成本", 3, datetime(2026, 8, 1), "鹳雀楼成人票"])
+        ctrip.append([-10, "订单成本", -1, datetime(2026, 8, 1), "鹳雀楼成人票"])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(), "鹳雀楼8.1-8.1.xlsx", scenic_id="guanquelou"
+        )
+        by_platform = {item["platform"]: item for item in parsed["platforms"]}
+
+        self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("35.00"))
+        self.assertEqual(by_platform["美团"]["order_count"], 2)
+        self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("40.00"))
+        self.assertEqual(by_platform["携程"]["order_count"], 2)
+        self.assertEqual(by_platform["携程"]["positive_count"], 3)
+
+    def test_guanquelou_legacy_douyin_signed_fees_remain_compatible(self):
+        wb = Workbook()
+        douyin = wb.active
+        douyin.append([
+            "订单实收金额", "软件服务费", "达人服务费", "团长服务费",
+            "服务商服务费", "核销时间", "核销门店",
+        ])
+        douyin.append([100, -1, -2, -3, -94, datetime(2026, 8, 1, 10, 0), "鹳雀楼"])
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(), "鹳雀楼8.1-8.1.xlsx", scenic_id="guanquelou"
+        )
+        self.assertEqual(parsed["supplier_received"], Decimal("94.00"))
+        self.assertEqual(parsed["suggested_commission"], Decimal("1.00"))
+
+    def test_guanquelou_new_douyin_header_keeps_signed_refunds(self):
+        wb = Workbook()
+        douyin = wb.active
+        douyin.append([
+            "订单实收", "软件服务费", "达人服务费", "撮合经纪服务费",
+            "服务商服务费", "核销时间", "核销门店",
+        ])
+        douyin.append([100, -1, -2, -3, -94, datetime(2026, 8, 1, 10, 0), "鹳雀楼"])
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(), "鹳雀楼8.1-8.1.xlsx", scenic_id="guanquelou"
+        )
+        self.assertEqual(parsed["supplier_received"], Decimal("94.00"))
+        self.assertEqual(parsed["suggested_commission"], Decimal("1.00"))
+
+    def test_guanquelou_zero_service_fee_uses_signed_fallback(self):
+        wb = Workbook()
+        douyin = wb.active
+        douyin.append([
+            "订单实收", "软件服务费", "达人服务费", "撮合经纪服务费",
+            "服务商服务费", "核销时间", "核销门店",
+        ])
+        douyin.append([100, 4, 2, 1, 0, datetime(2026, 8, 1, 10, 0), "鹳雀楼"])
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(), "鹳雀楼8.1-8.1.xlsx", scenic_id="guanquelou"
+        )
+        self.assertEqual(parsed["supplier_received"], Decimal("107.00"))
+        self.assertEqual(parsed["suggested_commission"], Decimal("9.00"))
+
+    def test_guanquelou_daily_recalculation_preserves_positive_fee_signs(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._guanquelou_mixed_workbook(),
+            "鹳雀楼7.31-8.23.xlsx",
+            scenic_id="guanquelou",
+        )
+        douyin = next(item for item in parsed["platforms"] if item["platform"] == "抖音")
+
+        recalculated = ticket_ledger.recompute_from_json(
+            douyin["daily_json"],
+            Decimal("0.90"),
+            Decimal("0.94"),
+            None,
+            Decimal("0.08"),
+            "抖音",
+            "guanquelou",
+        )
+
+        self.assertEqual(recalculated["supplier_commission"], Decimal("5.00"))
+        self.assertEqual(recalculated["publisher_due"], Decimal("88.00"))
+        self.assertEqual(recalculated["hexiao_amount"], Decimal("79.20"))
+        self.assertEqual(recalculated["jinying_amount"], Decimal("82.72"))
+        self.assertEqual(recalculated["service_fee"], Decimal("3.52"))
+
 
 if __name__ == "__main__":
     unittest.main()
