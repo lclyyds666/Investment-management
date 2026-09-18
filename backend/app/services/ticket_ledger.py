@@ -400,25 +400,11 @@ def parse_reconciliation(
                     elif received_rule == "nanyang_douyin":
                         base = shishou or Decimal("0")
                     elif scenic_id == "guanquelou":
-                        inferred_positive_fees = (
-                            fuwushang is not None
-                            and fuwushang > 0
-                            and all(fee is None or fee >= 0 for fee in fee_vals)
-                        )
-                        positive_fee_format = inferred_positive_fees
-                        if positive_fee_format:
-                            component_base = shishou or Decimal("0")
-                            for fee in fee_vals:
-                                component_base -= fee or Decimal("0")
-                            base = fuwushang if fuwushang is not None else component_base
-                            commission_daren = -(fee_vals[1] or Decimal("0"))
-                            commission_tuanzhang = -(fee_vals[2] or Decimal("0"))
-                        else:
-                            base = shishou or Decimal("0")
-                            for fee in fee_vals:
-                                base += fee or Decimal("0")
-                            commission_daren = fee_vals[1] or Decimal("0")
-                            commission_tuanzhang = fee_vals[2] or Decimal("0")
+                        # 鹳雀楼抖音以订单实收作为平台到账基数；平台费用列
+                        # 仅保留在逐日原始字段中，不再影响到账或佣金。
+                        base = shishou or Decimal("0")
+                        commission_daren = Decimal("0")
+                        commission_tuanzhang = Decimal("0")
                     else:
                         base = shishou or Decimal("0")
                         for fee in fee_vals:
@@ -450,7 +436,12 @@ def parse_reconciliation(
                         if 0 <= i_product_id < len(raw)
                         else ""
                     )
-                    if (scenic_id, product_id) not in _COMMISSION_EXEMPT_PRODUCTS:
+                    if scenic_id == "guanquelou":
+                        # 鹳雀楼服务商佣金固定为零，忽略明细中的费用符号。
+                        dd["commission_shishou"] += Decimal("0")
+                        dd["commission_daren"] += Decimal("0")
+                        dd["commission_tuanzhang"] += Decimal("0")
+                    elif (scenic_id, product_id) not in _COMMISSION_EXEMPT_PRODUCTS:
                         dd["commission_shishou"] += shishou or Decimal("0")
                         dd["commission_daren"] += commission_daren
                         dd["commission_tuanzhang"] += commission_tuanzhang
@@ -519,6 +510,8 @@ def parse_reconciliation(
                 received_rule = _RECEIVED_RULES.get((scenic_id, "美团"), "default")
                 if received_rule == "zunyi_meituan" and i_tech_fee < 0:
                     raise ValueError(f"遵义动物园美团明细缺少必要列：{COL_MT_TECH_FEE}")
+                if scenic_id == "guanquelou" and i_tech_fee < 0:
+                    raise ValueError(f"鹳雀楼美团明细缺少必要列：{COL_MT_TECH_FEE}")
                 for raw in rows_iter:
                     if not raw:
                         continue
@@ -534,7 +527,7 @@ def parse_reconciliation(
                     base = _num(raw[i_amount]) if 0 <= i_amount < len(raw) else None
                     if base is None:
                         continue
-                    if received_rule == "zunyi_meituan":
+                    if received_rule == "zunyi_meituan" or scenic_id == "guanquelou":
                         tech_fee = (
                             _num(raw[i_tech_fee]) if 0 <= i_tech_fee < len(raw) else None
                         )

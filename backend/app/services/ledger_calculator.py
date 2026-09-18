@@ -117,7 +117,7 @@ def calculate_ticket_ledger(
         if supplier_received is None:
             return None
         commission = _dec(commission_override)
-        if platform != "抖音":
+        if platform != "抖音" or sid == "guanquelou":
             commission = Decimal("0")
         base = _dec(supplier_received) - commission
         hexiao = quantize_money(base * (rate_hexiao or Decimal("0")))
@@ -131,7 +131,7 @@ def calculate_ticket_ledger(
             "jinying_amount": settle,
         }
     is_douyin = platform == "抖音"
-    if is_douyin:
+    if is_douyin and sid != "guanquelou":
         commissions, commission_total = _distribute_commission(
             days, commission_override, commission_rate
         )

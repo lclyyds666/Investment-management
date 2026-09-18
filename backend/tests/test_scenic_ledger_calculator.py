@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+import json
 from pathlib import Path
 
 from app.services import hotel_ledger, ticket_ledger
@@ -9,6 +10,39 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ScenicLedgerCalculatorTest(unittest.TestCase):
+    def test_guanquelou_daily_snapshot_ignores_stale_commission(self):
+        daily = json.dumps([{
+            "r": "100", "cs": "8", "cd": "-2", "ct": "1",
+        }])
+        result = ticket_ledger.calculate_ticket_ledger(
+            "guanquelou",
+            daily,
+            rate_hexiao=Decimal("0.90"),
+            rate_settle=Decimal("0.94"),
+            commission_override=Decimal("17"),
+            commission_rate=Decimal("0.06"),
+            platform="抖音",
+        )
+        self.assertEqual(result["supplier_commission"], Decimal("0.00"))
+        self.assertEqual(result["publisher_due"], Decimal("100.00"))
+        self.assertEqual(result["hexiao_amount"], Decimal("90.00"))
+        self.assertEqual(result["jinying_amount"], Decimal("94.00"))
+
+    def test_guanquelou_no_daily_fallback_ignores_stale_commission(self):
+        result = ticket_ledger.calculate_ticket_ledger(
+            "guanquelou",
+            [],
+            supplier_received=Decimal("100"),
+            rate_hexiao=Decimal("0.90"),
+            rate_settle=Decimal("0.94"),
+            commission_override=Decimal("17"),
+            platform="抖音",
+        )
+        self.assertEqual(result["supplier_commission"], Decimal("0.00"))
+        self.assertEqual(result["publisher_due"], Decimal("100.00"))
+        self.assertEqual(result["hexiao_amount"], Decimal("90.00"))
+        self.assertEqual(result["jinying_amount"], Decimal("94.00"))
+
     def test_quancheng_ticket_excel_uses_common_engine_for_all_scenics(self):
         source = ROOT / "台账" / "对账明细-2026.04.29-2026.05.19.xlsx"
         parsed = ticket_ledger.parse_reconciliation(source.read_bytes(), source.name)
