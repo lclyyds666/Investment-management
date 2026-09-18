@@ -31,6 +31,7 @@ SCENIC_SEEDS = (
     ("zunyi-zoo", "遵义动物园", 40, "遵义动物园", "0.84", "0.87", "0", "0"),
     ("nanyang-wildlife", "南阳森林野生动物世界", 50, "南阳森林野生动物世界", "0.80", "0.85", "0", "0"),
     ("guanquelou", "鹳雀楼", 60, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
+    ("changsha-dongqu", "长沙动趣王国", 70, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
 )
 
 

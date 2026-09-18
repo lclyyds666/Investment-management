@@ -127,6 +127,16 @@ const SCENIC_DEFS = [
       { key: 'meituan', url: 'https://mpc.meituan.com/#/ticket/product/new' },
       { key: 'tongcheng', url: 'http://ebk.17u.cn/jingqu/' }
     ]
+  },
+  {
+    id: 'changsha-dongqu', name: '长沙动趣王国', province: '湖南省', ext: 'jpg',
+    ticketEnabled: true, hotelEnabled: false,
+    scenic: [],
+    ticket: [
+      { key: 'douyin', url: 'https://life.douyin.com' },
+      { key: 'ctrip', url: 'https://vbooking.ctrip.com/micro/ivbk/accountV2/dashboard' },
+      { key: 'meituan', url: 'https://mpc.meituan.com/#/ticket/product/new' }
+    ]
   }
 ]
 
