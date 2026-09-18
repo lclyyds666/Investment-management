@@ -37,6 +37,21 @@ const config = {
   hotel_platforms: ['抖音', '美团', '携程', '同程']
 }
 
+const canonicalScenics = [
+  ['quancheng-ouleb', '泉城欧乐堡'],
+  ['quanzhou-ouleb', '泉州欧乐堡'],
+  ['fuzhou-ouleb', '福州欧乐堡'],
+  ['zunyi-zoo', '遵义动物园'],
+  ['nanyang-wildlife', '南阳森林野生动物世界'],
+  ['guanquelou', '鹳雀楼'],
+  ['changsha-dongqu', '长沙动趣王国']
+]
+const configsForAllScenics = canonicalScenics.map(([scenic_id, scenic_name]) => ({
+  ...config,
+  scenic_id,
+  scenic_name
+}))
+
 const passthrough = { template: '<div><slot /><slot name="footer" /></div>' }
 const table = { template: '<div><slot name="empty" /></div>' }
 const global = {
@@ -89,5 +104,19 @@ describe('ScenicConfigDialog hotel configuration', () => {
       hotel_fee_algo: 2,
       hotel_platforms: ['抖音', '美团', '携程']
     })
+  })
+
+  it('shows hotel configuration only for hotel-enabled scenic spots', async () => {
+    scenicApi.getScenicConfigs.mockResolvedValue(configsForAllScenics)
+    const wrapper = shallowMount(ScenicConfigDialog, { global })
+    await wrapper.vm.loadConfigs()
+
+    expect(wrapper.vm.rows.map((row) => row.scenic_id)).toEqual([
+      'quancheng-ouleb', 'quanzhou-ouleb', 'fuzhou-ouleb',
+      'zunyi-zoo', 'nanyang-wildlife', 'guanquelou', 'changsha-dongqu'
+    ])
+    expect(wrapper.vm.hotelRows.map((row) => row.scenic_id)).toEqual([
+      'quancheng-ouleb', 'quanzhou-ouleb', 'fuzhou-ouleb'
+    ])
   })
 })

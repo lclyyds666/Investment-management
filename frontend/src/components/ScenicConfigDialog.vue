@@ -121,7 +121,7 @@
       <el-tab-pane label="酒店配置" name="hotel">
         <el-table
           v-loading="loading"
-          :data="rows"
+          :data="hotelRows"
           border
           stripe
           size="small"
@@ -214,6 +214,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getScenicConfigs, updateHotelScenicConfig, updateScenicConfig } from '@/api/scenic'
+import { scenicSpots } from '@/constants/scenic'
 import { usePortalStore } from '@/store/portal'
 import { canUsePermission } from '@/utils/businessAuthorization'
 
@@ -225,8 +226,12 @@ const hotelSavingId = ref('')
 const rows = ref([])
 const activeTab = ref('ticket')
 const HOTEL_PLATFORMS = ['抖音', '美团', '携程']
+const HOTEL_SCENIC_IDS = new Set(
+  scenicSpots.filter((spot) => spot.hotelEnabled).map((spot) => spot.id)
+)
 
 const canEdit = computed(() => canUsePermission(portalStore, 'supply.scenic.update'))
+const hotelRows = computed(() => rows.value.filter((row) => HOTEL_SCENIC_IDS.has(row.scenic_id)))
 
 function rateToPercent(value) {
   return Math.round((Number(value) || 0) * 10000) / 100
