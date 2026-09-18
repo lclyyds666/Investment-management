@@ -13,6 +13,15 @@ import { formatWanFromYuan as formatScreenMapMoneyValue } from '@/utils/money'
 export function formatScreenMapMoney(value) {
   return formatScreenMapMoneyValue(value)
 }
+
+export const SCREEN_PROVINCE_COORDS = {
+  山东省: [117.02, 36.67],
+  福建省: [119.30, 26.08],
+  贵州省: [106.71, 26.58],
+  河南省: [113.62, 34.75],
+  山西省: [112.55, 37.87],
+  湖南省: [112.94, 28.23]
+}
 </script>
 
 <script setup>
@@ -27,13 +36,6 @@ const props = defineProps({
 })
 const emit = defineEmits(['province-click'])
 
-const PROVINCE_COORDS = {
-  山东省: [117.02, 36.67],
-  福建省: [119.30, 26.08],
-  贵州省: [106.71, 26.58],
-  河南省: [113.62, 34.75],
-  山西省: [112.55, 37.87]
-}
 const PROVINCE_SUFFIX = /(省|市|壮族自治区|回族自治区|维吾尔自治区|自治区|特别行政区)$/
 
 const element = ref(null)
@@ -100,16 +102,16 @@ function buildOption() {
     }
   })
   const nodes = props.provinceData
-    .filter((item) => PROVINCE_COORDS[item.name])
+    .filter((item) => SCREEN_PROVINCE_COORDS[item.name])
     .map((item) => ({
       name: item.name,
       province: item.name,
       revenue: Number(item.revenue || 0),
       profit: Number(item.profit || 0),
       scenicCount: Number(item.scenicCount || 0),
-      value: [...PROVINCE_COORDS[item.name], Number(item.revenue || 0)]
+      value: [...SCREEN_PROVINCE_COORDS[item.name], Number(item.revenue || 0)]
     }))
-  const hubCoord = PROVINCE_COORDS['山东省']
+  const hubCoord = SCREEN_PROVINCE_COORDS['山东省']
   const lines = nodes
     .filter((item) => item.province !== '山东省')
     .map((item) => ({

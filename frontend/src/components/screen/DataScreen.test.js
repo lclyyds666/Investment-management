@@ -69,6 +69,11 @@ describe('fullscreen DataScreen', () => {
       revenue: 100000,
       profit: 20000
     })
+    expect(screenMap.props('provinceData').find((item) => item.name === '湖南省')).toMatchObject({
+      revenue: 0,
+      profit: 0,
+      scenicCount: 1
+    })
     screenMap.vm.$emit('province-click', '山东省')
     await wrapper.vm.$nextTick()
 
@@ -79,5 +84,10 @@ describe('fullscreen DataScreen', () => {
   it('formats map tooltip amounts from yuan to ten-thousands', async () => {
     const { formatScreenMapMoney } = await import('./ScreenMap.vue')
     expect(formatScreenMapMoney(100000)).toBe('¥10.00 万元')
+  })
+
+  it('registers Hunan as a screen-map business node', async () => {
+    const { SCREEN_PROVINCE_COORDS } = await import('./ScreenMap.vue')
+    expect(SCREEN_PROVINCE_COORDS['湖南省']).toEqual([112.94, 28.23])
   })
 })
