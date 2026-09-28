@@ -363,6 +363,25 @@ ssh root@39.107.52.146 '
 
 > 更新后浏览器强刷(`Ctrl/Cmd+Shift+R`)或用无痕窗口,避开静态缓存。
 
+### 发票/台账集成上线顺序
+
+现有数据库上线发票与门票/酒店台账联动时，严格按以下顺序执行：
+
+1. 备份数据库，并在 `backend/` 目录执行
+   `migrations/20260927_invoice_ledger_integration.sql`（使用
+   `--default-character-set=utf8mb4`）；该脚本可重复执行，不删除已有
+   `biz_invoice` 记录。
+2. 发布后端 `app`、`migrations` 及随包模板，再发布前端 `dist`。
+3. 重启 `sd-scm-backend`，检查 `nginx -t` 后 reload Nginx。
+4. 使用只读令牌执行 `GET /api/v1/invoices?page=1&page_size=1` smoke test，
+   确认返回 `200` 且旧发票可读，再恢复业务录入。
+
+发票打印模板必须随后端一起部署，固定路径为
+`backend/app/templates/approval/invoice.docx` 和
+`backend/app/templates/invoice/invoice_detail.xlsx`；不要依赖开发者桌面或
+未纳入发布包的本地文件。部署验证阶段不要上传附件、提交/审批、编辑金额
+或删除发票，完整的门票与酒店验收流程应在 staging 或专用验收窗口执行。
+
 ---
 
 ## 七、GitHub 同步

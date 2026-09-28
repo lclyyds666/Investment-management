@@ -114,7 +114,7 @@ SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_sch
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND index_name='uq_approval_form_invoice_id'), 'SELECT 1', 'CREATE UNIQUE INDEX `uq_approval_form_invoice_id` ON `biz_approval_form` (`invoice_id`)');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @needs_invoice_fk_rebuild = IF(EXISTS(SELECT 1 FROM information_schema.referential_constraints WHERE constraint_schema=@schema_name AND table_name='biz_approval_form' AND constraint_name='fk_approval_form_invoice' AND delete_rule <> 'CASCADE'), 1, 0);
+SET @needs_invoice_fk_rebuild = IF(EXISTS(SELECT 1 FROM information_schema.referential_constraints WHERE BINARY constraint_schema = BINARY @schema_name AND BINARY table_name = BINARY 'biz_approval_form' AND BINARY constraint_name = BINARY 'fk_approval_form_invoice' AND BINARY delete_rule <> BINARY 'CASCADE'), 1, 0);
 SET @ddl = IF(@needs_invoice_fk_rebuild = 1, 'ALTER TABLE `biz_approval_form` DROP FOREIGN KEY `fk_approval_form_invoice`', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_approval_form' AND constraint_name='fk_approval_form_invoice'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD CONSTRAINT `fk_approval_form_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE CASCADE');

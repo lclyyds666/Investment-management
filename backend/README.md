@@ -189,3 +189,35 @@ The report is written and flushed to a same-directory temporary file before the
 database commit, then atomically renamed after commit. If that final rename fails,
 the command exits nonzero and prints the retained temporary path for recovery; do
 not rerun apply until that report has been preserved and the database verified.
+
+## Invoice/Ledger Integration Rollout
+
+For an existing MySQL database, apply the invoice integration migration before
+deploying code that reads the new invoice and ledger fields. Run it from this
+directory with production credentials:
+
+```powershell
+mysql --default-character-set=utf8mb4 -u USER -p DATABASE < migrations/20260927_invoice_ledger_integration.sql
+```
+
+The migration is additive and guarded for repeat execution. It preserves
+existing `biz_invoice` rows, adds source/customer/workflow fields, and creates
+the invoice detail, attachment, and scenic preference tables. Take the normal
+database backup first and retain the command output in the release record.
+
+Deploy the backend package with these templates, resolved relative to
+`backend/app` (never from a developer desktop):
+
+- `app/templates/approval/invoice.docx` — invoice approval printout.
+- `app/templates/invoice/invoice_detail.xlsx` — invoice detail printout.
+
+Rollout order: (1) apply the SQL migration, (2) deploy backend and templates,
+(3) deploy frontend `dist`, (4) restart the backend service and reload the
+reverse proxy, and (5) run a read-only smoke test:
+
+```powershell
+curl.exe -fsS -H "Authorization: Bearer $TOKEN" https://HOST/api/v1/invoices?page=1&page_size=1
+```
+
+The smoke test must only list invoices. Confirm a `200` response and that an
+existing legacy invoice remains readable before reopening invoice/ledger entry.
