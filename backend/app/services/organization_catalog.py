@@ -78,6 +78,7 @@ PERMISSION_CODES = (
     "supply.portal.enter", "supply.dashboard.view", "supply.operation.view", "supply.operation.create", "supply.operation.export",
     "supply.scenic.view", "supply.scenic.create", "supply.scenic.update", "supply.scenic.delete", "supply.scenic.review", "supply.scenic.export",
     "supply.finance.view", "supply.finance.update", "supply.finance.review", "supply.finance.export",
+    "supply.invoice.view", "supply.invoice.manage", "supply.invoice.approve",
     "supply.contract.view", "supply.contract.create", "supply.contract.update", "supply.contract.delete", "supply.contract.submit", "supply.contract.review", "supply.contract.approve", "supply.contract.return", "supply.contract.export",
     "supply.approval.view", "supply.approval.create", "supply.approval.update", "supply.approval.delete", "supply.approval.submit", "supply.approval.review", "supply.approval.approve", "supply.approval.return", "supply.approval.export",
     "supply.customer.view", "supply.customer.create", "supply.customer.update", "supply.customer.delete", "supply.customer.export",
@@ -91,7 +92,7 @@ PERMISSION_CODES = (
 
 PERMISSION_RESOURCE_NAMES = {
     "supply.portal": "供管平台", "supply.dashboard": "战略总览", "supply.operation": "经营数据",
-    "supply.scenic": "文旅业务", "supply.finance": "智慧财务", "supply.contract": "旧供管合同",
+    "supply.scenic": "文旅业务", "supply.finance": "智慧财务", "supply.invoice": "发票管理", "supply.contract": "旧供管合同",
     "supply.approval": "业务审批", "supply.customer": "客户档案", "supply.channel": "渠道配置",
     "investment.portal": "投资公司平台", "fund.portal": "基管公司平台",
     "investment.legal.dashboard": "法务工作台", "investment.legal.cases": "法务案件",
@@ -101,7 +102,7 @@ PERMISSION_RESOURCE_NAMES = {
 }
 
 PERMISSION_ACTION_NAMES = {
-    "view": "查看", "create": "新建", "update": "修改", "delete": "删除", "submit": "提交",
+    "view": "查看", "manage": "管理", "create": "新建", "update": "修改", "delete": "删除", "submit": "提交",
     "review": "审核", "approve": "通过", "return": "退回", "import": "导入", "export": "导出",
     "configure": "配置", "reassign": "改派", "audit": "审计", "enter": "进入",
 }
@@ -304,7 +305,7 @@ POSITION_GRANTS = (
         "supply.customer.create", "supply.customer.update", "supply.customer.delete", "supply.finance.update",
     }),
     *_supply_grants("supply.business_reviewer", SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | {
-        "supply.scenic.review", "supply.approval.review", "supply.approval.return",
+        "supply.scenic.review", "supply.approval.review", "supply.approval.return", "supply.invoice.manage",
     }),
     *_supply_grants("supply.finance_handler", SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | {
         "supply.finance.update", "supply.finance.review", "supply.approval.review", "supply.approval.return",
@@ -313,7 +314,7 @@ POSITION_GRANTS = (
         "supply.contract.approve", "supply.contract.return", "supply.approval.approve", "supply.approval.return", "supply.channel.configure",
     }),
     *_supply_grants("governance.supply_leader", SUPPLY_VIEW_PERMISSIONS | SUPPLY_EXPORT_PERMISSIONS | {
-        "supply.contract.approve", "supply.contract.return", "supply.approval.approve", "supply.approval.return", "supply.channel.configure",
+        "supply.contract.approve", "supply.contract.return", "supply.approval.approve", "supply.approval.return", "supply.channel.configure", "supply.invoice.approve",
     }),
     *_supply_grants("investment.duty.supply_risk_review", {
         "supply.dashboard.view", "supply.operation.view", "supply.contract.view", "supply.approval.view", "supply.customer.view",

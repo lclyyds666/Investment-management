@@ -39,18 +39,32 @@ class InvoiceBase(BaseModel):
     customer_bank_account: str = ""
 
 
-class InvoiceCreate(InvoiceBase):
-    pass
+class InvoiceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    invoice_title: str
+    tax_no: str = ""
+    invoice_type: str = "增值税专用发票"
+    amount: Decimal = Decimal("0")
+    customer_name: str = ""
+    contract_no: str = ""
+    issued_date: Optional[date] = None
+    remark: str = ""
+    customer_social_credit_code: str = ""
+    customer_address: str = ""
+    customer_phone: str = ""
+    customer_bank_name: str = ""
+    customer_bank_account: str = ""
 
 
 class InvoiceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     invoice_title: Optional[str] = None
     tax_no: Optional[str] = None
-    invoice_type: Optional[str] = None
     amount: Optional[Decimal] = None
     customer_name: Optional[str] = None
     contract_no: Optional[str] = None
-    issued_date: Optional[date] = None
     remark: Optional[str] = None
     customer_social_credit_code: Optional[str] = None
     customer_address: Optional[str] = None
@@ -70,6 +84,32 @@ class InvoiceDetailOut(BaseModel):
     platform: str = ""
     item_name: str = ""
     amount: Decimal = Decimal("0")
+
+
+class InvoiceDetailUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Optional[Decimal] = None
+    platform: Optional[str] = None
+    item_name: Optional[str] = None
+
+
+class InvoiceDetailList(BaseModel):
+    items: list[InvoiceDetailOut]
+    detail_total: Decimal
+    difference: Decimal
+
+
+class InvoiceAttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_id: int
+    original_name: str
+    content_type: str
+    file_size: int
+    uploaded_by: Optional[int] = None
+    uploaded_at: Optional[datetime] = None
 
 
 class InvoiceOut(InvoiceBase):
@@ -94,3 +134,10 @@ class InvoiceStats(BaseModel):
     void: int
     issued_amount: Decimal
     pending_amount: Decimal
+
+
+class InvoiceRecordStats(BaseModel):
+    attachment_count: int
+    detail_count: int
+    detail_total: Decimal
+    difference: Decimal

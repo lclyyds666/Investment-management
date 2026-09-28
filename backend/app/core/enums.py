@@ -212,6 +212,7 @@ class AssignmentStatus(str, Enum):
 
 class PermissionAction(str, Enum):
     VIEW = "view"
+    MANAGE = "manage"
     CREATE = "create"
     UPDATE = "update"
     DELETE = "delete"
