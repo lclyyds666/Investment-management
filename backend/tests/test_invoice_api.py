@@ -1,7 +1,9 @@
 import tempfile
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from fastapi import HTTPException
@@ -26,6 +28,14 @@ from app.services.assignment_permissions import PermissionContext, has_permissio
 from app.services.invoice_documents import assert_invoice_details_balanced
 from app.services.invoice_generation import remove_period_invoices
 from app.services.organization_catalog import seed_authorization_catalog
+
+
+def _zip_bytes(*names):
+    content = BytesIO()
+    with ZipFile(content, "w", ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, b"content")
+    return content.getvalue()
 
 
 @pytest.fixture
@@ -235,11 +245,53 @@ def test_attachment_rejects_fake_pdf_content(invoice_api):
     assert not directory.exists() or list(directory.iterdir()) == []
 
 
+def test_office_and_ofd_attachments_validate_containers_and_derive_mime(invoice_api):
+    _, client, _, _, invoice, _, _, _ = invoice_api
+    ole = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1legacy"
+    response = client.post(f"/api/v1/invoices/{invoice.id}/attachments", files=[
+        ("files", ("invoice.ofd", _zip_bytes("OFD.xml", "Doc_0/Document.xml"), "text/plain")),
+        ("files", ("invoice.docx", _zip_bytes("[Content_Types].xml", "word/document.xml"), "text/plain")),
+        ("files", ("invoice.xlsx", _zip_bytes("[Content_Types].xml", "xl/workbook.xml"), "text/plain")),
+        ("files", ("invoice.doc", ole, "application/octet-stream")),
+        ("files", ("invoice.xls", ole, "application/octet-stream")),
+    ])
+    assert response.status_code == 200, response.text
+    assert [row["content_type"] for row in response.json()["data"]] == [
+        "application/ofd",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/msword",
+        "application/vnd.ms-excel",
+    ]
+
+
+def test_office_and_ofd_attachments_reject_spoofed_content(invoice_api):
+    db, client, _, _, invoice, _, _, upload_root = invoice_api
+    fake_files = [
+        ("fake.ofd", _zip_bytes("random.xml")),
+        ("fake.docx", _zip_bytes("[Content_Types].xml", "xl/workbook.xml")),
+        ("fake.xlsx", _zip_bytes("[Content_Types].xml", "word/document.xml")),
+        ("fake.doc", b"%PDF-not-ole"),
+        ("fake.xls", b"%PDF-not-ole"),
+    ]
+    for filename, content in fake_files:
+        response = client.post(
+            f"/api/v1/invoices/{invoice.id}/attachments",
+            files=[("files", (filename, content, "application/octet-stream"))],
+        )
+        assert response.status_code == 400, (filename, response.text)
+    assert db.scalar(select(func.count()).select_from(InvoiceAttachment)) == 0
+    directory = upload_root / "invoices" / str(invoice.id)
+    assert not directory.exists() or list(directory.iterdir()) == []
+    db.refresh(invoice)
+    assert invoice.status == InvoiceStatus.PENDING
+
+
 def test_attachment_batch_failure_keeps_files_and_database_consistent(invoice_api):
     db, client, _, _, invoice, _, _, upload_root = invoice_api
     response = client.post(f"/api/v1/invoices/{invoice.id}/attachments", files=[
-        ("files", ("invoice.pdf", b"%PDF-ok", "application/pdf")),
-        ("files", ("fake.png", b"not-a-png", "image/png")),
+        ("files", ("invoice.docx", _zip_bytes("[Content_Types].xml", "word/document.xml"), "application/zip")),
+        ("files", ("fake.xlsx", _zip_bytes("[Content_Types].xml", "word/document.xml"), "application/zip")),
     ])
     assert response.status_code == 400, response.text
     assert db.scalar(select(func.count()).select_from(InvoiceAttachment)) == 0

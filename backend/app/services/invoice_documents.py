@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path, PurePath
 from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
 from fastapi import HTTPException, UploadFile, status
 
@@ -15,14 +16,21 @@ ATTACHMENT_SIGNATURES = {
     ".jpg": b"\xff\xd8\xff",
     ".jpeg": b"\xff\xd8\xff",
     ".png": b"\x89PNG\r\n\x1a\n",
+    ".doc": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+    ".xls": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
 }
 ATTACHMENT_MIME_TYPES = {
     ".pdf": "application/pdf",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
+    ".ofd": "application/ofd",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
-ALLOWED_EXTENSIONS = frozenset(ATTACHMENT_SIGNATURES)
+ALLOWED_EXTENSIONS = frozenset(ATTACHMENT_MIME_TYPES)
 MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
 
@@ -51,9 +59,31 @@ def _safe_original_name(filename: str | None) -> str:
 
 
 def _validate_attachment_content(target: Path, extension: str) -> None:
-    with target.open("rb") as source:
-        header = source.read(8)
-    if not header.startswith(ATTACHMENT_SIGNATURES[extension]):
+    valid = False
+    if extension in {".ofd", ".docx", ".xlsx"}:
+        try:
+            with ZipFile(target) as archive:
+                names = {
+                    name.replace("\\", "/").lstrip("/")
+                    for name in archive.namelist()
+                }
+            if extension == ".ofd":
+                valid = "OFD.xml" in names
+            elif extension == ".docx":
+                valid = "[Content_Types].xml" in names and any(
+                    name.startswith("word/") for name in names
+                )
+            else:
+                valid = "[Content_Types].xml" in names and any(
+                    name.startswith("xl/") for name in names
+                )
+        except (BadZipFile, OSError):
+            valid = False
+    else:
+        with target.open("rb") as source:
+            header = source.read(8)
+        valid = header.startswith(ATTACHMENT_SIGNATURES[extension])
+    if not valid:
         raise HTTPException(status_code=400, detail="附件内容与文件格式不匹配")
 
 
