@@ -149,6 +149,12 @@ class WorkflowModelContractTest(unittest.TestCase):
                 source,
             )
 
+    def test_invoice_migration_repairs_existing_approval_fk(self):
+        source = Path("migrations/20260927_invoice_ledger_integration.sql").read_text(encoding="utf-8")
+        self.assertIn("information_schema.referential_constraints", source)
+        self.assertIn("delete_rule <> 'CASCADE'", source)
+        self.assertIn("DROP FOREIGN KEY `fk_approval_form_invoice`", source)
+
     def test_unified_organization_tables_use_production_collation(self):
         source = Path(
             "migrations/20260813_unified_organization_permissions.sql"
