@@ -45,9 +45,18 @@ export function updateInvoiceDetail(id, detailId, data) {
 }
 
 export function submitInvoiceApproval(id, data = {}) {
-  return request.post(`/invoices/${id}/approval`, data)
+  return request.post(`/invoices/${id}/approval-form/submit`, data)
 }
 
 export function downloadInvoiceDocument(id, documentType) {
-  return request.get(`/invoices/${id}/documents/${documentType}`, { responseType: 'blob' })
+  const endpoint = documentType === 'details' ? 'details/print' : 'approval-form/print'
+  return request.get(`/invoices/${id}/${endpoint}`, { responseType: 'blob' })
+}
+
+export function createInvoiceApprovalForm(id) {
+  return request.post(`/invoices/${id}/approval-form`)
+}
+
+export function submitInvoiceApprovalForm(id, data = {}) {
+  return submitInvoiceApproval(id, data)
 }
