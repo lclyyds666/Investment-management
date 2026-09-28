@@ -2,6 +2,8 @@ import asyncio
 from io import BytesIO
 from decimal import Decimal
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
@@ -56,6 +58,30 @@ def test_delete_unconfirms_surviving_ticket_rows():
     delete_row("s", rows[0].id, db=db, _=None)
     survivor = db.scalar(select(TicketLedger))
     assert survivor is not None and not survivor.confirmed
+    assert db.scalar(select(func.count()).select_from(Invoice)) == 0
+
+
+def test_approve_empty_source_period_returns_bad_request():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    row = TicketLedger(
+        scenic_id="s",
+        row_no=1,
+        platform="合计",
+        source_file="empty-period",
+        confirm_stored="confirm.pdf",
+    )
+    db.add(row)
+    db.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        approve_confirm("s", row.id, db=db, _=None)
+
+    assert raised.value.status_code == 400
+    assert raised.value.detail == "cannot generate invoices for an empty source period"
+    db.expire_all()
+    assert db.get(TicketLedger, row.id).confirmed is False
     assert db.scalar(select(func.count()).select_from(Invoice)) == 0
 
 

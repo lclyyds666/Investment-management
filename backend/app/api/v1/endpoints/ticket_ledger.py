@@ -922,9 +922,13 @@ def approve_confirm(
     for sib in _load_rows(db, sid):
         if _period_key(sib) == key:
             sib.confirmed = True
-    invoice_svc.sync_confirmed_period_invoices(
-        db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET, period_key=key
-    )
+    try:
+        invoice_svc.sync_confirmed_period_invoices(
+            db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET, period_key=key
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         db.commit()
     except Exception:

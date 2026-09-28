@@ -593,7 +593,7 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             ("PUT", "/api/v1/customers/1", "supply.customer.update", {"name": "Updated"}),
             ("POST", "/api/v1/scenic-spots/demo/ticket-ledger", "supply.scenic.create", {"rows": []}),
             ("POST", "/api/v1/scenic-spots/demo/ticket-ledger/1/confirm/approve", "supply.scenic.review", None),
-            ("PUT", "/api/v1/invoices/1", "supply.finance.update", {"invoice_title": "Updated"}),
+            ("PUT", "/api/v1/invoices/1", "supply.invoice.manage", {"invoice_title": "Updated"}),
             ("POST", "/api/v1/channels", "supply.channel.configure", {"name": "Channel"}),
         )
 
