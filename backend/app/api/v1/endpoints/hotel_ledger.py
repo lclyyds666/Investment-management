@@ -37,6 +37,7 @@ from app.schemas.hotel_ledger import (
     ParseResult,
 )
 from app.services import hotel_ledger as hl_svc
+from app.services import invoice_generation as invoice_svc
 from app.services.scenic_config import get_effective_config
 from app.services.assignment_permissions import PermissionContext
 
@@ -297,6 +298,13 @@ def _period_key(r: HotelLedger) -> str:
     return r.source_file or r.detail_name or r.period_text or r.check_date_text or "NA"
 
 
+def _invalidate_confirmed_period(db: Session, sid: str, key: str) -> None:
+    if any(r.confirmed and _period_key(r) == key for r in _load_rows(db, sid)):
+        invoice_svc.invalidate_period_invoices(
+            db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
+        )
+
+
 def _group_periods(rows: list[HotelLedger]) -> tuple[dict[str, list[HotelLedger]], list[str]]:
     """按期分组，保持传入顺序（rows 须已按 period_start 升序 → order 即期次先后）。"""
     groups: dict[str, list[HotelLedger]] = {}
@@ -472,6 +480,10 @@ def save_ledger(
     sid = _valid_scenic_id(scenic_id)
     config = get_effective_config(db, sid)
     if payload.mode == "replace":
+        for key in {_period_key(row) for row in _load_rows(db, sid) if row.confirmed}:
+            invoice_svc.invalidate_period_invoices(
+                db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
+            )
         db.execute(sa_delete(HotelLedger).where(HotelLedger.scenic_id == sid))
         base_no = 0
     else:
@@ -597,6 +609,7 @@ def update_row(
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
 
+    _invalidate_confirmed_period(db, sid, _period_key(row))
     fields_set = payload.model_fields_set
     if payload.hotel_name is not None:
         row.hotel_name = payload.hotel_name
@@ -759,6 +772,7 @@ def delete_row(scenic_id: str, row_id: int, db: Session = Depends(get_db), _: Us
                 fp.unlink()
         except OSError:
             pass
+    _invalidate_confirmed_period(db, sid, _period_key(row))
     db.delete(row)
     db.flush()
     _recompute_running_balance(_load_rows(db, sid))
@@ -773,6 +787,10 @@ def delete_row(scenic_id: str, row_id: int, db: Session = Depends(get_db), _: Us
 )
 def clear_ledger(scenic_id: str, db: Session = Depends(get_db), _: User = Depends(_delete_guard)):
     sid = _valid_scenic_id(scenic_id)
+    for key in {_period_key(row) for row in _load_rows(db, sid) if row.confirmed}:
+        invoice_svc.invalidate_period_invoices(
+            db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
+        )
     result = db.execute(sa_delete(HotelLedger).where(HotelLedger.scenic_id == sid))
     db.commit()
     return Response.ok({"deleted": result.rowcount or 0}, message="已清空该景区酒店台账")
@@ -856,6 +874,7 @@ async def upload_confirm(
         del content
     # 同期各平台行共享同一确认函；覆盖旧文件；新上传→待确认
     key = _period_key(row)
+    _invalidate_confirmed_period(db, sid, key)
     old_stored = row.confirm_stored
     for sib in _load_rows(db, sid):
         if _period_key(sib) == key:
@@ -893,6 +912,9 @@ def approve_confirm(
     for sib in _load_rows(db, sid):
         if _period_key(sib) == key:
             sib.confirmed = True
+    invoice_svc.sync_confirmed_period_invoices(
+        db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
+    )
     db.commit()
     db.refresh(row)
     return Response.ok(_row_out(row), message="本期状态：已确认")
@@ -928,6 +950,7 @@ def delete_confirm(
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     key = _period_key(row)
+    _invalidate_confirmed_period(db, sid, key)
     stored = row.confirm_stored
     for sib in _load_rows(db, sid):
         if _period_key(sib) == key:
