@@ -102,6 +102,7 @@ def pending_count(
     business_cnt = (
         counts.get(WorkflowTargetType.PAYMENT_APPROVAL, 0)
         + counts.get(WorkflowTargetType.BUSINESS_APPROVAL, 0)
+        + counts.get(WorkflowTargetType.INVOICE_APPROVAL, 0)
         if "supply.approval.view" in grant_codes
         else 0
     )

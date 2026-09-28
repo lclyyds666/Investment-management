@@ -26,7 +26,7 @@ class ApprovalFormBase(BaseModel):
     business_desc: str = "详见合同"
     contract_no: str = ""
     remark: str = ""
-    # 付款审批单专有（业务审批单忽略）
+    # 金额/银行字段供付款单与销项发票审批单使用
     amount: Decimal = Decimal("0")
     bank_name: str = ""
     bank_account: str = ""

@@ -64,6 +64,7 @@ SUBMIT_PERMISSION_BY_WORKFLOW = {
     "supply.contract.v2": "supply.contract.submit",
     "supply.payment.v2": "supply.approval.submit",
     "supply.business.v2": "supply.approval.submit",
+    "supply.invoice.v1": "supply.invoice.manage",
     "investment.contract.department.v1": "investment.legal.contracts.submit",
     "investment.contract.subsidiary.v1": "investment.legal.contracts.submit",
     "investment.contract.legal-risk.v1": "investment.legal.contracts.submit",

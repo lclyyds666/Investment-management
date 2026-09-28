@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.db.init_db  # noqa: F401
 from app.api.deps import get_current_user
+from app.api.v1.endpoints.workflow import SUBMIT_PERMISSION_BY_WORKFLOW
 from app.core.enums import (
     AssignmentStatus,
     ContractStatus,
@@ -50,6 +51,12 @@ from app.services.workflow_engine import (
 
 
 class WorkflowApiTest(unittest.TestCase):
+    def test_invoice_workflow_uses_invoice_manage_submit_permission(self):
+        self.assertEqual(
+            SUBMIT_PERMISSION_BY_WORKFLOW["supply.invoice.v1"],
+            "supply.invoice.manage",
+        )
+
     def setUp(self):
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",

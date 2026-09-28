@@ -104,6 +104,12 @@ BUSINESS_APPROVAL_CHAIN: list[Role] = [
     Role.INVEST_DIRECTOR,    # 投资公司总经理
 ]
 
+# 销项发票审批单（2 节点）
+INVOICE_APPROVAL_CHAIN: list[Role] = [
+    Role.BUSINESS_REVIEWER,
+    Role.SCM_DIRECTOR,
+]
+
 
 def role_label(value) -> str:
     """将角色值（字符串或 Role）转为中文名，未知则原样返回。"""
@@ -167,7 +173,7 @@ CONTRACT_TYPE_LABELS: dict[str, str] = {
 FORM_CHAINS: dict[str, list[Role]] = {
     ContractType.PAYMENT.value: PAYMENT_APPROVAL_CHAIN,
     ContractType.BUSINESS.value: BUSINESS_APPROVAL_CHAIN,
-    ContractType.INVOICE.value: BUSINESS_APPROVAL_CHAIN,
+    ContractType.INVOICE.value: INVOICE_APPROVAL_CHAIN,
 }
 
 
@@ -241,6 +247,7 @@ class WorkflowTargetType(str, Enum):
     CONTRACT = "contract"
     PAYMENT_APPROVAL = "payment_approval"
     BUSINESS_APPROVAL = "business_approval"
+    INVOICE_APPROVAL = "invoice_approval"
 
 
 class WorkflowVersionStatus(str, Enum):

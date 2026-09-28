@@ -90,6 +90,28 @@ WORKFLOW_DEFINITIONS = (
         ),
     ),
     WorkflowCatalogDefinition(
+        code="supply.invoice.v1",
+        name="供应链销项发票审批",
+        target_type=WorkflowTargetType.INVOICE_APPROVAL,
+        version=1,
+        nodes=(
+            node(
+                "applicant",
+                "申请人",
+                "supply.business_reviewer",
+                "shared_position",
+                auto_complete_on_submit=True,
+                allow_reject=False,
+            ),
+            node(
+                "department_head",
+                "部门负责人",
+                "governance.supply_leader",
+                "shared_position",
+            ),
+        ),
+    ),
+    WorkflowCatalogDefinition(
         code="investment.contract.department.v1",
         name="投资公司部门合同审批",
         target_type=WorkflowTargetType.CONTRACT,

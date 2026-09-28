@@ -10,6 +10,7 @@ from app.core.enums import (
     AssignmentStatus,
     ContractStatus,
     ContractType,
+    InvoiceApprovalStatus,
     WorkflowAction,
     WorkflowAssigneeMode,
     WorkflowInstanceStatus,
@@ -20,6 +21,7 @@ from app.core.enums import (
 from app.models.approval import Approval
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.contract import Contract
+from app.models.invoice import Invoice
 from app.models.organization import ExternalAssignment, Organization, Position, UserAssignment
 from app.models.user import User
 from app.models.workflow import (
@@ -105,6 +107,7 @@ WORKFLOW_CODE_BY_TARGET = {
     WorkflowTargetType.CONTRACT: "supply.contract.v2",
     WorkflowTargetType.PAYMENT_APPROVAL: "supply.payment.v2",
     WorkflowTargetType.BUSINESS_APPROVAL: "supply.business.v2",
+    WorkflowTargetType.INVOICE_APPROVAL: "supply.invoice.v1",
 }
 
 
@@ -145,6 +148,7 @@ def project_contract_action(
     elif instance.target_type in {
         WorkflowTargetType.PAYMENT_APPROVAL,
         WorkflowTargetType.BUSINESS_APPROVAL,
+        WorkflowTargetType.INVOICE_APPROVAL,
     }:
         if db.scalar(select(exists().where(
             ApprovalFormAction.workflow_task_action_id == action.id
@@ -560,11 +564,11 @@ def _workflow_target(
         target = db.scalar(
             select(ApprovalForm).where(ApprovalForm.id == target_id).with_for_update()
         )
-        expected_form_type = (
-            ContractType.PAYMENT
-            if target_type == WorkflowTargetType.PAYMENT_APPROVAL
-            else ContractType.BUSINESS
-        )
+        expected_form_type = {
+            WorkflowTargetType.PAYMENT_APPROVAL: ContractType.PAYMENT,
+            WorkflowTargetType.BUSINESS_APPROVAL: ContractType.BUSINESS,
+            WorkflowTargetType.INVOICE_APPROVAL: ContractType.INVOICE,
+        }.get(target_type)
         if target is not None and target.form_type != expected_form_type:
             target = None
     if target is None:
@@ -574,6 +578,23 @@ def _workflow_target(
             {"target_type": target_type.value, "target_id": target_id},
         )
     return target
+
+
+def _sync_invoice_approval_state(db: Session, target: ApprovalForm) -> None:
+    if target.form_type != ContractType.INVOICE or target.invoice_id is None:
+        return
+    invoice = db.get(Invoice, target.invoice_id)
+    if invoice is None:
+        raise WorkflowValidationError(
+            "workflow_target_not_found",
+            "The invoice linked to the approval form does not exist.",
+            {
+                "target_type": WorkflowTargetType.INVOICE_APPROVAL.value,
+                "target_id": target.id,
+            },
+        )
+    invoice.workflow_instance_id = target.workflow_instance_id
+    invoice.approval_status = InvoiceApprovalStatus(target.status.value)
 
 
 def _validate_start_assignments(
@@ -824,6 +845,8 @@ def _start_workflow(
     target.status = ContractStatus.PENDING
     target.current_step = next_node.sequence
     target.workflow_instance_id = instance.id
+    if isinstance(target, ApprovalForm):
+        _sync_invoice_approval_state(db, target)
     db.flush()
     return instance.id
 
@@ -1754,6 +1777,8 @@ def _complete_task(
             instance.current_sequence = next_task.sequence
             target.status = ContractStatus.PENDING
     target.current_step = instance.current_sequence
+    if isinstance(target, ApprovalForm):
+        _sync_invoice_approval_state(db, target)
     task_action = WorkflowTaskAction(
         task_id=task.id,
         action=action,

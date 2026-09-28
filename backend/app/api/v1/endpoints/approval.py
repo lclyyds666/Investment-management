@@ -151,6 +151,13 @@ def _complete_current_task(
     action: WorkflowAction,
     comment: str,
 ) -> ApprovalFormOut:
+    if form.form_type == ContractType.INVOICE and not has_permission(
+        db,
+        current_user,
+        "supply.invoice.approve",
+        _supply_context(),
+    ):
+        raise HTTPException(status_code=403, detail="权限不足")
     task = _active_task_for_form(db, form)
     if task is None:
         raise HTTPException(status_code=422, detail="审批单没有可处理的当前工作流任务")
@@ -184,8 +191,8 @@ def _apply_payload(form: ApprovalForm, data: dict, db: Session) -> None:
         cust = db.get(Customer, data["customer_id"])
         if cust:
             form.customer_name = cust.name
-    # 付款审批单：自动大写金额；业务审批单金额归零
-    if form.form_type == ContractType.PAYMENT:
+    # 付款/销项发票审批单保留金额；普通业务审批单金额归零
+    if form.form_type in {ContractType.PAYMENT, ContractType.INVOICE}:
         form.amount_words = amount_to_cn(form.amount or 0)
     else:
         form.amount = 0
@@ -194,6 +201,14 @@ def _apply_payload(form: ApprovalForm, data: dict, db: Session) -> None:
 
 def _attachment_dir(form_id: int) -> Path:
     return Path(settings.UPLOAD_DIR) / f"approval_form_{form_id}"
+
+
+def _target_type_for_form(form: ApprovalForm) -> WorkflowTargetType:
+    return {
+        ContractType.PAYMENT: WorkflowTargetType.PAYMENT_APPROVAL,
+        ContractType.BUSINESS: WorkflowTargetType.BUSINESS_APPROVAL,
+        ContractType.INVOICE: WorkflowTargetType.INVOICE_APPROVAL,
+    }[form.form_type]
 
 
 def _extract_attachment_text(name: str, path: Path) -> str:
@@ -248,6 +263,7 @@ def list_todo(
     form_tasks = [task for task in tasks if task.instance.target_type in {
         WorkflowTargetType.PAYMENT_APPROVAL,
         WorkflowTargetType.BUSINESS_APPROVAL,
+        WorkflowTargetType.INVOICE_APPROVAL,
     }]
     form_ids = [task.instance.target_id for task in form_tasks]
     rows_by_id = {
@@ -378,11 +394,7 @@ def delete_form(
         raise HTTPException(status_code=403, detail="只能删除本人创建的审批单")
     if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="仅草稿或被驳回的审批单可删除")
-    target_type = (
-        WorkflowTargetType.PAYMENT_APPROVAL
-        if form.form_type == ContractType.PAYMENT
-        else WorkflowTargetType.BUSINESS_APPROVAL
-    )
+    target_type = _target_type_for_form(form)
     cancel_active_workflow_for_target(db, target_type, form.id)
     db.delete(form)
     db.commit()
@@ -425,11 +437,7 @@ def submit_form(
             ),
             message="已提交审批",
         )
-    target_type = (
-        WorkflowTargetType.PAYMENT_APPROVAL
-        if form.form_type == ContractType.PAYMENT
-        else WorkflowTargetType.BUSINESS_APPROVAL
-    )
+    target_type = _target_type_for_form(form)
     try:
         start_workflow(
             db,

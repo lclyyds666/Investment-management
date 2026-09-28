@@ -220,7 +220,7 @@ class WorkflowPublicationTest(unittest.TestCase):
                 self.db.scalar(select(User).where(User.username == pending.username))
             )
 
-    def test_seed_publishes_exact_three_versions_and_is_idempotent(self):
+    def test_seed_publishes_exact_catalog_and_is_idempotent(self):
         seed_workflow_definitions(self.db, self.publisher.id)
         self.db.commit()
         counts = (
@@ -230,7 +230,7 @@ class WorkflowPublicationTest(unittest.TestCase):
         )
         seed_workflow_definitions(self.db, self.publisher.id)
         self.db.commit()
-        self.assertEqual(counts, (6, 6, 35))
+        self.assertEqual(counts, (7, 7, 37))
         self.assertEqual(
             (self.db.query(WorkflowDefinition).count(), self.db.query(WorkflowVersion).count(), self.db.query(WorkflowNode).count()),
             counts,
@@ -250,7 +250,7 @@ class WorkflowPublicationTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "workflow_catalog_drift")
         self.assertEqual(self.db.get(WorkflowNode, node.id).name, "drifted")
-        self.assertEqual(self.db.query(WorkflowVersion).count(), 6)
+        self.assertEqual(self.db.query(WorkflowVersion).count(), 7)
 
     def test_published_version_is_immutable(self):
         seed_workflow_definitions(self.db, self.publisher.id)
@@ -2540,10 +2540,10 @@ class WorkflowPublicationContinuationTest(unittest.TestCase):
         self.assertTrue(self.db.in_transaction())
         self.assert_parent_pending_unflushed(pending)
         with self.db.no_autoflush:
-            self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
+            self.assertEqual(self.db.query(WorkflowDefinition).count(), 7)
         self.db.commit()
         self.assertIsNotNone(self.db.scalar(select(User).where(User.username == "pending-success")))
-        self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 7)
 
     def test_drift_preserves_pending_caller_object_and_outer_transaction(self):
         seed_workflow_definitions(self.db, self.publisher.id)
@@ -2607,7 +2607,7 @@ class WorkflowPublicationContinuationTest(unittest.TestCase):
             seed_workflow_definitions(self.db, publisher_id)
 
         self.assert_parent_pending_unflushed(pending)
-        self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
+        self.assertEqual(self.db.query(WorkflowDefinition).count(), 7)
 
     def test_unrelated_integrity_error_is_not_swallowed(self):
         with patch(
@@ -2652,7 +2652,7 @@ class WorkflowPublicationContinuationTest(unittest.TestCase):
     def test_catalog_changes_roll_back_with_caller_transaction(self):
         seed_workflow_definitions(self.db, self.publisher.id)
         with self.db.no_autoflush:
-            self.assertEqual(self.db.query(WorkflowDefinition).count(), 6)
+            self.assertEqual(self.db.query(WorkflowDefinition).count(), 7)
 
         self.db.rollback()
 
