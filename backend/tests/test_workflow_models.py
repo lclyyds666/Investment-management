@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from app.core.enums import (
+    ContractType,
     WorkflowAction,
     WorkflowAssigneeMode,
     WorkflowInstanceStatus,
@@ -101,6 +102,8 @@ class WorkflowModelContractTest(unittest.TestCase):
                 "position_code",
                 "position_name",
             }.issubset(columns))
+        self.assertEqual(ContractType.INVOICE.value, "invoice")
+        self.assertIn("invoice_id", ApprovalForm.__table__.columns)
 
     def test_init_db_registers_workflow_models(self):
         source = Path("app/db/init_db.py").read_text(encoding="utf-8")

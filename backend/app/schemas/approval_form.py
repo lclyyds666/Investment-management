@@ -17,6 +17,7 @@ from app.core.enums import (
 
 class ApprovalFormBase(BaseModel):
     form_type: ContractType
+    invoice_id: Optional[int] = None
     department: str = ""
     apply_date: Optional[date] = None
     customer_id: Optional[int] = None
@@ -45,6 +46,7 @@ class ApprovalFormCreate(ApprovalFormBase):
 
 
 class ApprovalFormUpdate(BaseModel):
+    invoice_id: Optional[int] = None
     department: Optional[str] = None
     apply_date: Optional[date] = None
     customer_id: Optional[int] = None
@@ -70,6 +72,7 @@ class ApprovalFormOut(ApprovalFormBase):
     creator_name: str = ""  # 由端点补充
     created_at: Optional[datetime] = None
     workflow_instance_id: Optional[int] = None
+    invoice_id: Optional[int] = None
     workflow_version: Optional[int] = None
     active_task: Optional[dict] = None
     can_act: bool = False

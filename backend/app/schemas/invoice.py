@@ -1,11 +1,17 @@
 """发票管理 schema。"""
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from app.core.enums import INVOICE_STATUS_LABELS, InvoiceStatus
+from app.core.enums import (
+    INVOICE_STATUS_LABELS,
+    InvoiceApprovalStatus,
+    InvoiceDirection,
+    InvoiceSourceKind,
+    InvoiceStatus,
+)
 
 
 class InvoiceBase(BaseModel):
@@ -18,6 +24,19 @@ class InvoiceBase(BaseModel):
     contract_no: str = ""
     issued_date: Optional[date] = None
     remark: str = ""
+    direction: Optional[InvoiceDirection] = None
+    source_kind: Optional[InvoiceSourceKind] = None
+    scenic_id: Optional[str] = None
+    period_key: Optional[str] = None
+    source_revision: Optional[int] = None
+    source_fingerprint: Optional[str] = None
+    generated_by_source: Optional[bool] = None
+    customer_id: Optional[int] = None
+    customer_social_credit_code: str = ""
+    customer_address: str = ""
+    customer_phone: str = ""
+    customer_bank_name: str = ""
+    customer_bank_account: str = ""
 
 
 class InvoiceCreate(InvoiceBase):
@@ -29,17 +48,38 @@ class InvoiceUpdate(BaseModel):
     tax_no: Optional[str] = None
     invoice_type: Optional[str] = None
     amount: Optional[Decimal] = None
-    status: Optional[InvoiceStatus] = None
     customer_name: Optional[str] = None
     contract_no: Optional[str] = None
     issued_date: Optional[date] = None
     remark: Optional[str] = None
+    customer_social_credit_code: Optional[str] = None
+    customer_address: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_bank_name: Optional[str] = None
+    customer_bank_account: Optional[str] = None
+
+
+class InvoiceDetailOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_id: int
+    line_no: int
+    source_row_id: Optional[int] = None
+    source_kind: Optional[InvoiceSourceKind] = None
+    platform: str = ""
+    item_name: str = ""
+    amount: Decimal = Decimal("0")
 
 
 class InvoiceOut(InvoiceBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    workflow_instance_id: Optional[int] = None
+    approval_status: Optional[InvoiceApprovalStatus] = None
+    generated_at: Optional[datetime] = None
+    source_synced_at: Optional[datetime] = None
 
     @computed_field
     @property

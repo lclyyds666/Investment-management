@@ -15,6 +15,8 @@ class CustomerBase(BaseModel):
     address: str = ""
     contact: str = ""
     phone: str = ""
+    bank_name: str = ""
+    bank_account: str = ""
     admission_files: Optional[list[FileRef]] = None
     remark: str = ""
 
@@ -29,6 +31,8 @@ class CustomerUpdate(BaseModel):
     address: Optional[str] = None
     contact: Optional[str] = None
     phone: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
     admission_files: Optional[list[FileRef]] = None
     remark: Optional[str] = None
 

@@ -43,6 +43,9 @@ class ApprovalForm(Base):
     customer_id: Mapped[int | None] = mapped_column(
         ForeignKey("biz_customer.id", ondelete="SET NULL"), nullable=True, comment="客户(外键关联客户资料库)"
     )
+    invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_invoice.id", ondelete="SET NULL"), nullable=True, index=True, comment="关联销项发票",
+    )
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称(快照)")
     business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型")
     business_desc: Mapped[str] = mapped_column(String(500), default="详见合同", comment="业务情况")
@@ -81,6 +84,7 @@ class ApprovalForm(Base):
         back_populates="form", cascade="all, delete-orphan"
     )
     workflow_instance = relationship("WorkflowInstance", foreign_keys=[workflow_instance_id])
+    invoice = relationship("Invoice", foreign_keys=[invoice_id])
 
 
 class ApprovalFormAction(Base):
@@ -117,3 +121,4 @@ class ApprovalFormAction(Base):
 
 
 from app.models.workflow import WorkflowInstance, WorkflowTaskAction  # noqa: E402,F401
+from app.models.invoice import Invoice  # noqa: E402,F401

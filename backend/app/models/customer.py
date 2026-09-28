@@ -17,6 +17,8 @@ class Customer(Base):
     address: Mapped[str] = mapped_column(String(255), default="", comment="地址")
     contact: Mapped[str] = mapped_column(String(64), default="", comment="联系人")
     phone: Mapped[str] = mapped_column(String(32), default="", comment="电话")
+    bank_name: Mapped[str] = mapped_column(String(128), default="", comment="开户行")
+    bank_account: Mapped[str] = mapped_column(String(64), default="", comment="银行账号")
     # 准入资料附件（Mock）：[{name, url}]
     admission_files: Mapped[list | None] = mapped_column(JSON, nullable=True, comment="准入资料附件")
     remark: Mapped[str] = mapped_column(Text, default="", comment="备注")

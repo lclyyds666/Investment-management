@@ -154,17 +154,20 @@ class ContractType(str, Enum):
 
     PAYMENT = "payment"      # 业务付款审批单
     BUSINESS = "business"    # 业务审批单
+    INVOICE = "invoice"      # 销项发票审批单
 
 
 CONTRACT_TYPE_LABELS: dict[str, str] = {
     "payment": "业务付款审批单",
     "business": "业务审批单",
+    "invoice": "销项发票审批单",
 }
 
 # 审批单类型 → 对应审批链（两套独立工作流的分派表）
 FORM_CHAINS: dict[str, list[Role]] = {
     ContractType.PAYMENT.value: PAYMENT_APPROVAL_CHAIN,
     ContractType.BUSINESS.value: BUSINESS_APPROVAL_CHAIN,
+    ContractType.INVOICE.value: BUSINESS_APPROVAL_CHAIN,
 }
 
 
@@ -285,6 +288,23 @@ INVOICE_STATUS_LABELS: dict[str, str] = {
     "issued": "已开票",
     "void": "已作废",
 }
+
+
+class InvoiceDirection(str, Enum):
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class InvoiceSourceKind(str, Enum):
+    TICKET = "ticket"
+    HOTEL = "hotel"
+
+
+class InvoiceApprovalStatus(str, Enum):
+    DRAFT = "draft"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 # 渠道平台类别标签（多渠道数据集成）
