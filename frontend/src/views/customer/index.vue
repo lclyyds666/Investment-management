@@ -44,6 +44,10 @@
           <el-col :span="12"><el-form-item label="电话" prop="phone"><el-input v-model="form.phone" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
+        <el-row :gutter="12">
+          <el-col :span="12"><el-form-item label="开户行"><el-input v-model="form.bank_name" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="账号"><el-input v-model="form.bank_account" /></el-form-item></el-col>
+        </el-row>
         <el-form-item label="资料">
           <div class="files">
             <!-- 已入库资料（biz_customer_material，查看/AI 同源）；编辑态可即时删除 -->
@@ -93,6 +97,8 @@
         <el-descriptions-item label="联系人">{{ current.contact || '—' }}</el-descriptions-item>
         <el-descriptions-item label="电话">{{ current.phone || '—' }}</el-descriptions-item>
         <el-descriptions-item label="地址">{{ current.address || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="开户行">{{ current.bank_name || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="账号">{{ current.bank_account || '—' }}</el-descriptions-item>
         <el-descriptions-item label="备注">{{ current.remark || '无' }}</el-descriptions-item>
         <el-descriptions-item label="资料">
           <div v-if="viewMaterials.length">
@@ -148,7 +154,17 @@ const editLoading = ref(false)
 const isEdit = ref(false)
 const editingId = ref(null)
 const formRef = ref()
-const emptyForm = () => ({ customer_code: '', name: '', social_credit_code: '', contact: '', phone: '', address: '', remark: '' })
+const emptyForm = () => ({
+  customer_code: '',
+  name: '',
+  social_credit_code: '',
+  contact: '',
+  phone: '',
+  address: '',
+  bank_name: '',
+  bank_account: '',
+  remark: ''
+})
 const form = reactive(emptyForm())
 // 资料统一走真实 materials 表：dialogMaterials 为已入库项，pendingFiles 为本次待上传文件
 const dialogMaterials = ref([])
@@ -185,6 +201,8 @@ async function openEdit(row) {
       contact: detail.contact || '',
       phone: detail.phone || '',
       address: detail.address || '',
+      bank_name: detail.bank_name || '',
+      bank_account: detail.bank_account || '',
       remark: detail.remark || ''
     })
   } catch {
