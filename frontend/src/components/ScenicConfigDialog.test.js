@@ -34,7 +34,7 @@ const config = {
   hotel_commission_rate: 0.08,
   hotel_fee_per_night: 58,
   hotel_fee_algo: 2,
-  hotel_platforms: ['抖音', '美团', '携程', '同程']
+  hotel_platforms: ['抖音', '美团', '携程', '票付通']
 }
 
 const canonicalScenics = [
@@ -53,14 +53,18 @@ const configsForAllScenics = canonicalScenics.map(([scenic_id, scenic_name]) => 
 }))
 
 const passthrough = { template: '<div><slot /><slot name="footer" /></div>' }
-const table = { template: '<div><slot name="empty" /></div>' }
+const table = { template: '<div><slot /><slot name="empty" /></div>' }
+const tableColumn = {
+  data: () => ({ row: { hotel_platforms: [] } }),
+  template: '<div><slot :row="row" /></div>'
+}
 const global = {
   stubs: {
     ElDialog: passthrough,
     ElTabs: passthrough,
     ElTabPane: { props: ['label'], template: '<section>{{ label }}<slot /></section>' },
     ElTable: table,
-    ElTableColumn: passthrough,
+    ElTableColumn: tableColumn,
     ElInput: true,
     ElInputNumber: true,
     ElSelect: true,
@@ -86,6 +90,7 @@ describe('ScenicConfigDialog hotel configuration', () => {
 
     expect(wrapper.text()).toContain('门票配置')
     expect(wrapper.text()).toContain('酒店配置')
+    expect(wrapper.text()).toContain('票付通')
     expect(wrapper.vm.rows[0].hotel_platforms).toEqual(['抖音', '美团', '携程', '票付通'])
   })
 
@@ -102,7 +107,7 @@ describe('ScenicConfigDialog hotel configuration', () => {
       hotel_commission_rate: 0.08,
       hotel_fee_per_night: 58,
       hotel_fee_algo: 2,
-      hotel_platforms: ['抖音', '美团', '携程']
+      hotel_platforms: ['抖音', '美团', '携程', '票付通']
     })
   })
 
