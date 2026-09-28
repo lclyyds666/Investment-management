@@ -14,13 +14,15 @@ const invoiceApi = vi.hoisted(() => ({
   downloadInvoiceDocument: vi.fn()
 }))
 const contractApi = vi.hoisted(() => ({ listContracts: vi.fn() }))
+const customerApi = vi.hoisted(() => ({ listCustomers: vi.fn(), getCustomer: vi.fn() }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
-  hasPermission: vi.fn(code => code === 'supply.invoice.manage' || code === 'supply.invoice.approve')
+  hasPermission: vi.fn(code => code === 'supply.invoice.view' || code === 'supply.invoice.manage' || code === 'supply.invoice.approve')
 }))
 
 vi.mock('@/api/invoice', () => invoiceApi)
 vi.mock('@/api/contract', () => contractApi)
+vi.mock('@/api/customer', () => customerApi)
 vi.mock('@/store/portal', () => ({ usePortalStore: () => portal }))
 vi.mock('@/utils/file', () => ({ downloadBlob: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({
@@ -80,6 +82,8 @@ describe('invoice management redesign', () => {
     invoiceApi.createInvoiceApprovalForm.mockResolvedValue({})
     invoiceApi.downloadInvoiceDocument.mockResolvedValue(new Blob(['ok']))
     contractApi.listContracts.mockResolvedValue([{ id: 7, contract_no: 'HT-001', title: '测试合同' }])
+    customerApi.listCustomers.mockResolvedValue([])
+    customerApi.getCustomer.mockResolvedValue(null)
   })
 
   it('exposes input/output tabs and never exposes create or delete actions', () => {
@@ -138,5 +142,51 @@ describe('invoice management redesign', () => {
     await wrapper.vm.generateApproval({ id: 5, direction: 'output' })
     expect(invoiceApi.createInvoiceApprovalForm).toHaveBeenCalledWith(5)
     expect(wrapper.vm.canPrintApproval({ approval_status: 'approved' })).toBe(true)
+  })
+
+  it('allows a view-only user to print balanced detail and approved approval documents', async () => {
+    portal.hasPermission.mockImplementation(code => code === 'supply.invoice.view')
+    invoiceApi.listInvoiceDetails.mockResolvedValue({ items: [], detail_total: 100, difference: 0 })
+    const wrapper = mountView()
+    expect(wrapper.vm.canPrintApproval({ approval_status: 'approved' })).toBe(true)
+    await wrapper.vm.printDetails({ id: 8, direction: 'output', amount: 100 })
+    await wrapper.vm.printApproval({ id: 8, direction: 'output', approval_status: 'approved' })
+    expect(invoiceApi.downloadInvoiceDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it('uploads multiple files for output rows through the shared attachment API', async () => {
+    const wrapper = mountView()
+    const files = [new File(['a'], 'a.pdf'), new File(['b'], 'b.pdf')]
+    await wrapper.vm.uploadFiles({ id: 12, direction: 'output' }, files)
+    expect(invoiceApi.uploadInvoiceAttachments).toHaveBeenCalledWith(12, files)
+  })
+
+  it('remembers an output contract per scenic and direction and fills its customer snapshot', async () => {
+    contractApi.listContracts.mockResolvedValue([{ id: 7, contract_no: 'HT-001', title: '测试合同', customer_name: '客户甲' }])
+    customerApi.listCustomers.mockResolvedValue([{
+      name: '客户甲', social_credit_code: '9137', address: '地址', phone: '123', bank_name: '银行', bank_account: '456'
+    }])
+    localStorage.setItem('invoice-contract-default:scenic-a:output', 'HT-001')
+    const wrapper = mountView()
+    await wrapper.vm.openEdit({ id: 13, direction: 'output', scenic_id: 'scenic-a', amount: 200 })
+    await flushPromises()
+    expect(wrapper.vm.form.contract_no).toBe('HT-001')
+    expect(wrapper.vm.form.customer_name).toBe('客户甲')
+    expect(wrapper.vm.form.customer_social_credit_code).toBe('9137')
+    expect(wrapper.vm.form.customer_bank_account).toBe('456')
+  })
+
+  it('loads the real difference before approval or print and blocks nonzero totals', async () => {
+    invoiceApi.listInvoiceDetails.mockResolvedValue({ items: [], detail_total: 80, difference: 20 })
+    const wrapper = mountView()
+    await wrapper.vm.generateApproval({ id: 14, direction: 'output' })
+    await wrapper.vm.printApproval({ id: 14, direction: 'output', approval_status: 'approved' })
+    expect(invoiceApi.createInvoiceApprovalForm).not.toHaveBeenCalled()
+    expect(invoiceApi.downloadInvoiceDocument).not.toHaveBeenCalled()
+    expect(invoiceApi.listInvoiceDetails).toHaveBeenCalledWith(14)
+  })
+
+  it('labels the fixed detail total column as 价税合计', () => {
+    expect(mountView().text()).toContain('价税合计')
   })
 })
