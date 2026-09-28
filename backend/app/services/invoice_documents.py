@@ -10,9 +10,19 @@ from fastapi import HTTPException, UploadFile, status
 from app.core.config import settings
 from app.models.invoice import Invoice, InvoiceAttachment
 
-ALLOWED_EXTENSIONS = {
-    ".pdf", ".ofd", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg",
+ATTACHMENT_SIGNATURES = {
+    ".pdf": b"%PDF-",
+    ".jpg": b"\xff\xd8\xff",
+    ".jpeg": b"\xff\xd8\xff",
+    ".png": b"\x89PNG\r\n\x1a\n",
 }
+ATTACHMENT_MIME_TYPES = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+ALLOWED_EXTENSIONS = frozenset(ATTACHMENT_SIGNATURES)
 MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
 
@@ -40,6 +50,13 @@ def _safe_original_name(filename: str | None) -> str:
     return original_name
 
 
+def _validate_attachment_content(target: Path, extension: str) -> None:
+    with target.open("rb") as source:
+        header = source.read(8)
+    if not header.startswith(ATTACHMENT_SIGNATURES[extension]):
+        raise HTTPException(status_code=400, detail="附件内容与文件格式不匹配")
+
+
 async def save_invoice_attachment(
     invoice: Invoice,
     upload: UploadFile,
@@ -62,18 +79,21 @@ async def save_invoice_attachment(
                 output.write(chunk)
         if size == 0:
             raise HTTPException(status_code=400, detail="附件不能为空")
+        _validate_attachment_content(target, extension)
         attachment = InvoiceAttachment(
             invoice_id=invoice.id,
             original_name=original_name,
             stored_name=stored_name,
-            content_type=upload.content_type or "application/octet-stream",
+            content_type=ATTACHMENT_MIME_TYPES[extension],
             file_size=size,
             uploaded_by=uploaded_by,
         )
         return attachment, target
     except Exception:
-        if target.exists():
-            target.unlink()
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise
 
 

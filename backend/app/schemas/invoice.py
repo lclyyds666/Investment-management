@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 from app.core.enums import (
     INVOICE_STATUS_LABELS,
@@ -72,6 +72,26 @@ class InvoiceUpdate(BaseModel):
     customer_bank_name: Optional[str] = None
     customer_bank_account: Optional[str] = None
 
+    @field_validator(
+        "invoice_title",
+        "tax_no",
+        "amount",
+        "customer_name",
+        "contract_no",
+        "remark",
+        "customer_social_credit_code",
+        "customer_address",
+        "customer_phone",
+        "customer_bank_name",
+        "customer_bank_account",
+        mode="before",
+    )
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("字段不可为 null")
+        return value
+
 
 class InvoiceDetailOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -92,6 +112,13 @@ class InvoiceDetailUpdate(BaseModel):
     amount: Optional[Decimal] = None
     platform: Optional[str] = None
     item_name: Optional[str] = None
+
+    @field_validator("amount", "platform", "item_name", mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("字段不可为 null")
+        return value
 
 
 class InvoiceDetailList(BaseModel):

@@ -94,7 +94,7 @@ def invoice_api(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: current["user"]
     upload_dir = tempfile.TemporaryDirectory()
     monkeypatch.setattr("app.services.invoice_documents.settings.UPLOAD_DIR", upload_dir.name)
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     yield db, client, current, users, invoice, legacy, other, Path(upload_dir.name)
     client.close()
     app.dependency_overrides.clear()
@@ -191,31 +191,55 @@ def test_update_allows_business_snapshot_fields(invoice_api):
     assert invoice.customer_bank_account == "账号"
 
 
+@pytest.mark.parametrize("field", ["amount", "tax_no", "customer_name"])
+def test_update_rejects_explicit_null_for_non_nullable_fields(invoice_api, field):
+    _, client, _, _, invoice, _, _, _ = invoice_api
+    response = client.put(f"/api/v1/invoices/{invoice.id}", json={field: None})
+    assert response.status_code == 422, response.text
+
+
 def test_multi_file_upload_marks_issued_and_later_upload_appends(invoice_api):
     db, client, _, _, invoice, _, _, upload_root = invoice_api
     first = client.post(f"/api/v1/invoices/{invoice.id}/attachments", files=[
-        ("files", ("invoice-a.pdf", b"%PDF-a", "application/pdf")),
-        ("files", ("invoice-b.jpg", b"\xff\xd8\xffb", "image/jpeg")),
+        ("files", ("invoice-a.pdf", b"%PDF-a", "text/plain")),
+        ("files", ("invoice-b.jpg", b"\xff\xd8\xffb", "application/pdf")),
     ])
     assert first.status_code == 200, first.text
     assert len(first.json()["data"]) == 2
+    assert [row["content_type"] for row in first.json()["data"]] == [
+        "application/pdf",
+        "image/jpeg",
+    ]
     assert len(client.get(f"/api/v1/invoices/{invoice.id}/attachments").json()["data"]) == 2
     db.refresh(invoice)
     assert invoice.status == InvoiceStatus.ISSUED
     assert len(list((upload_root / "invoices" / str(invoice.id)).iterdir())) == 2
     second = client.post(
         f"/api/v1/invoices/{invoice.id}/attachments",
-        files=[("files", ("invoice-c.png", b"\x89PNG\r\n\x1a\n", "image/png"))],
+        files=[("files", ("invoice-c.png", b"\x89PNG\r\n\x1a\n", "application/octet-stream"))],
     )
     assert second.status_code == 200, second.text
     assert len(second.json()["data"]) == 3
+    assert second.json()["data"][-1]["content_type"] == "image/png"
+
+
+def test_attachment_rejects_fake_pdf_content(invoice_api):
+    db, client, _, _, invoice, _, _, upload_root = invoice_api
+    response = client.post(
+        f"/api/v1/invoices/{invoice.id}/attachments",
+        files=[("files", ("fake.pdf", b"not a pdf", "application/pdf"))],
+    )
+    assert response.status_code == 400, response.text
+    assert db.scalar(select(func.count()).select_from(InvoiceAttachment)) == 0
+    directory = upload_root / "invoices" / str(invoice.id)
+    assert not directory.exists() or list(directory.iterdir()) == []
 
 
 def test_attachment_batch_failure_keeps_files_and_database_consistent(invoice_api):
     db, client, _, _, invoice, _, _, upload_root = invoice_api
     response = client.post(f"/api/v1/invoices/{invoice.id}/attachments", files=[
         ("files", ("invoice.pdf", b"%PDF-ok", "application/pdf")),
-        ("files", ("payload.exe", b"unsafe", "application/octet-stream")),
+        ("files", ("fake.png", b"not-a-png", "image/png")),
     ])
     assert response.status_code == 400, response.text
     assert db.scalar(select(func.count()).select_from(InvoiceAttachment)) == 0
@@ -283,6 +307,16 @@ def test_detail_source_identity_is_rejected_and_stats_are_available(invoice_api)
         "difference": "0.00",
     }
     assert client.get(f"/api/v1/invoices/{input_invoice.id}/details").status_code == 409
+
+
+@pytest.mark.parametrize("field", ["amount", "item_name"])
+def test_detail_update_rejects_explicit_null(invoice_api, field):
+    _, client, _, _, invoice, _, _, _ = invoice_api
+    detail_id = invoice.details[0].id
+    response = client.put(
+        f"/api/v1/invoices/{invoice.id}/details/{detail_id}", json={field: None}
+    )
+    assert response.status_code == 422, response.text
 
 
 def test_source_lifecycle_delete_cascades_approval_form(invoice_api):
