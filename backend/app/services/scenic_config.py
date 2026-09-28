@@ -22,7 +22,7 @@ SYSTEM_HOTEL_RATE_SETTLE = Decimal("0.94")
 SYSTEM_HOTEL_COMMISSION_RATE = Decimal("0.06")
 SYSTEM_HOTEL_FEE_PER_NIGHT = Decimal("44")
 SYSTEM_HOTEL_FEE_ALGO = 1
-SYSTEM_HOTEL_PLATFORMS = ("抖音", "美团", "携程")
+SYSTEM_HOTEL_PLATFORMS = ("抖音", "美团", "携程", "票付通")
 
 SCENIC_SEEDS = (
     ("quancheng-ouleb", "泉城欧乐堡", 10, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),

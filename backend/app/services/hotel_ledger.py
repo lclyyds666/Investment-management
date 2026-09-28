@@ -41,9 +41,9 @@ DEFAULT_RATE_SETTLE = CALC_DEFAULT_RATE_SETTLE     # 结算费率(算法2:结算
 DEFAULT_COMMISSION_RATE = CALC_DEFAULT_COMMISSION_RATE  # 抖音服务商佣金率(对订单实收)
 
 # 平台识别（按 sheet 标题前缀）
-PLATFORMS = ("抖音", "美团", "携程")
+PLATFORMS = ("抖音", "美团", "携程", "票付通")
 HOTEL_BRANDS = ("海洋", "骑士", "长颈鹿")
-BRANDED_PLATFORM_ORDER = ("携程", "美团", "抖音")
+BRANDED_PLATFORM_ORDER = ("携程", "美团", "票付通", "抖音")
 
 # 列别名（跨期/跨平台容错）
 COL_DY_SHISHOU = {"订单实收金额"}
@@ -350,7 +350,7 @@ def parse_hotel_file(
                     if dt:
                         s0 = dt if s0 is None else min(s0, dt)
                         e0 = dt if e0 is None else max(e0, dt)
-            else:  # 美团 / 携程
+            else:  # 美团 / 携程 / 票付通
                 if plat == "美团":
                     i_j = _idx(header, COL_MT_JIESUAN); i_night = _idx(header, COL_MT_NIGHTS)
                     i_leave = _idx(header, COL_MT_LEAVE); i_in = _idx(header, COL_MT_CHECKIN)

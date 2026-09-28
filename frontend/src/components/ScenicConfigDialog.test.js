@@ -86,7 +86,7 @@ describe('ScenicConfigDialog hotel configuration', () => {
 
     expect(wrapper.text()).toContain('门票配置')
     expect(wrapper.text()).toContain('酒店配置')
-    expect(wrapper.vm.rows[0].hotel_platforms).toEqual(['抖音', '美团', '携程'])
+    expect(wrapper.vm.rows[0].hotel_platforms).toEqual(['抖音', '美团', '携程', '票付通'])
   })
 
   it('saves the hotel fields using the Task 5 API contract', async () => {

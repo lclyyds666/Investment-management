@@ -148,7 +148,7 @@ class HotelScenicConfigTest(unittest.TestCase):
             hotel_commission_rate=Decimal("0.05"),
             hotel_fee_per_night=Decimal("52"),
             hotel_fee_algo=2,
-            hotel_platforms=("抖音", "美团", "携程"),
+            hotel_platforms=("抖音", "美团", "携程", "票付通"),
         )
 
     def test_save_uses_current_scenic_config_when_legacy_client_omits_rates(self):

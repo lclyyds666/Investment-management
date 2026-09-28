@@ -225,7 +225,7 @@ const savingId = ref('')
 const hotelSavingId = ref('')
 const rows = ref([])
 const activeTab = ref('ticket')
-const HOTEL_PLATFORMS = ['抖音', '美团', '携程']
+const HOTEL_PLATFORMS = ['抖音', '美团', '携程', '票付通']
 const HOTEL_SCENIC_IDS = new Set(
   scenicSpots.filter((spot) => spot.hotelEnabled).map((spot) => spot.id)
 )

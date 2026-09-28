@@ -104,7 +104,7 @@ class ScenicConfigTest(unittest.TestCase):
                 )
                 self.assertEqual(config.hotel_fee_per_night, Decimal("44"))
                 self.assertEqual(config.hotel_fee_algo, 1)
-                self.assertEqual(config.hotel_platforms, ("抖音", "美团", "携程"))
+                self.assertEqual(config.hotel_platforms, ("抖音", "美团", "携程", "票付通"))
 
         unknown = get_effective_config(None, "unknown-scenic")
         self.assertEqual(unknown.hotel_rate_hexiao, Decimal("0.90"))
@@ -195,7 +195,7 @@ class ScenicConfigTest(unittest.TestCase):
         fuzhou = configs[2]
         self.assertFalse(fuzhou.configured)
         self.assertEqual(fuzhou.hotel_rate_hexiao, Decimal("0.91"))
-        self.assertEqual(fuzhou.hotel_platforms, ("抖音", "美团", "携程"))
+        self.assertEqual(fuzhou.hotel_platforms, ("抖音", "美团", "携程", "票付通"))
 
     def test_list_does_not_hide_non_database_errors(self):
         db = SimpleNamespace(

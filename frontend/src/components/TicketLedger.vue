@@ -292,7 +292,7 @@ const canDelete = computed(() => canUsePermission(portalStore, 'supply.scenic.de
 const canApproveConfirm = computed(() => canUsePermission(portalStore, 'supply.scenic.review'))
 const canExport = computed(() => canUsePermission(portalStore, 'supply.scenic.export'))
 
-const PLATFORMS = ['抖音', '美团', '携程', '同程']
+const PLATFORMS = ['抖音', '美团', '携程', '同程', '票付通']
 const loading = ref(false)
 const parsing = ref(false)
 const saving = ref(false)

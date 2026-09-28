@@ -410,7 +410,7 @@ async def parse_file(
     finally:
         del content
 
-    enabled_platforms = set(config.hotel_platforms)
+    enabled_platforms = set(config.hotel_platforms).intersection(hl_svc.PLATFORMS)
     platform_rows = []
     disabled_platforms = []
     for platform_row in info["platforms"]:

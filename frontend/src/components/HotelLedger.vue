@@ -162,7 +162,9 @@
     <el-dialog v-model="editVisible" title="编辑台账行" width="min(980px, 94vw)" top="4vh" append-to-body>
       <el-form v-if="editRow" label-width="130px" class="edit-ledger-form">
         <el-form-item label="平台">
-          <el-input :model-value="editRow.platform" disabled style="width:100%" />
+          <el-select v-model="editForm.platform" disabled style="width:100%">
+            <el-option v-for="platform in HOTEL_PLATFORMS" :key="platform" :label="platform" :value="platform" />
+          </el-select>
         </el-form-item>
         <el-form-item label="酒店名称">
           <el-input v-model="editForm.hotel_name" style="width:100%" />
@@ -274,6 +276,8 @@ const canUpdate = computed(() => canUsePermission(portalStore, 'supply.scenic.up
 const canDelete = computed(() => canUsePermission(portalStore, 'supply.scenic.delete'))
 const canApproveConfirm = computed(() => canUsePermission(portalStore, 'supply.scenic.review'))
 const canExport = computed(() => canUsePermission(portalStore, 'supply.scenic.export'))
+
+const HOTEL_PLATFORMS = ['抖音', '美团', '携程', '票付通']
 
 const loading = ref(false)
 const parsing = ref(false)
@@ -476,6 +480,7 @@ const editVisible = ref(false)
 const editRow = ref(null)
 const savingEdit = ref(false)
 const editForm = reactive({
+  platform: '',
   hotel_name: '',
   base_received: 0, receivedEdited: false,       // 服务商到账/平台毛额(可人工改)
   supplier_commission: 0, room_nights: 0,
@@ -548,6 +553,7 @@ function openEdit(row) {
   cancelCalculationPreview()
   suppressJinyingWatch = true   // 载入既有值期间不触发跟随
   editRow.value = row
+  editForm.platform = row.platform
   editForm.hotel_name = row.hotel_name
   editForm.base_received = Number(row.base_received) || 0
   editForm.receivedEdited = false

@@ -5,7 +5,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-HOTEL_PLATFORMS = ("抖音", "美团", "携程")
+HOTEL_PLATFORMS = ("抖音", "美团", "携程", "票付通")
 
 
 class ScenicConfigUpdate(BaseModel):
@@ -51,7 +51,7 @@ class HotelScenicConfigUpdate(BaseModel):
             raise ValueError("酒店启用平台不能重复")
         invalid = set(normalized).difference(HOTEL_PLATFORMS)
         if invalid:
-            raise ValueError("酒店平台仅支持抖音、美团、携程")
+            raise ValueError("酒店平台仅支持抖音、美团、携程、票付通")
         return normalized
 
 
