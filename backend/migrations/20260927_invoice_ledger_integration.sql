@@ -102,7 +102,17 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND column_name='invoice_id'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD COLUMN `invoice_id` INT NULL');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND column_name='invoice_tax_no'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD COLUMN `invoice_tax_no` VARCHAR(64) NOT NULL DEFAULT ''''');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND column_name='invoice_customer_address'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD COLUMN `invoice_customer_address` VARCHAR(255) NOT NULL DEFAULT ''''');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND column_name='invoice_customer_phone'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD COLUMN `invoice_customer_phone` VARCHAR(32) NOT NULL DEFAULT ''''');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND column_name='invoice_type_snapshot'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD COLUMN `invoice_type_snapshot` VARCHAR(32) NOT NULL DEFAULT ''''');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND index_name='ix_biz_approval_form_invoice_id'), 'SELECT 1', 'CREATE INDEX `ix_biz_approval_form_invoice_id` ON `biz_approval_form` (`invoice_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND index_name='uq_approval_form_invoice_id'), 'SELECT 1', 'CREATE UNIQUE INDEX `uq_approval_form_invoice_id` ON `biz_approval_form` (`invoice_id`)');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @needs_invoice_fk_rebuild = IF(EXISTS(SELECT 1 FROM information_schema.referential_constraints WHERE constraint_schema=@schema_name AND table_name='biz_approval_form' AND constraint_name='fk_approval_form_invoice' AND delete_rule <> 'CASCADE'), 1, 0);
 SET @ddl = IF(@needs_invoice_fk_rebuild = 1, 'ALTER TABLE `biz_approval_form` DROP FOREIGN KEY `fk_approval_form_invoice`', 'SELECT 1');

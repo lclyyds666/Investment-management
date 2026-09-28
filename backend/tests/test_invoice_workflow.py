@@ -30,6 +30,7 @@ from app.models.invoice import Invoice, InvoiceDetail
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask
+from app.schemas.approval_form import ApprovalFormCreate, ApprovalFormUpdate
 from app.services.organization_catalog import seed_authorization_catalog
 from app.services.workflow_catalog import WORKFLOW_DEFINITIONS
 from app.services.workflow_engine import seed_workflow_definitions
@@ -249,6 +250,108 @@ def test_invoice_approval_creation_requires_manage_data_and_balanced_details(inv
     db.commit()
     unbalanced = client.post(f"/api/v1/invoices/{invoice.id}/approval-form")
     assert unbalanced.status_code == 409, unbalanced.text
+
+
+def test_invoice_forms_cannot_use_generic_crud_or_submit(invoice_workflow_api):
+    db, client, current, users, invoice = invoice_workflow_api
+    assert "invoice_id" not in ApprovalFormCreate.model_fields
+    assert "invoice_id" not in ApprovalFormUpdate.model_fields
+    current["user"] = users["handler"]
+    bypass = client.post("/api/v1/approval-forms", json={
+        "form_type": "invoice",
+        "invoice_id": invoice.id,
+        "customer_name": "绕过校验的客户",
+        "amount": "1.00",
+    })
+    assert bypass.status_code == 403, bypass.text
+    assert db.scalar(select(ApprovalForm).where(
+        ApprovalForm.invoice_id == invoice.id
+    )) is None
+
+    current["user"] = users["reviewer"]
+    first = client.post(f"/api/v1/invoices/{invoice.id}/approval-form")
+    second = client.post(f"/api/v1/invoices/{invoice.id}/approval-form")
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    form_id = first.json()["data"]["id"]
+    assert second.json()["data"]["id"] == form_id
+    assert len(list(db.scalars(select(ApprovalForm).where(
+        ApprovalForm.invoice_id == invoice.id
+    )))) == 1
+
+    current["user"] = users["handler"]
+    assert client.put(
+        f"/api/v1/approval-forms/{form_id}",
+        json={"customer_name": "绕过修改"},
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/approval-forms/{form_id}/submit",
+        json={},
+    ).status_code == 403
+    assert client.delete(f"/api/v1/approval-forms/{form_id}").status_code == 403
+    assert db.get(ApprovalForm, form_id) is not None
+
+
+def test_approved_invoice_docx_uses_immutable_snapshots(invoice_workflow_api):
+    db, client, current, users, invoice = invoice_workflow_api
+    created = client.post(f"/api/v1/invoices/{invoice.id}/approval-form")
+    form_id = created.json()["data"]["id"]
+    assert client.post(
+        f"/api/v1/invoices/{invoice.id}/approval-form/submit"
+    ).status_code == 200
+    current["user"] = users["governance"]
+    assert client.post(
+        f"/api/v1/approval-forms/{form_id}/approve",
+        json={"comment": "同意"},
+    ).status_code == 200
+
+    users["reviewer"].full_name = "已改名申请人"
+    users["governance"].full_name = "已改名负责人"
+    invoice.customer_name = "变更后客户"
+    invoice.customer_social_credit_code = "NEW-TAX-NO"
+    invoice.customer_address = "变更后地址"
+    invoice.customer_phone = "999999"
+    invoice.customer_bank_name = "变更后银行"
+    invoice.customer_bank_account = "000000"
+    invoice.amount = Decimal("999.00")
+    invoice.contract_no = "NEW-CONTRACT"
+    invoice.invoice_type = "增值税普通发票"
+    invoice.details[0].amount = Decimal("400.00")
+    invoice.details[1].amount = Decimal("599.00")
+    db.commit()
+
+    printed = client.get(f"/api/v1/invoices/{invoice.id}/approval-form/print")
+    assert printed.status_code == 200, printed.text
+    document = Document(BytesIO(printed.content))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    for original in (
+        "业务复核甲",
+        "供管负责人乙",
+        "山东文旅客户有限公司",
+        "91370000123456789X",
+        "济南市历下区经十路1号",
+        "0531-12345678",
+        "中国银行济南分行",
+        "1234567890",
+        "100.00",
+        "HT-2026-001",
+        "增值税专用发票",
+    ):
+        assert original in text
+    for changed in (
+        "已改名申请人",
+        "已改名负责人",
+        "变更后客户",
+        "NEW-TAX-NO",
+        "变更后地址",
+        "999999",
+        "变更后银行",
+        "000000",
+        "999.00",
+        "NEW-CONTRACT",
+        "增值税普通发票",
+    ):
+        assert changed not in text
 
 
 def test_invoice_print_endpoints_enforce_approval_and_balance(invoice_workflow_api):

@@ -17,6 +17,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -30,6 +31,9 @@ SignatureText = Text().with_variant(MEDIUMTEXT, "mysql")
 
 class ApprovalForm(Base):
     __tablename__ = "biz_approval_form"
+    __table_args__ = (
+        UniqueConstraint("invoice_id", name="uq_approval_form_invoice_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
     form_type: Mapped[ContractType] = mapped_column(
@@ -47,6 +51,10 @@ class ApprovalForm(Base):
         ForeignKey("biz_invoice.id", ondelete="CASCADE"), nullable=True, index=True, comment="关联销项发票",
     )
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称(快照)")
+    invoice_tax_no: Mapped[str] = mapped_column(String(64), default="", comment="销项购买方税号快照")
+    invoice_customer_address: Mapped[str] = mapped_column(String(255), default="", comment="销项购买方地址快照")
+    invoice_customer_phone: Mapped[str] = mapped_column(String(32), default="", comment="销项购买方电话快照")
+    invoice_type_snapshot: Mapped[str] = mapped_column(String(32), default="", comment="销项发票类型快照")
     business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型")
     business_desc: Mapped[str] = mapped_column(String(500), default="详见合同", comment="业务情况")
     contract_no: Mapped[str] = mapped_column(String(64), default="", index=True, comment="合同编号")

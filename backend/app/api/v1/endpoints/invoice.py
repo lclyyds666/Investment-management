@@ -90,14 +90,13 @@ def _output_invoice_or_409(db: Session, invoice_id: int) -> Invoice:
 
 
 def _invoice_form(db: Session, invoice_id: int) -> ApprovalForm | None:
-    return db.scalar(
+    return db.execute(
         select(ApprovalForm)
         .where(
             ApprovalForm.invoice_id == invoice_id,
             ApprovalForm.form_type == ContractType.INVOICE,
         )
-        .order_by(ApprovalForm.id.desc())
-    )
+    ).scalar_one_or_none()
 
 
 def _active_form_task(db: Session, form: ApprovalForm) -> WorkflowTask | None:
@@ -152,6 +151,10 @@ def _snapshot_invoice_form(
     form.invoice_id = invoice.id
     form.customer_id = invoice.customer_id
     form.customer_name = invoice.customer_name
+    form.invoice_tax_no = invoice.customer_social_credit_code
+    form.invoice_customer_address = invoice.customer_address
+    form.invoice_customer_phone = invoice.customer_phone
+    form.invoice_type_snapshot = invoice.invoice_type
     form.business_type = invoice.source_kind.value if invoice.source_kind else ""
     form.business_desc = "业务事项"
     form.contract_no = invoice.contract_no
@@ -483,16 +486,15 @@ def print_invoice_approval_form(
     actions = list(db.scalars(
         select(ApprovalFormAction)
         .where(ApprovalFormAction.form_id == form.id)
+        .options(joinedload(ApprovalFormAction.workflow_task_action))
         .order_by(ApprovalFormAction.id)
     ))
-    users = {
-        user.id: user.full_name
-        for user in db.scalars(select(User).where(
-            User.id.in_({action.approver_id for action in actions})
-        ))
-    }
     applicant = next(
-        (action for action in actions if action.position_code == "supply.business_reviewer"),
+        (
+            action
+            for action in reversed(actions)
+            if action.position_code == "supply.business_reviewer"
+        ),
         None,
     )
     approver = next(
@@ -505,17 +507,25 @@ def print_invoice_approval_form(
     )
     content = build_invoice_approval_docx({
         "customer_name": form.customer_name,
-        "tax_no": invoice.customer_social_credit_code,
-        "customer_address": invoice.customer_address,
-        "customer_phone": invoice.customer_phone,
+        "tax_no": form.invoice_tax_no,
+        "customer_address": form.invoice_customer_address,
+        "customer_phone": form.invoice_customer_phone,
         "customer_bank_name": form.bank_name,
         "customer_bank_account": form.bank_account,
         "amount": form.amount,
         "contract_no": form.contract_no,
         "business_item": form.business_desc or "业务事项",
-        "invoice_type": invoice.invoice_type,
-        "applicant_name": users.get(applicant.approver_id, "") if applicant else "",
-        "approver_name": users.get(approver.approver_id, "") if approver else "",
+        "invoice_type": form.invoice_type_snapshot,
+        "applicant_name": (
+            applicant.workflow_task_action.actor_name
+            if applicant and applicant.workflow_task_action
+            else ""
+        ),
+        "approver_name": (
+            approver.workflow_task_action.actor_name
+            if approver and approver.workflow_task_action
+            else ""
+        ),
         "apply_date": form.apply_date,
         "approval_date": approver.created_at.date() if approver and approver.created_at else None,
         "remark": form.remark,

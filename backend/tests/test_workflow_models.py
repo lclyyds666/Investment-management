@@ -104,6 +104,16 @@ class WorkflowModelContractTest(unittest.TestCase):
             }.issubset(columns))
         self.assertEqual(ContractType.INVOICE.value, "invoice")
         self.assertIn("invoice_id", ApprovalForm.__table__.columns)
+        self.assertTrue({
+            "invoice_tax_no",
+            "invoice_customer_address",
+            "invoice_customer_phone",
+            "invoice_type_snapshot",
+        }.issubset(ApprovalForm.__table__.columns.keys()))
+        self.assertIn(
+            "uq_approval_form_invoice_id",
+            {constraint.name for constraint in ApprovalForm.__table__.constraints},
+        )
         invoice_fk = next(
             fk for fk in ApprovalForm.__table__.c.invoice_id.foreign_keys
             if fk.target_fullname == "biz_invoice.id"
@@ -155,6 +165,14 @@ class WorkflowModelContractTest(unittest.TestCase):
         self.assertIn("delete_rule <> 'CASCADE'", source)
         self.assertIn("DROP FOREIGN KEY `fk_approval_form_invoice`", source)
         self.assertIn("MODIFY COLUMN `period_key` VARCHAR(255) NULL", source)
+        for column_name in (
+            "invoice_tax_no",
+            "invoice_customer_address",
+            "invoice_customer_phone",
+            "invoice_type_snapshot",
+        ):
+            self.assertIn(f"column_name='{column_name}'", source)
+        self.assertIn("CREATE UNIQUE INDEX `uq_approval_form_invoice_id`", source)
 
     def test_unified_organization_tables_use_production_collation(self):
         source = Path(

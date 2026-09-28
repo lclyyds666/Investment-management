@@ -87,6 +87,14 @@ def _get_form_or_404(db: Session, form_id: int) -> ApprovalForm:
     return form
 
 
+def _reject_invoice_form_generic_access(form: ApprovalForm) -> None:
+    if form.form_type == ContractType.INVOICE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="销项发票审批单只能通过发票专用接口管理",
+        )
+
+
 def _names_map(db: Session, ids: set[int]) -> dict[int, str]:
     if not ids:
         return {}
@@ -328,6 +336,11 @@ def create_form(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if payload.form_type == ContractType.INVOICE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="销项发票审批单只能通过发票专用接口创建",
+        )
     form = ApprovalForm(
         form_type=payload.form_type,
         status=ContractStatus.DRAFT,
@@ -356,6 +369,7 @@ def update_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
+    _reject_invoice_form_generic_access(form)
     if form.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能修改本人创建的审批单")
     if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
@@ -386,6 +400,7 @@ def delete_form(
     )
     if form is None:
         raise HTTPException(status_code=404, detail="审批单不存在")
+    _reject_invoice_form_generic_access(form)
     if form.status == ContractStatus.APPROVED:
         raise HTTPException(status_code=409, detail="已审批业务记录不可删除")
     if not has_permission(db, current_user, "supply.approval.delete", _supply_context()):
@@ -417,6 +432,7 @@ def submit_form(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
+    _reject_invoice_form_generic_access(form)
     enabled_superuser = bool(current_user.is_active and current_user.is_superuser)
     if form.created_by != current_user.id and not (
         form.workflow_instance_id is not None and enabled_superuser
@@ -512,6 +528,7 @@ async def upload_attachment(
     current_user: User = Depends(get_current_user),
 ):
     form = _get_form_or_404(db, form_id)
+    _reject_invoice_form_generic_access(form)
     if form.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="只能为本人创建的审批单上传附件")
     fname = file.filename or "附件"
@@ -573,6 +590,7 @@ def print_form(
     _: User = Depends(_approval_dl_guard),
 ):
     form = _get_form_or_404(db, form_id)
+    _reject_invoice_form_generic_access(form)
     instance = (
         db.get(WorkflowInstance, form.workflow_instance_id)
         if form.workflow_instance_id is not None
