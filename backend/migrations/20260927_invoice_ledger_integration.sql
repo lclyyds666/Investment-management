@@ -8,7 +8,9 @@ SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_invoice' AND column_name='scenic_id'), 'SELECT 1', 'ALTER TABLE `biz_invoice` ADD COLUMN `scenic_id` VARCHAR(64) NULL');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_invoice' AND column_name='period_key'), 'SELECT 1', 'ALTER TABLE `biz_invoice` ADD COLUMN `period_key` VARCHAR(64) NULL');
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_invoice' AND column_name='period_key'), 'SELECT 1', 'ALTER TABLE `biz_invoice` ADD COLUMN `period_key` VARCHAR(255) NULL');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_invoice' AND column_name='period_key' AND character_maximum_length < 255), 'ALTER TABLE `biz_invoice` MODIFY COLUMN `period_key` VARCHAR(255) NULL', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_invoice' AND column_name='source_revision'), 'SELECT 1', 'ALTER TABLE `biz_invoice` ADD COLUMN `source_revision` INT NULL');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

@@ -48,7 +48,7 @@ class Invoice(Base):
         nullable=True, index=True, comment="台账来源(ticket/hotel)",
     )
     scenic_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True, comment="景区作用域键")
-    period_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True, comment="来源台账周期")
+    period_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True, comment="来源台账周期")
     source_revision: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="来源确认版本")
     source_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True, comment="来源明细指纹")
     generated_by_source: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False, comment="是否由台账确认生成")

@@ -40,7 +40,7 @@ def _is_platform_row(row) -> bool:
     return value.casefold() not in {"合计", "总计", "小计", "total", "subtotal"}
 
 
-def _source_rows(db: Session, source_kind: InvoiceSourceKind, scenic_id: str, period_key: str):
+def _period_rows(db: Session, source_kind: InvoiceSourceKind, scenic_id: str, period_key: str):
     if source_kind == InvoiceSourceKind.TICKET:
         rows = db.scalars(
             select(TicketLedger).where(TicketLedger.scenic_id == scenic_id)
@@ -54,9 +54,17 @@ def _source_rows(db: Session, source_kind: InvoiceSourceKind, scenic_id: str, pe
     else:
         raise ValueError(f"unsupported invoice source kind: {source_kind}")
     return sorted(
-        [row for row in rows if key_fn(row) == period_key and _is_platform_row(row)],
+        [row for row in rows if key_fn(row) == period_key],
         key=lambda row: (getattr(row, "row_no", 0) or 0, row.id),
     )
+
+
+def _source_rows(db: Session, source_kind: InvoiceSourceKind, scenic_id: str, period_key: str):
+    return [
+        row
+        for row in _period_rows(db, source_kind, scenic_id, period_key)
+        if _is_platform_row(row)
+    ]
 
 
 def _money(value) -> Decimal:
@@ -84,12 +92,12 @@ def _remembered_customer(db: Session, scenic_id: str, direction: InvoiceDirectio
             ScenicInvoicePreference.direction == direction,
         )
     )
-    contract_no = (preference.last_contract_no if preference else "") or ""
-    if not contract_no.strip():
-        return contract_no, None
-    contract = db.scalar(select(Contract).where(Contract.contract_no == contract_no.strip()))
+    remembered_no = ((preference.last_contract_no if preference else "") or "").strip()
+    if not remembered_no:
+        return "", None
+    contract = db.scalar(select(Contract).where(Contract.contract_no == remembered_no))
     if not contract:
-        return contract_no, None
+        return "", None
     customer = None
     if contract.customer_credit_code:
         customer = db.scalar(
@@ -97,7 +105,7 @@ def _remembered_customer(db: Session, scenic_id: str, direction: InvoiceDirectio
         )
     if not customer and contract.customer_name:
         customer = db.scalar(select(Customer).where(Customer.name == contract.customer_name))
-    return contract_no, customer
+    return contract.contract_no, customer
 
 
 def _invoice_snapshot(
@@ -224,6 +232,9 @@ def invalidate_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> None:
+    rows = _period_rows(db, source_kind, scenic_id, period_key)
+    for row in rows:
+        row.confirmed = False
     remove_period_invoices(
         db, scenic_id=scenic_id, source_kind=source_kind, period_key=period_key
     )

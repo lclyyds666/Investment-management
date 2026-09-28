@@ -154,6 +154,7 @@ class WorkflowModelContractTest(unittest.TestCase):
         self.assertIn("information_schema.referential_constraints", source)
         self.assertIn("delete_rule <> 'CASCADE'", source)
         self.assertIn("DROP FOREIGN KEY `fk_approval_form_invoice`", source)
+        self.assertIn("MODIFY COLUMN `period_key` VARCHAR(255) NULL", source)
 
     def test_unified_organization_tables_use_production_collation(self):
         source = Path(

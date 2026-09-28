@@ -20,6 +20,7 @@ class InvoiceModelTest(unittest.TestCase):
         self.assertTrue({"direction", "source_kind", "scenic_id", "period_key"}.issubset(Invoice.__table__.columns.keys()))
         names = {constraint.name for constraint in Invoice.__table__.constraints}
         self.assertIn("uq_invoice_source", names)
+        self.assertEqual(Invoice.__table__.c.period_key.type.length, 255)
 
     def test_invoice_cascades_attachments_and_details(self):
         invoice = Invoice(invoice_title="Example")

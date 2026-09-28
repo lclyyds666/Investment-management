@@ -881,6 +881,15 @@ async def upload_confirm(
             sib.confirm_stored = stored
             sib.confirm_name = fname
             sib.confirmed = False
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            (d / stored).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     if old_stored and old_stored != stored:
         try:
             old = d / Path(old_stored).name
@@ -888,7 +897,6 @@ async def upload_confirm(
                 old.unlink()
         except OSError:
             pass
-    db.commit()
     db.refresh(row)
     return Response.ok(_row_out(row), message="确认函已上传，本期状态：待确认")
 
@@ -915,7 +923,11 @@ def approve_confirm(
     invoice_svc.sync_confirmed_period_invoices(
         db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
     )
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(row)
     return Response.ok(_row_out(row), message="本期状态：已确认")
 
@@ -957,6 +969,11 @@ def delete_confirm(
             sib.confirm_stored = ""
             sib.confirm_name = ""
             sib.confirmed = False
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     if stored:
         try:
             fp = _confirm_dir(sid) / Path(stored).name
@@ -964,5 +981,4 @@ def delete_confirm(
                 fp.unlink()
         except OSError:
             pass
-    db.commit()
     return Response.ok({"deleted": 1}, message="确认函已删除，本期状态：未确认")
