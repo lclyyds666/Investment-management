@@ -44,7 +44,7 @@ class ApprovalForm(Base):
         ForeignKey("biz_customer.id", ondelete="SET NULL"), nullable=True, comment="客户(外键关联客户资料库)"
     )
     invoice_id: Mapped[int | None] = mapped_column(
-        ForeignKey("biz_invoice.id", ondelete="SET NULL"), nullable=True, index=True, comment="关联销项发票",
+        ForeignKey("biz_invoice.id", ondelete="CASCADE"), nullable=True, index=True, comment="关联销项发票",
     )
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称(快照)")
     business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型")

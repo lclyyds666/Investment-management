@@ -39,6 +39,10 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_invoice' AND index_name='uq_invoice_source'), 'SELECT 1', 'CREATE UNIQUE INDEX `uq_invoice_source` ON `biz_invoice` (`direction`, `source_kind`, `scenic_id`, `period_key`)');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_invoice' AND index_name='ix_biz_invoice_customer_id'), 'SELECT 1', 'CREATE INDEX `ix_biz_invoice_customer_id` ON `biz_invoice` (`customer_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_invoice' AND index_name='ix_biz_invoice_workflow_instance_id'), 'SELECT 1', 'CREATE INDEX `ix_biz_invoice_workflow_instance_id` ON `biz_invoice` (`workflow_instance_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_invoice' AND constraint_name='fk_invoice_customer'), 'SELECT 1', 'ALTER TABLE `biz_invoice` ADD CONSTRAINT `fk_invoice_customer` FOREIGN KEY (`customer_id`) REFERENCES `biz_customer` (`id`) ON DELETE SET NULL');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_invoice' AND constraint_name='fk_invoice_workflow_instance'), 'SELECT 1', 'ALTER TABLE `biz_invoice` ADD CONSTRAINT `fk_invoice_workflow_instance` FOREIGN KEY (`workflow_instance_id`) REFERENCES `wf_instance` (`id`) ON DELETE SET NULL');
@@ -98,5 +102,5 @@ SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_approval_form' AND index_name='ix_biz_approval_form_invoice_id'), 'SELECT 1', 'CREATE INDEX `ix_biz_approval_form_invoice_id` ON `biz_approval_form` (`invoice_id`)');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_approval_form' AND constraint_name='fk_approval_form_invoice'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD CONSTRAINT `fk_approval_form_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE SET NULL');
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_approval_form' AND constraint_name='fk_approval_form_invoice'), 'SELECT 1', 'ALTER TABLE `biz_approval_form` ADD CONSTRAINT `fk_approval_form_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE CASCADE');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

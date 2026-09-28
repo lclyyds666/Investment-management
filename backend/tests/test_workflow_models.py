@@ -104,6 +104,11 @@ class WorkflowModelContractTest(unittest.TestCase):
             }.issubset(columns))
         self.assertEqual(ContractType.INVOICE.value, "invoice")
         self.assertIn("invoice_id", ApprovalForm.__table__.columns)
+        invoice_fk = next(
+            fk for fk in ApprovalForm.__table__.c.invoice_id.foreign_keys
+            if fk.target_fullname == "biz_invoice.id"
+        )
+        self.assertEqual(invoice_fk.ondelete, "CASCADE")
 
     def test_init_db_registers_workflow_models(self):
         source = Path("app/db/init_db.py").read_text(encoding="utf-8")
