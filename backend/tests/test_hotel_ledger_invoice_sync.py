@@ -1,10 +1,14 @@
+import asyncio
+from io import BytesIO
 from decimal import Decimal
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 import app.db.init_db  # noqa: F401
-from app.api.v1.endpoints.hotel_ledger import approve_confirm, delete_row, update_row
+from app.api.v1.endpoints import hotel_ledger as endpoint
+from app.api.v1.endpoints.hotel_ledger import approve_confirm, delete_row, update_row, upload_confirm
 from app.db.base import Base
 from app.models.hotel_ledger import HotelLedger
 from app.models.invoice import Invoice
@@ -50,3 +54,26 @@ def test_delete_unconfirms_surviving_hotel_rows():
     survivor = db.scalar(select(HotelLedger))
     assert survivor is not None and not survivor.confirmed
     assert db.scalar(select(func.count()).select_from(Invoice)) == 0
+
+
+def test_invalidation_failure_removes_new_hotel_file_and_rolls_back(tmp_path, monkeypatch):
+    db, rows = _confirmed_period()
+    monkeypatch.setattr(endpoint, "_confirm_dir", lambda _: tmp_path)
+    (tmp_path / "c.pdf").write_bytes(b"old")
+
+    def fail_invalidation(*args, **kwargs):
+        raise RuntimeError("invalidation failed")
+
+    monkeypatch.setattr(endpoint.invoice_svc, "invalidate_period_invoices", fail_invalidation)
+    upload = UploadFile(filename="new.pdf", file=BytesIO(b"new"))
+    try:
+        asyncio.run(upload_confirm("s", rows[0].id, upload, db=db, _=None))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected invalidation failure")
+    db.expire_all()
+    period = db.scalars(select(HotelLedger)).all()
+    assert all(row.confirmed and row.confirm_stored == "c.pdf" for row in period)
+    assert [path.name for path in tmp_path.iterdir()] == ["c.pdf"]
+    assert db.scalar(select(func.count()).select_from(Invoice)) == 2

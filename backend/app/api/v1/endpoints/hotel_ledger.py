@@ -872,16 +872,16 @@ async def upload_confirm(
         raise HTTPException(status_code=500, detail="确认函保存失败")
     finally:
         del content
-    # 同期各平台行共享同一确认函；覆盖旧文件；新上传→待确认
-    key = _period_key(row)
-    _invalidate_confirmed_period(db, sid, key)
-    old_stored = row.confirm_stored
-    for sib in _load_rows(db, sid):
-        if _period_key(sib) == key:
-            sib.confirm_stored = stored
-            sib.confirm_name = fname
-            sib.confirmed = False
     try:
+        # 同期各平台行共享同一确认函；覆盖旧文件；新上传→待确认
+        key = _period_key(row)
+        old_stored = row.confirm_stored
+        _invalidate_confirmed_period(db, sid, key)
+        for sib in _load_rows(db, sid):
+            if _period_key(sib) == key:
+                sib.confirm_stored = stored
+                sib.confirm_name = fname
+                sib.confirmed = False
         db.commit()
     except Exception:
         db.rollback()

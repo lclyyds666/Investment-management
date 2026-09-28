@@ -102,3 +102,26 @@ def test_failed_reupload_removes_new_file_and_restores_old_state(tmp_path, monke
     assert (tmp_path / "c.pdf").exists()
     assert [path.name for path in tmp_path.iterdir()] == ["c.pdf"]
     assert db.scalar(select(func.count()).select_from(Invoice)) == 2
+
+
+def test_invalidation_failure_removes_new_ticket_file_and_rolls_back(tmp_path, monkeypatch):
+    db, rows = _confirmed_period()
+    monkeypatch.setattr(endpoint, "_confirm_dir", lambda _: tmp_path)
+    (tmp_path / "c.pdf").write_bytes(b"old")
+
+    def fail_invalidation(*args, **kwargs):
+        raise RuntimeError("invalidation failed")
+
+    monkeypatch.setattr(endpoint.invoice_svc, "invalidate_period_invoices", fail_invalidation)
+    upload = UploadFile(filename="new.pdf", file=BytesIO(b"new"))
+    try:
+        asyncio.run(upload_confirm("s", rows[0].id, upload, db=db, _=None))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected invalidation failure")
+    db.expire_all()
+    period = db.scalars(select(TicketLedger)).all()
+    assert all(row.confirmed and row.confirm_stored == "c.pdf" for row in period)
+    assert [path.name for path in tmp_path.iterdir()] == ["c.pdf"]
+    assert db.scalar(select(func.count()).select_from(Invoice)) == 2
