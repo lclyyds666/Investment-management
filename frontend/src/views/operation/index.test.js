@@ -57,8 +57,28 @@ describe('经营数据中心', () => {
     return wrapper
   }
 
+  it('默认汇总全部年份并保留手工年份筛选', async () => {
+    await mountView()
+
+    const yearSelect = wrapper.findAllComponents({ name: 'ElSelect' })[0]
+    expect(wrapper.vm.selectedYear).toBe('')
+    expect(yearSelect.attributes('placeholder')).toBe('全部年份')
+    expect(wrapper.vm.filteredSummary.total_gross_income).toBe(110000)
+
+    yearSelect.vm.$emit('update:modelValue', 2026)
+    await flushPromises()
+    expect(wrapper.vm.filteredSummary.total_gross_income).toBe(50000)
+
+    yearSelect.vm.$emit('update:modelValue', '')
+    await flushPromises()
+    expect(wrapper.vm.filteredSummary.total_gross_income).toBe(110000)
+  })
+
   it('保留四张 KPI 和两张原类型图表，并只把图表输入转换为万元', async () => {
     await mountView()
+
+    wrapper.findAllComponents({ name: 'ElSelect' })[0].vm.$emit('update:modelValue', 2026)
+    await flushPromises()
 
     expect(wrapper.findAll('.kpi-card')).toHaveLength(4)
     const charts = wrapper.findAllComponents({ name: 'BaseChart' })
@@ -79,6 +99,9 @@ describe('经营数据中心', () => {
 
   it('在页面尾部展示配置景区、未知景区和按权重计算的显式合计行', async () => {
     await mountView()
+
+    wrapper.findAllComponents({ name: 'ElSelect' })[0].vm.$emit('update:modelValue', 2026)
+    await flushPromises()
 
     const ledger = wrapper.get('[data-testid="scenic-operation-ledger"]')
     expect(wrapper.get('.chart-row').element.compareDocumentPosition(ledger.element) & Node.DOCUMENT_POSITION_FOLLOWING)
@@ -102,8 +125,11 @@ describe('经营数据中心', () => {
   it('让年份和景区筛选同步更新卡片、图表与台账', async () => {
     await mountView()
 
-    expect(wrapper.text()).toContain('¥40.00 万元')
     const selects = wrapper.findAllComponents({ name: 'ElSelect' })
+    selects[0].vm.$emit('update:modelValue', 2026)
+    await flushPromises()
+    expect(wrapper.text()).toContain('¥40.00 万元')
+
     selects[0].vm.$emit('update:modelValue', 2025)
     await flushPromises()
 
