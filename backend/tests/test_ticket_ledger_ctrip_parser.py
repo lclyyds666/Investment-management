@@ -81,6 +81,7 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         ctrip.append(["结算价金额", "流水类型", "使用份数", "出发时间"])
         ctrip.append([50, "订单成本", 1, datetime(2026, 9, 11)])
         ctrip.append([999, "调账", 1, datetime(2026, 9, 12)])
+        ctrip.append([777, "   ", 1, datetime(2026, 9, 13)])
 
         output = BytesIO()
         wb.save(output)

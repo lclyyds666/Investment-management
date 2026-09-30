@@ -536,7 +536,16 @@ def parse_reconciliation(
                     # 携程账单可能混有调账等流水，只将订单成本计入核销台账。
                     if 0 <= i_flow < len(raw):
                         flow_type = str(raw[i_flow] or "").strip()
-                        if flow_type and flow_type != XC_ORDER_COST:
+                        if (
+                            scenic_id == "changsha-dongqu"
+                            and flow_type != XC_ORDER_COST
+                        ):
+                            continue
+                        if (
+                            scenic_id != "changsha-dongqu"
+                            and flow_type
+                            and flow_type != XC_ORDER_COST
+                        ):
                             continue
                     base = _num(raw[i_xc_jiesuan]) if i_xc_jiesuan < len(raw) else None
                     if base is None:
