@@ -20,7 +20,7 @@
 
     <div class="chart-filters mt">
       <div class="filter-title">图表筛选</div>
-      <el-select v-model="selectedYear" placeholder="年份" clearable class="filter-control">
+      <el-select v-model="selectedYear" placeholder="全部年份" clearable class="filter-control">
         <el-option v-for="year in yearOptions" :key="year" :label="`${year}年`" :value="year" />
       </el-select>
       <el-select
@@ -325,9 +325,6 @@ async function load() {
   loading.value = true
   try {
     dash.value = await getFinancial()
-    if (!selectedYear.value && dash.value.available_years?.length) {
-      selectedYear.value = dash.value.available_years[0]
-    }
   } finally {
     loading.value = false
   }
