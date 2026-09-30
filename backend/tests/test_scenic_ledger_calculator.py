@@ -10,6 +10,71 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ScenicLedgerCalculatorTest(unittest.TestCase):
+    def test_changsha_douyin_aggregates_commission_and_rates_for_period(self):
+        days = [
+            {
+                "r": "30000.00", "cs": "30000.10", "cd": "-60.12",
+                "ct": "-600.05", "pf": "0",
+            },
+            {
+                "r": "22959.86", "cs": "26991.20", "cd": "-58.13",
+                "ct": "-459.05", "pf": "0",
+            },
+        ]
+
+        result = ticket_ledger.calculate_ticket_ledger(
+            "changsha-dongqu",
+            days,
+            rate_hexiao=Decimal("0.93"),
+            rate_settle=Decimal("0.96"),
+            commission_rate=Decimal("0.18"),
+            platform="抖音",
+        )
+
+        self.assertEqual(result["supplier_commission"], Decimal("9081.08"))
+        self.assertEqual(result["publisher_due"], Decimal("43878.78"))
+        self.assertEqual(result["hexiao_amount"], Decimal("40807.27"))
+        self.assertEqual(result["jinying_amount"], Decimal("42123.63"))
+        self.assertEqual(result["service_fee"], Decimal("1316.36"))
+
+    def test_changsha_douyin_platform_fee_and_manual_commission_override(self):
+        days = [{
+            "r": "86", "cs": "100", "cd": "-2", "ct": "-3", "pf": "-4",
+        }]
+        automatic = ticket_ledger.calculate_ticket_ledger(
+            "changsha-dongqu", days,
+            rate_hexiao=Decimal("0.93"), rate_settle=Decimal("0.96"),
+            commission_rate=Decimal("0.18"), platform="抖音",
+        )
+        manual = ticket_ledger.calculate_ticket_ledger(
+            "changsha-dongqu", days,
+            rate_hexiao=Decimal("0.93"), rate_settle=Decimal("0.96"),
+            commission_rate=Decimal("0.18"),
+            commission_override=Decimal("10.25"), platform="抖音",
+        )
+
+        self.assertEqual(automatic["supplier_commission"], Decimal("9.00"))
+        self.assertEqual(manual["supplier_commission"], Decimal("10.25"))
+        self.assertEqual(manual["publisher_due"], Decimal("75.75"))
+
+    def test_changsha_non_douyin_rounds_period_without_changing_other_scenics(self):
+        days = [{"r": "0.01"}, {"r": "0.01"}]
+        changsha = ticket_ledger.calculate_ticket_ledger(
+            "changsha-dongqu", days,
+            rate_hexiao=Decimal("0.50"), rate_settle=Decimal("0.50"),
+            platform="携程",
+        )
+        legacy = ticket_ledger.calculate_ticket_ledger(
+            "zunyi-zoo", days,
+            rate_hexiao=Decimal("0.50"), rate_settle=Decimal("0.50"),
+            platform="携程",
+        )
+
+        self.assertEqual(changsha["hexiao_amount"], Decimal("0.01"))
+        self.assertEqual(changsha["jinying_amount"], Decimal("0.01"))
+        self.assertEqual(legacy["hexiao_amount"], Decimal("0.02"))
+        self.assertEqual(legacy["jinying_amount"], Decimal("0.02"))
+
     def test_guanquelou_daily_snapshot_ignores_stale_commission(self):
         daily = json.dumps([{
             "r": "100", "cs": "8", "cd": "-2", "ct": "1",
