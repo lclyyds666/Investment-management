@@ -57,19 +57,20 @@ def _first_present(day: Mapping, *keys: str):
     return 0
 
 
-def _commission_inputs(day: Mapping) -> tuple[Decimal, Decimal, Decimal]:
+def _commission_inputs(day: Mapping) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     return (
         _dec(_first_present(day, "commission_shishou", "cs", "shishou", "s")),
         _dec(_first_present(day, "commission_daren", "cd", "daren", "d")),
         _dec(_first_present(day, "commission_tuanzhang", "ct", "tuanzhang", "t")),
+        _dec(_first_present(day, "commission_platform_fee", "pf", "platform_fee")),
     )
 
 
 def _distribute_commission(days: list[dict], commission_override, commission_rate: Decimal):
     rate = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
     auto = [
-        quantize_money(received * rate + daren + tuanzhang)
-        for received, daren, tuanzhang in map(_commission_inputs, days)
+        quantize_money(received * rate + daren + tuanzhang + platform_fee)
+        for received, daren, tuanzhang, platform_fee in map(_commission_inputs, days)
     ]
     total = quantize_money(sum(auto, Decimal("0")))
     if commission_override is None or abs(_dec(commission_override) - total) < Decimal("0.005"):
@@ -92,6 +93,44 @@ def _distribute_commission(days: list[dict], commission_override, commission_rat
         )
         adjusted[target] = quantize_money(adjusted[target] + residual)
     return adjusted, quantize_money(commission_override)
+
+
+def _calculate_changsha_ticket_period(
+    days: list[dict], *, rate_hexiao: Decimal, rate_settle: Decimal,
+    commission_override, commission_rate: Decimal, platform: str,
+) -> dict:
+    received_total = sum(
+        (_dec(day.get("received", day.get("recv", day.get("r", 0)))) for day in days),
+        Decimal("0"),
+    )
+    if platform == "抖音":
+        shishou = daren = tuanzhang = platform_fee = Decimal("0")
+        for day in days:
+            row_shishou, row_daren, row_tuanzhang, row_platform_fee = _commission_inputs(day)
+            shishou += row_shishou
+            daren += row_daren
+            tuanzhang += row_tuanzhang
+            platform_fee += row_platform_fee
+        automatic = quantize_money(
+            shishou * (commission_rate or Decimal("0"))
+            + daren + tuanzhang + platform_fee
+        )
+        commission = (
+            automatic if commission_override is None
+            else quantize_money(_dec(commission_override))
+        )
+    else:
+        commission = Decimal("0")
+    publisher_due = quantize_money(received_total - commission)
+    hexiao = quantize_money(publisher_due * (rate_hexiao or Decimal("0")))
+    settle = quantize_money(publisher_due * (rate_settle or Decimal("0")))
+    return {
+        "supplier_commission": quantize_money(commission),
+        "publisher_due": publisher_due,
+        "hexiao_amount": hexiao,
+        "service_fee": quantize_money(settle - hexiao),
+        "jinying_amount": settle,
+    }
 
 
 def calculate_ticket_ledger(
@@ -130,6 +169,16 @@ def calculate_ticket_ledger(
             "service_fee": quantize_money(settle - hexiao),
             "jinying_amount": settle,
         }
+    if sid == "changsha-dongqu" and platform in {"抖音", "美团", "携程"}:
+        result = _calculate_changsha_ticket_period(
+            days,
+            rate_hexiao=rate_hexiao,
+            rate_settle=rate_settle,
+            commission_override=commission_override,
+            commission_rate=commission_rate,
+            platform=platform,
+        )
+        return {"scenic_id": sid, **result}
     is_douyin = platform == "抖音"
     if is_douyin and sid != "guanquelou":
         commissions, commission_total = _distribute_commission(

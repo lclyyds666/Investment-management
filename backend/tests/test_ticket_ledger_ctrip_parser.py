@@ -47,6 +47,47 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         wb.close()
         return output.getvalue()
 
+    @staticmethod
+    def _changsha_workbook(
+        platform_fee_header="平台撮合服务费", omitted_header=None
+    ) -> bytes:
+        wb = Workbook()
+        douyin = wb.active
+        douyin.title = "抖音"
+        headers = [
+            "订单实收", "软件服务费", "达人服务费", "团长服务费",
+            platform_fee_header, "核销时间",
+        ]
+        headers = [header for header in headers if header != omitted_header]
+        douyin.append(headers)
+        rows = [
+            [100, -5, -2, -3, -4, datetime(2026, 9, 11, 10, 0)],
+            [-20, 1, 1, 1, 1, datetime(2026, 9, 12, 10, 0)],
+        ]
+        full_headers = [
+            "订单实收", "软件服务费", "达人服务费", "团长服务费",
+            platform_fee_header, "核销时间",
+        ]
+        for values in rows:
+            by_header = dict(zip(full_headers, values))
+            douyin.append([by_header[header] for header in headers])
+
+        meituan = wb.create_sheet("美团")
+        meituan.append(["结算方式", "应付金额", "技术服务费", "张数", "时间"])
+        meituan.append(["消费结算", 100, -5, 1, datetime(2026, 9, 11)])
+        meituan.append(["退款结算", 999, 0, 1, datetime(2026, 9, 12)])
+
+        ctrip = wb.create_sheet("携程")
+        ctrip.append(["结算价金额", "流水类型", "使用份数", "出发时间"])
+        ctrip.append([50, "订单成本", 1, datetime(2026, 9, 11)])
+        ctrip.append([999, "调账", 1, datetime(2026, 9, 12)])
+        ctrip.append([777, "   ", 1, datetime(2026, 9, 13)])
+
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+        return output.getvalue()
+
     def test_mixed_file_is_split_by_platform_and_ctrip_is_calculated(self):
         parsed = ticket_ledger.parse_reconciliation(
             self._workbook_bytes(), "对账明细-2026.07.03-2026.07.25.xlsx"
@@ -324,6 +365,70 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
                 "遵义动物园8.1-8.1.xlsx",
                 scenic_id="zunyi-zoo",
             )
+
+    def test_changsha_douyin_uses_signed_five_column_formula_and_snapshot(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._changsha_workbook(), "长沙动趣9.11-9.20.xlsx",
+            scenic_id="changsha-dongqu",
+            rate_hexiao=Decimal("0.93"), rate_settle=Decimal("0.96"),
+            commission_rate=Decimal("0.18"),
+        )
+        by_platform = {item["platform"]: item for item in parsed["platforms"]}
+        douyin = by_platform["抖音"]
+
+        self.assertEqual(douyin["supplier_received"], Decimal("70.00"))
+        self.assertEqual(douyin["suggested_commission"], Decimal("8.40"))
+        self.assertEqual(douyin["def_hexiao"], Decimal("57.29"))
+        self.assertEqual(douyin["def_jinying"], Decimal("59.14"))
+        self.assertEqual(douyin["def_service_fee"], Decimal("1.85"))
+        snapshot = json.loads(douyin["daily_json"])
+        self.assertEqual(snapshot[0]["pf"], "-4")
+        self.assertEqual(snapshot[0]["m"], "changsha_douyin")
+
+        alias_parsed = ticket_ledger.parse_reconciliation(
+            self._changsha_workbook("撮合经纪服务费"), "长沙动趣9.11-9.20.xlsx",
+            scenic_id="changsha-dongqu", commission_rate=Decimal("0.18"),
+        )
+        self.assertEqual(alias_parsed["supplier_received"], Decimal("70.00"))
+
+    def test_changsha_meituan_and_ctrip_reuse_target_platform_rules(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._changsha_workbook(), "长沙动趣9.11-9.20.xlsx",
+            scenic_id="changsha-dongqu",
+            rate_hexiao=Decimal("0.93"), rate_settle=Decimal("0.96"),
+            commission_rate=Decimal("0.18"),
+        )
+        by_platform = {item["platform"]: item for item in parsed["platforms"]}
+
+        self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("95.00"))
+        self.assertEqual(by_platform["美团"]["def_hexiao"], Decimal("88.35"))
+        self.assertEqual(by_platform["美团"]["def_jinying"], Decimal("91.20"))
+        self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("50.00"))
+        self.assertEqual(by_platform["携程"]["def_hexiao"], Decimal("46.50"))
+        self.assertEqual(by_platform["携程"]["def_jinying"], Decimal("48.00"))
+
+    def test_changsha_douyin_requires_all_five_amount_columns(self):
+        for header in (
+            "订单实收", "软件服务费", "达人服务费", "团长服务费", "平台撮合服务费",
+        ):
+            with self.subTest(header=header), self.assertRaisesRegex(ValueError, header):
+                ticket_ledger.parse_reconciliation(
+                    self._changsha_workbook(omitted_header=header),
+                    "长沙动趣9.11-9.20.xlsx",
+                    scenic_id="changsha-dongqu",
+                )
+
+    def test_changsha_legacy_snapshot_defaults_platform_fee_to_zero(self):
+        legacy_json = json.dumps([{
+            "r": "90", "cs": "100", "cd": "-2", "ct": "-3",
+        }])
+        result = ticket_ledger.recompute_from_json(
+            legacy_json,
+            Decimal("0.93"), Decimal("0.96"), None, Decimal("0.18"),
+            "抖音", "changsha-dongqu",
+        )
+        self.assertEqual(result["supplier_commission"], Decimal("13.00"))
+        self.assertEqual(result["publisher_due"], Decimal("77.00"))
 
     @staticmethod
     def _guanquelou_mixed_workbook() -> bytes:
