@@ -46,6 +46,8 @@ COL_RUANJIAN = "软件服务费"
 COL_DAREN = "达人服务费"
 COL_TUANZHANG = "团长服务费"
 COL_CUOHE = "撮合经纪服务费"
+COL_PLATFORM_MATCH = "平台撮合服务费"
+COL_PLATFORM_MATCH_ALIASES = (COL_PLATFORM_MATCH, COL_CUOHE)
 COL_FUWUSHANG = "服务商服务费"
 COL_HEXIAO_TIME = "核销时间"
 COL_PRODUCT_ID = "商品ID"
@@ -79,8 +81,10 @@ _HEADER_SCAN_ROWS = 20
 # 公式不属于运营配置，只能随代码评审和发布调整。
 _RECEIVED_RULES = {
     ("zunyi-zoo", "抖音"): "zunyi_douyin",
-    ("zunyi-zoo", "美团"): "zunyi_meituan",
+    ("zunyi-zoo", "美团"): "amount_plus_tech_fee",
     ("nanyang-wildlife", "抖音"): "nanyang_douyin",
+    ("changsha-dongqu", "抖音"): "changsha_douyin",
+    ("changsha-dongqu", "美团"): "amount_plus_tech_fee",
 }
 
 _COMMISSION_EXEMPT_PRODUCTS = {
@@ -192,9 +196,15 @@ def _detect_platform(header: list) -> str | None:
         for value in header
         if value is not None and str(value).strip()
     }
+    douyin_fee_names = {
+        COL_RUANJIAN, COL_DAREN, COL_TUANZHANG, COL_PLATFORM_MATCH, COL_CUOHE,
+    }
     if (
         COL_HEXIAO_TIME in names
-        and {COL_SHISHOU, COL_SHISHOU_CURRENT} & names
+        and (
+            bool({COL_SHISHOU, COL_SHISHOU_CURRENT} & names)
+            or len(douyin_fee_names & names) >= 3
+        )
     ):
         return "抖音"
     signatures = (
@@ -353,9 +363,13 @@ def parse_reconciliation(
                 i_shishou = _header_index_any(
                     header, (COL_SHISHOU_CURRENT, COL_SHISHOU)
                 )
+                i_ruanjian = _header_index(header, COL_RUANJIAN)
+                i_daren = _header_index(header, COL_DAREN)
+                i_tuanzhang = _header_index(header, COL_TUANZHANG)
+                i_platform_fee = _header_index_any(header, COL_PLATFORM_MATCH_ALIASES)
                 i_fees = [
-                    _header_index(header, COL_RUANJIAN),
-                    _header_index(header, COL_DAREN),
+                    i_ruanjian,
+                    i_daren,
                     _header_index_any(header, (COL_TUANZHANG, COL_CUOHE)),
                 ]
                 i_fuwushang = _header_index(header, COL_FUWUSHANG)
@@ -376,6 +390,19 @@ def parse_reconciliation(
                         raise ValueError(
                             f"遵义动物园抖音明细缺少必要列：{'、'.join(missing)}"
                         )
+                if received_rule == "changsha_douyin":
+                    required = (
+                        ((COL_SHISHOU_CURRENT, COL_SHISHOU), i_shishou),
+                        ((COL_RUANJIAN,), i_ruanjian),
+                        ((COL_DAREN,), i_daren),
+                        ((COL_TUANZHANG,), i_tuanzhang),
+                        (COL_PLATFORM_MATCH_ALIASES, i_platform_fee),
+                    )
+                    missing = [names[0] for names, index in required if index < 0]
+                    if missing:
+                        raise ValueError(
+                            f"长沙动趣抖音明细缺少必要列：{'、'.join(missing)}"
+                        )
                 for raw in rows_iter:
                     if not raw:
                         continue
@@ -385,11 +412,32 @@ def parse_reconciliation(
                     fee_vals = [
                         (_num(raw[idx]) if 0 <= idx < len(raw) else None) for idx in i_fees
                     ]
+                    software_fee = (
+                        _num(raw[i_ruanjian]) if 0 <= i_ruanjian < len(raw) else None
+                    )
+                    daren_fee = _num(raw[i_daren]) if 0 <= i_daren < len(raw) else None
+                    leader_fee = (
+                        _num(raw[i_tuanzhang]) if 0 <= i_tuanzhang < len(raw) else None
+                    )
+                    platform_fee = (
+                        _num(raw[i_platform_fee])
+                        if 0 <= i_platform_fee < len(raw)
+                        else None
+                    )
                     fuwushang = (
                         _num(raw[i_fuwushang]) if 0 <= i_fuwushang < len(raw) else None
                     )
                     # 空行 / 小计行：实收与全部费用都无值 → 跳过
-                    if shishou is None and all(f is None for f in fee_vals) and fuwushang is None:
+                    row_fees = (
+                        (software_fee, daren_fee, leader_fee, platform_fee)
+                        if received_rule == "changsha_douyin"
+                        else fee_vals
+                    )
+                    if (
+                        shishou is None
+                        and all(fee is None for fee in row_fees)
+                        and fuwushang is None
+                    ):
                         continue
                     if received_rule == "zunyi_douyin":
                         base = (
@@ -397,6 +445,17 @@ def parse_reconciliation(
                             + (fee_vals[1] or Decimal("0"))
                             + (fuwushang or Decimal("0"))
                         )
+                    elif received_rule == "changsha_douyin":
+                        base = (
+                            (shishou or Decimal("0"))
+                            + (software_fee or Decimal("0"))
+                            + (daren_fee or Decimal("0"))
+                            + (leader_fee or Decimal("0"))
+                            + (platform_fee or Decimal("0"))
+                        )
+                        commission_daren = daren_fee or Decimal("0")
+                        commission_tuanzhang = leader_fee or Decimal("0")
+                        commission_platform_fee = platform_fee or Decimal("0")
                     elif received_rule == "nanyang_douyin":
                         base = shishou or Decimal("0")
                     elif scenic_id == "guanquelou":
@@ -410,8 +469,10 @@ def parse_reconciliation(
                         for fee in fee_vals:
                             base += fee or Decimal("0")  # 通用账单费用为负数，直接相加
                     if scenic_id != "guanquelou":
-                        commission_daren = fee_vals[1] or Decimal("0")
-                        commission_tuanzhang = fee_vals[2] or Decimal("0")
+                        if received_rule != "changsha_douyin":
+                            commission_daren = fee_vals[1] or Decimal("0")
+                            commission_tuanzhang = fee_vals[2] or Decimal("0")
+                            commission_platform_fee = Decimal("0")
                     aggregate["supplier_received"] += base
                     aggregate["order_count"] += 1
                     if shishou is not None and shishou > 0:
@@ -426,11 +487,21 @@ def parse_reconciliation(
                         "commission_shishou": Decimal("0"),
                         "commission_daren": Decimal("0"),
                         "commission_tuanzhang": Decimal("0"),
+                        "platform_fee": Decimal("0"),
+                        "commission_platform_fee": Decimal("0"),
+                        "calculation_mode": "",
                     })
                     dd["received"] += base
                     dd["shishou"] += (shishou or Decimal("0"))
-                    dd["daren"] += (fee_vals[1] or Decimal("0"))
-                    dd["tuanzhang"] += (fee_vals[2] or Decimal("0"))
+                    if received_rule == "changsha_douyin":
+                        dd["daren"] += daren_fee or Decimal("0")
+                        dd["tuanzhang"] += leader_fee or Decimal("0")
+                        dd["platform_fee"] += platform_fee or Decimal("0")
+                        dd["commission_platform_fee"] += commission_platform_fee
+                        dd["calculation_mode"] = "changsha_douyin"
+                    else:
+                        dd["daren"] += fee_vals[1] or Decimal("0")
+                        dd["tuanzhang"] += fee_vals[2] or Decimal("0")
                     product_id = (
                         _product_id(raw[i_product_id])
                         if 0 <= i_product_id < len(raw)
@@ -508,8 +579,8 @@ def parse_reconciliation(
                 i_count = _header_index(header, COL_MT_COUNT)
                 i_time = _header_index(header, COL_MT_TIME)
                 received_rule = _RECEIVED_RULES.get((scenic_id, "美团"), "default")
-                if received_rule == "zunyi_meituan" and i_tech_fee < 0:
-                    raise ValueError(f"遵义动物园美团明细缺少必要列：{COL_MT_TECH_FEE}")
+                if received_rule == "amount_plus_tech_fee" and i_tech_fee < 0:
+                    raise ValueError(f"美团明细缺少必要列：{COL_MT_TECH_FEE}")
                 if scenic_id == "guanquelou" and i_tech_fee < 0:
                     raise ValueError(f"鹳雀楼美团明细缺少必要列：{COL_MT_TECH_FEE}")
                 for raw in rows_iter:
@@ -527,7 +598,7 @@ def parse_reconciliation(
                     base = _num(raw[i_amount]) if 0 <= i_amount < len(raw) else None
                     if base is None:
                         continue
-                    if received_rule == "zunyi_meituan" or scenic_id == "guanquelou":
+                    if received_rule == "amount_plus_tech_fee" or scenic_id == "guanquelou":
                         tech_fee = (
                             _num(raw[i_tech_fee]) if 0 <= i_tech_fee < len(raw) else None
                         )
@@ -667,6 +738,10 @@ def _days_from_daily(daily: dict[str, dict]) -> list[dict]:
         "commission_shishou": dd["commission_shishou"],
         "commission_daren": dd["commission_daren"],
         "commission_tuanzhang": dd["commission_tuanzhang"],
+        "commission_platform_fee": dd.get(
+            "commission_platform_fee", Decimal("0")
+        ),
+        "calculation_mode": dd.get("calculation_mode", ""),
     } for dd in daily.values()]
 
 
@@ -678,6 +753,8 @@ def serialize_daily(daily: dict[str, dict]) -> str:
         "cs": str(dd["commission_shishou"]),
         "cd": str(dd["commission_daren"]),
         "ct": str(dd["commission_tuanzhang"]),
+        "pf": str(dd.get("commission_platform_fee", Decimal("0"))),
+        "m": dd.get("calculation_mode", ""),
     } for dd in daily.values()]
     return json.dumps(out, ensure_ascii=False)
 
@@ -704,6 +781,11 @@ def _days_from_json(daily_json: str) -> list[dict]:
             "shishou": _num(d.get("s")) or Decimal("0"),
             "daren": _num(d.get("d")) or Decimal("0"),
             "tuanzhang": _num(d.get("t")) or Decimal("0"),
+            "commission_platform_fee": (
+                _num(d.get("commission_platform_fee", d.get("pf")))
+                or Decimal("0")
+            ),
+            "calculation_mode": d.get("calculation_mode", d.get("m", "")),
             **commission_inputs,
         })
     return days
