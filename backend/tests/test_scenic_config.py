@@ -78,9 +78,27 @@ class ScenicConfigTest(unittest.TestCase):
         self.assertEqual(changsha.scenic_name, "长沙动趣王国")
         self.assertEqual(changsha.sort_order, 70)
         self.assertEqual(changsha.default_ticket_product, "水上世界/童话世界/海洋王国")
-        self.assertEqual(changsha.ticket_rate_hexiao, Decimal("0.90"))
-        self.assertEqual(changsha.ticket_rate_settle, Decimal("0.94"))
-        self.assertEqual(changsha.ticket_commission_rate, Decimal("0.06"))
+        self.assertEqual(changsha.ticket_rate_hexiao, Decimal("0.93"))
+        self.assertEqual(changsha.ticket_rate_settle, Decimal("0.96"))
+        self.assertEqual(changsha.ticket_commission_rate, Decimal("0.18"))
+        self.assertEqual(changsha.hotel_rate_hexiao, Decimal("0.90"))
+        self.assertEqual(changsha.hotel_rate_settle, Decimal("0.94"))
+        self.assertEqual(changsha.hotel_commission_rate, Decimal("0.06"))
+
+    def test_changsha_ticket_formula_migration_only_updates_target_ticket_rates(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "20260929_changsha_dongqu_ticket_formula.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("`rate_hexiao` = 0.93", migration)
+        self.assertIn("`rate_settle` = 0.96", migration)
+        self.assertIn("`commission_rate` = 0.18", migration)
+        self.assertIn("WHERE `scenic_id` = 'changsha-dongqu'", migration)
+        self.assertNotIn("hotel_rate_hexiao", migration)
+        self.assertNotIn("hotel_rate_settle", migration)
+        self.assertNotIn("hotel_commission_rate", migration)
 
     def test_hotel_seed_defaults_snapshot_each_scenics_ticket_rates(self):
         expected_rates = {

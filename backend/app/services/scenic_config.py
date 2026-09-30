@@ -31,7 +31,7 @@ SCENIC_SEEDS = (
     ("zunyi-zoo", "遵义动物园", 40, "遵义动物园", "0.84", "0.87", "0", "0"),
     ("nanyang-wildlife", "南阳森林野生动物世界", 50, "南阳森林野生动物世界", "0.80", "0.85", "0", "0"),
     ("guanquelou", "鹳雀楼", 60, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
-    ("changsha-dongqu", "长沙动趣王国", 70, SYSTEM_TICKET_PRODUCT, "0.90", "0.94", "0.06", None),
+    ("changsha-dongqu", "长沙动趣王国", 70, SYSTEM_TICKET_PRODUCT, "0.93", "0.96", "0.18", None),
 )
 
 
@@ -79,6 +79,13 @@ def _seed_config(scenic_id: str) -> EffectiveScenicConfig:
             configured=False,
         )
     sid, name, order, product, hexiao, settle, commission_rate, commission = seed
+    hotel_hexiao = Decimal(hexiao)
+    hotel_settle = Decimal(settle)
+    hotel_commission = Decimal(commission_rate)
+    if sid == "changsha-dongqu":
+        hotel_hexiao = SYSTEM_HOTEL_RATE_HEXIAO
+        hotel_settle = SYSTEM_HOTEL_RATE_SETTLE
+        hotel_commission = SYSTEM_HOTEL_COMMISSION_RATE
     return EffectiveScenicConfig(
         scenic_id=sid,
         scenic_name=name,
@@ -89,9 +96,9 @@ def _seed_config(scenic_id: str) -> EffectiveScenicConfig:
         ticket_commission_rate=Decimal(commission_rate),
         ticket_default_commission=Decimal(commission) if commission is not None else None,
         default_hotel_name=SYSTEM_HOTEL_NAME,
-        hotel_rate_hexiao=Decimal(hexiao),
-        hotel_rate_settle=Decimal(settle),
-        hotel_commission_rate=Decimal(commission_rate),
+        hotel_rate_hexiao=hotel_hexiao,
+        hotel_rate_settle=hotel_settle,
+        hotel_commission_rate=hotel_commission,
         hotel_fee_per_night=SYSTEM_HOTEL_FEE_PER_NIGHT,
         hotel_fee_algo=SYSTEM_HOTEL_FEE_ALGO,
         hotel_platforms=SYSTEM_HOTEL_PLATFORMS,
