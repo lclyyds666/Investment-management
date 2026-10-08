@@ -450,6 +450,28 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         self.assertEqual(by_platform["携程"]["def_hexiao"], Decimal("46.50"))
         self.assertEqual(by_platform["携程"]["def_jinying"], Decimal("48.00"))
 
+    def test_changsha_ctrip_includes_signed_platform_service_fee(self):
+        wb = Workbook()
+        ctrip = wb.active
+        ctrip.title = "携程"
+        ctrip.append([
+            "携程订单号", "结算价金额", "流水类型", "使用份数", "出发时间",
+        ])
+        ctrip.append(["CTRIP-1", 100, "订单成本", 1, datetime(2026, 9, 11)])
+        ctrip.append(["CTRIP-1", -8, "平台服务费", 0, datetime(2026, 9, 11)])
+        ctrip.append(["CTRIP-1", 5, "调账", 0, datetime(2026, 9, 11)])
+        output = BytesIO()
+        wb.save(output)
+        wb.close()
+
+        parsed = ticket_ledger.parse_reconciliation(
+            output.getvalue(),
+            "长沙动趣9.11-9.20.xlsx",
+            scenic_id="changsha-dongqu",
+        )
+
+        self.assertEqual(parsed["supplier_received"], Decimal("92.00"))
+
     def test_changsha_meituan_does_not_require_or_include_technical_fee(self):
         parsed = ticket_ledger.parse_reconciliation(
             self._changsha_workbook(include_meituan_tech_fee=False),
