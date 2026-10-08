@@ -555,12 +555,12 @@ def parse_reconciliation(
                         continue
                     if not _matches_scenic(raw, scenic_filter):
                         continue
-                    # 携程账单可能混有调账等流水，只将订单成本计入核销台账。
+                    # 携程账单可能混有调账等流水，只将景区允许的结算流水计入核销台账。
                     if 0 <= i_flow < len(raw):
                         flow_type = str(raw[i_flow] or "").strip()
                         if (
                             scenic_id == "changsha-dongqu"
-                            and flow_type != XC_ORDER_COST
+                            and flow_type not in {XC_ORDER_COST, "平台服务费"}
                         ):
                             continue
                         if (
