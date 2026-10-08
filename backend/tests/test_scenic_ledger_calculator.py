@@ -37,6 +37,49 @@ class ScenicLedgerCalculatorTest(unittest.TestCase):
         self.assertEqual(result["jinying_amount"], Decimal("42123.63"))
         self.assertEqual(result["service_fee"], Decimal("1316.36"))
 
+    def test_changsha_douyin_rounds_order_commission_per_source_row(self):
+        days = [
+            {
+                "r": "0.02", "cs": "0.03", "cd": "-0.01",
+                "ct": "0", "pf": "0", "commission_order_rows": ["0.03"],
+            },
+            {
+                "r": "0.04", "cs": "0.03", "cd": "0.01",
+                "ct": "0", "pf": "0", "commission_order_rows": ["0.03"],
+            },
+        ]
+
+        result = ticket_ledger.calculate_ticket_ledger(
+            "changsha-dongqu", days,
+            rate_hexiao=Decimal("0.93"),
+            rate_settle=Decimal("0.96"),
+            commission_rate=Decimal("0.18"),
+            platform="抖音",
+        )
+
+        self.assertEqual(result["supplier_commission"], Decimal("0.02"))
+        self.assertEqual(result["publisher_due"], Decimal("0.04"))
+
+    def test_changsha_douyin_keeps_signed_fee_direction_with_row_rounding(self):
+        days = [
+            {
+                "r": "98", "cs": "100", "cd": "-2", "ct": "0", "pf": "0",
+                "commission_order_rows": ["100"],
+            },
+            {
+                "r": "101", "cs": "100", "cd": "1", "ct": "0", "pf": "0",
+                "commission_order_rows": ["100"],
+            },
+        ]
+
+        result = ticket_ledger.calculate_ticket_ledger(
+            "changsha-dongqu", days,
+            commission_rate=Decimal("0.18"), platform="抖音",
+        )
+
+        self.assertEqual(result["supplier_commission"], Decimal("35.00"))
+        self.assertEqual(result["publisher_due"], Decimal("164.00"))
+
     def test_changsha_douyin_platform_fee_and_manual_commission_override(self):
         days = [{
             "r": "86", "cs": "100", "cd": "-2", "ct": "-3", "pf": "-4",
