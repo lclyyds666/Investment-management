@@ -84,7 +84,6 @@ _RECEIVED_RULES = {
     ("zunyi-zoo", "美团"): "amount_plus_tech_fee",
     ("nanyang-wildlife", "抖音"): "nanyang_douyin",
     ("changsha-dongqu", "抖音"): "changsha_douyin",
-    ("changsha-dongqu", "美团"): "amount_plus_tech_fee",
 }
 
 _COMMISSION_EXEMPT_PRODUCTS = {
@@ -189,7 +188,7 @@ def _matches_scenic(raw: tuple, rule) -> bool:
     return value == keyword if exact else keyword in value
 
 
-def _detect_platform(header: list) -> str | None:
+def _detect_platform(header: list, scenic_id: str = "legacy") -> str | None:
     """根据关键表头识别平台，不依赖 Sheet 名称。"""
     names = {
         str(value).strip()
@@ -217,6 +216,19 @@ def _detect_platform(header: list) -> str | None:
     )
     if platform:
         return platform
+    if scenic_id == "changsha-dongqu":
+        if (
+            {COL_MT_SETTLE_TYPE, COL_MT_COUNT, COL_MT_TIME}.issubset(names)
+            and {COL_MT_AMOUNT, COL_MT_TECH_FEE} & names
+        ):
+            return "美团"
+        if (
+            COL_XC_FLOW_TYPE in names
+            and {
+                COL_XC_SERVICE_DATE, COL_XC_DEPARTURE_DATE, COL_XC_PAYMENT_DATE,
+            } & names
+        ):
+            return "携程"
     if (
         {COL_TC_COUNT, COL_TC_DATE}.issubset(names)
         and {COL_TC_ORDER_AMOUNT, COL_TC_MERCHANT_RECEIVABLE} & names
@@ -225,13 +237,15 @@ def _detect_platform(header: list) -> str | None:
     return None
 
 
-def _find_platform_header(rows_iter) -> tuple[str, list] | None:
+def _find_platform_header(
+    rows_iter, scenic_id: str = "legacy"
+) -> tuple[str, list] | None:
     """在 Sheet 前若干行查找可识别的平台表头，并保留后续明细迭代器位置。"""
     for _, raw in zip(range(_HEADER_SCAN_ROWS), rows_iter):
         if not raw or not any(value is not None and str(value).strip() for value in raw):
             continue
         header = list(raw)
-        platform = _detect_platform(header)
+        platform = _detect_platform(header, scenic_id)
         if platform:
             return platform, header
     return None
@@ -351,7 +365,7 @@ def parse_reconciliation(
     try:
         for ws in wb.worksheets:
             rows_iter = ws.iter_rows(values_only=True)
-            detected = _find_platform_header(rows_iter)
+            detected = _find_platform_header(rows_iter, scenic_id)
             if detected is None:
                 continue
             platform, header = detected
@@ -491,6 +505,10 @@ def parse_reconciliation(
                         "commission_platform_fee": Decimal("0"),
                         "calculation_mode": "",
                     })
+                    if received_rule == "changsha_douyin":
+                        dd.setdefault("commission_order_rows", []).append(
+                            shishou or Decimal("0")
+                        )
                     dd["received"] += base
                     dd["shishou"] += (shishou or Decimal("0"))
                     if received_rule == "changsha_douyin":
@@ -528,6 +546,10 @@ def parse_reconciliation(
                 i_service = _header_index(header, COL_XC_SERVICE_DATE)
                 i_departure = _header_index(header, COL_XC_DEPARTURE_DATE)
                 i_payment = _header_index(header, COL_XC_PAYMENT_DATE)
+                if scenic_id == "changsha-dongqu" and i_xc_jiesuan < 0:
+                    raise ValueError(
+                        f"长沙动趣携程明细缺少必要列：{COL_XC_JIESUAN}"
+                    )
                 for raw in rows_iter:
                     if not raw:
                         continue
@@ -588,6 +610,10 @@ def parse_reconciliation(
                 i_count = _header_index(header, COL_MT_COUNT)
                 i_time = _header_index(header, COL_MT_TIME)
                 received_rule = _RECEIVED_RULES.get((scenic_id, "美团"), "default")
+                if scenic_id == "changsha-dongqu" and i_amount < 0:
+                    raise ValueError(
+                        f"长沙动趣美团明细缺少必要列：{COL_MT_AMOUNT}"
+                    )
                 if received_rule == "amount_plus_tech_fee" and i_tech_fee < 0:
                     raise ValueError(f"美团明细缺少必要列：{COL_MT_TECH_FEE}")
                 if scenic_id == "guanquelou" and i_tech_fee < 0:
@@ -741,30 +767,41 @@ def parse_reconciliation(
 # --------------------------------------------------------------------------- #
 def _days_from_daily(daily: dict[str, dict]) -> list[dict]:
     """按日聚合 dict → 逐日列表（Decimal）。"""
-    return [{
-        "recv": dd["received"], "shishou": dd["shishou"],
-        "daren": dd["daren"], "tuanzhang": dd["tuanzhang"],
-        "commission_shishou": dd["commission_shishou"],
-        "commission_daren": dd["commission_daren"],
-        "commission_tuanzhang": dd["commission_tuanzhang"],
-        "commission_platform_fee": dd.get(
-            "commission_platform_fee", Decimal("0")
-        ),
-        "calculation_mode": dd.get("calculation_mode", ""),
-    } for dd in daily.values()]
+    days = []
+    for dd in daily.values():
+        item = {
+            "recv": dd["received"], "shishou": dd["shishou"],
+            "daren": dd["daren"], "tuanzhang": dd["tuanzhang"],
+            "commission_shishou": dd["commission_shishou"],
+            "commission_daren": dd["commission_daren"],
+            "commission_tuanzhang": dd["commission_tuanzhang"],
+            "commission_platform_fee": dd.get(
+                "commission_platform_fee", Decimal("0")
+            ),
+            "calculation_mode": dd.get("calculation_mode", ""),
+        }
+        if "commission_order_rows" in dd:
+            item["commission_order_rows"] = dd["commission_order_rows"]
+        days.append(item)
+    return days
 
 
 def serialize_daily(daily: dict[str, dict]) -> str:
     """逐日明细序列化为 JSON（Decimal→字符串），随台账行持久化，供编辑时逐日重算。"""
-    out = [{
-        "r": str(dd["received"]), "s": str(dd["shishou"]),
-        "d": str(dd["daren"]), "t": str(dd["tuanzhang"]),
-        "cs": str(dd["commission_shishou"]),
-        "cd": str(dd["commission_daren"]),
-        "ct": str(dd["commission_tuanzhang"]),
-        "pf": str(dd.get("commission_platform_fee", Decimal("0"))),
-        "m": dd.get("calculation_mode", ""),
-    } for dd in daily.values()]
+    out = []
+    for dd in daily.values():
+        item = {
+            "r": str(dd["received"]), "s": str(dd["shishou"]),
+            "d": str(dd["daren"]), "t": str(dd["tuanzhang"]),
+            "cs": str(dd["commission_shishou"]),
+            "cd": str(dd["commission_daren"]),
+            "ct": str(dd["commission_tuanzhang"]),
+            "pf": str(dd.get("commission_platform_fee", Decimal("0"))),
+            "m": dd.get("calculation_mode", ""),
+        }
+        if "commission_order_rows" in dd:
+            item["co"] = [str(value) for value in dd["commission_order_rows"]]
+        out.append(item)
     return json.dumps(out, ensure_ascii=False)
 
 
@@ -785,7 +822,7 @@ def _days_from_json(daily_json: str) -> list[dict]:
             )
             if key in d
         }
-        days.append({
+        item = {
             "recv": _num(d.get("r")) or Decimal("0"),
             "shishou": _num(d.get("s")) or Decimal("0"),
             "daren": _num(d.get("d")) or Decimal("0"),
@@ -796,7 +833,11 @@ def _days_from_json(daily_json: str) -> list[dict]:
             ),
             "calculation_mode": d.get("calculation_mode", d.get("m", "")),
             **commission_inputs,
-        })
+        }
+        order_rows = d.get("commission_order_rows", d.get("co"))
+        if isinstance(order_rows, list):
+            item["commission_order_rows"] = order_rows
+        days.append(item)
     return days
 
 

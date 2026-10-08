@@ -49,7 +49,9 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
 
     @staticmethod
     def _changsha_workbook(
-        platform_fee_header="平台撮合服务费", omitted_header=None
+        platform_fee_header="平台撮合服务费",
+        omitted_header=None,
+        include_meituan_tech_fee=True,
     ) -> bytes:
         wb = Workbook()
         douyin = wb.active
@@ -73,15 +75,48 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
             douyin.append([by_header[header] for header in headers])
 
         meituan = wb.create_sheet("美团")
-        meituan.append(["结算方式", "应付金额", "技术服务费", "张数", "时间"])
-        meituan.append(["消费结算", 100, -5, 1, datetime(2026, 9, 11)])
-        meituan.append(["退款结算", 999, 0, 1, datetime(2026, 9, 12)])
+        meituan_headers = ["结算方式", "应付金额", "张数", "时间"]
+        if include_meituan_tech_fee:
+            meituan_headers.insert(2, "技术服务费")
+        meituan_headers = [
+            header for header in meituan_headers if header != omitted_header
+        ]
+        meituan.append(meituan_headers)
+        meituan_rows = [
+            {
+                "结算方式": "消费结算", "应付金额": 100, "技术服务费": -5,
+                "张数": 1, "时间": datetime(2026, 9, 11),
+            },
+            {
+                "结算方式": "退款结算", "应付金额": 999, "技术服务费": 0,
+                "张数": 1, "时间": datetime(2026, 9, 12),
+            },
+        ]
+        for row in meituan_rows:
+            meituan.append([row[header] for header in meituan_headers])
 
         ctrip = wb.create_sheet("携程")
-        ctrip.append(["结算价金额", "流水类型", "使用份数", "出发时间"])
-        ctrip.append([50, "订单成本", 1, datetime(2026, 9, 11)])
-        ctrip.append([999, "调账", 1, datetime(2026, 9, 12)])
-        ctrip.append([777, "   ", 1, datetime(2026, 9, 13)])
+        ctrip_headers = ["结算价金额", "流水类型", "使用份数", "出发时间"]
+        ctrip_headers = [
+            header for header in ctrip_headers if header != omitted_header
+        ]
+        ctrip.append(ctrip_headers)
+        ctrip_rows = [
+            {
+                "结算价金额": 50, "流水类型": "订单成本", "使用份数": 1,
+                "出发时间": datetime(2026, 9, 11),
+            },
+            {
+                "结算价金额": 999, "流水类型": "调账", "使用份数": 1,
+                "出发时间": datetime(2026, 9, 12),
+            },
+            {
+                "结算价金额": 777, "流水类型": "   ", "使用份数": 1,
+                "出发时间": datetime(2026, 9, 13),
+            },
+        ]
+        for row in ctrip_rows:
+            ctrip.append([row[header] for header in ctrip_headers])
 
         output = BytesIO()
         wb.save(output)
@@ -384,6 +419,14 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         snapshot = json.loads(douyin["daily_json"])
         self.assertEqual(snapshot[0]["pf"], "-4")
         self.assertEqual(snapshot[0]["m"], "changsha_douyin")
+        self.assertEqual([day["co"] for day in snapshot], [["100"], ["-20"]])
+
+        recomputed = ticket_ledger.recompute_from_json(
+            douyin["daily_json"],
+            Decimal("0.93"), Decimal("0.96"), None, Decimal("0.06665"),
+            "抖音", "changsha-dongqu",
+        )
+        self.assertEqual(recomputed["supplier_commission"], Decimal("-0.66"))
 
         alias_parsed = ticket_ledger.parse_reconciliation(
             self._changsha_workbook("撮合经纪服务费"), "长沙动趣9.11-9.20.xlsx",
@@ -400,12 +443,36 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
         )
         by_platform = {item["platform"]: item for item in parsed["platforms"]}
 
-        self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("95.00"))
-        self.assertEqual(by_platform["美团"]["def_hexiao"], Decimal("88.35"))
-        self.assertEqual(by_platform["美团"]["def_jinying"], Decimal("91.20"))
+        self.assertEqual(by_platform["美团"]["supplier_received"], Decimal("100.00"))
+        self.assertEqual(by_platform["美团"]["def_hexiao"], Decimal("93.00"))
+        self.assertEqual(by_platform["美团"]["def_jinying"], Decimal("96.00"))
         self.assertEqual(by_platform["携程"]["supplier_received"], Decimal("50.00"))
         self.assertEqual(by_platform["携程"]["def_hexiao"], Decimal("46.50"))
         self.assertEqual(by_platform["携程"]["def_jinying"], Decimal("48.00"))
+
+    def test_changsha_meituan_does_not_require_or_include_technical_fee(self):
+        parsed = ticket_ledger.parse_reconciliation(
+            self._changsha_workbook(include_meituan_tech_fee=False),
+            "长沙动趣9.11-9.20.xlsx",
+            scenic_id="changsha-dongqu",
+            rate_hexiao=Decimal("0.93"), rate_settle=Decimal("0.96"),
+        )
+        meituan = next(
+            item for item in parsed["platforms"] if item["platform"] == "美团"
+        )
+        self.assertEqual(meituan["supplier_received"], Decimal("100.00"))
+
+    def test_changsha_required_platform_amount_columns_are_reported(self):
+        cases = (("应付金额", "应付金额"), ("结算价金额", "结算价金额"))
+        for omitted, expected in cases:
+            with self.subTest(omitted=omitted), self.assertRaisesRegex(
+                ValueError, expected
+            ):
+                ticket_ledger.parse_reconciliation(
+                    self._changsha_workbook(omitted_header=omitted),
+                    "长沙动趣9.11-9.20.xlsx",
+                    scenic_id="changsha-dongqu",
+                )
 
     def test_changsha_douyin_requires_all_five_amount_columns(self):
         for header in (
@@ -420,7 +487,7 @@ class TicketLedgerCtripParserTest(unittest.TestCase):
 
     def test_changsha_legacy_snapshot_defaults_platform_fee_to_zero(self):
         legacy_json = json.dumps([{
-            "r": "90", "cs": "100", "cd": "-2", "ct": "-3",
+            "r": "90", "cs": "100", "cd": "-2", "ct": "-3", "co": "legacy",
         }])
         result = ticket_ledger.recompute_from_json(
             legacy_json,
