@@ -66,6 +66,16 @@ def _commission_inputs(day: Mapping) -> tuple[Decimal, Decimal, Decimal, Decimal
     )
 
 
+def _commission_order_amounts(days: list[dict]) -> list[Decimal] | None:
+    amounts: list[Decimal] = []
+    for day in days:
+        raw = day.get("commission_order_rows", day.get("co"))
+        if not isinstance(raw, list):
+            return None
+        amounts.extend(_dec(value) for value in raw)
+    return amounts
+
+
 def _distribute_commission(days: list[dict], commission_override, commission_rate: Decimal):
     rate = commission_rate if commission_rate is not None else DEFAULT_COMMISSION_RATE
     auto = [
@@ -111,10 +121,20 @@ def _calculate_changsha_ticket_period(
             daren += row_daren
             tuanzhang += row_tuanzhang
             platform_fee += row_platform_fee
-        automatic = quantize_money(
-            shishou * (commission_rate or Decimal("0"))
-            + daren + tuanzhang + platform_fee
-        )
+        rate = commission_rate or Decimal("0")
+        order_amounts = _commission_order_amounts(days)
+        if order_amounts is None:
+            automatic = quantize_money(
+                shishou * rate + daren + tuanzhang + platform_fee
+            )
+        else:
+            rounded_order_commission = sum(
+                (quantize_money(amount * rate) for amount in order_amounts),
+                Decimal("0"),
+            )
+            automatic = quantize_money(
+                rounded_order_commission + daren + tuanzhang + platform_fee
+            )
         commission = (
             automatic if commission_override is None
             else quantize_money(_dec(commission_override))
