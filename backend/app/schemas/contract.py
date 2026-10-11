@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.enums import (
     CONTRACT_STATUS_LABELS,
@@ -84,6 +84,19 @@ class ContractOut(ContractBase):
     workflow_version: Optional[int] = None
     active_task: Optional[dict] = None
     can_act: bool = False
+    contract_term: str = ""
+    scenic_id: Optional[str] = None
+    business_scopes: list[str] = Field(default_factory=list)
+
+    @field_validator("contract_term", mode="before")
+    @classmethod
+    def _contract_term_none_to_empty_str(cls, value):
+        return "" if value is None else value
+
+    @field_validator("business_scopes", mode="before")
+    @classmethod
+    def _business_scopes_none_to_empty_list(cls, value):
+        return [] if value is None else value
 
     @computed_field
     @property

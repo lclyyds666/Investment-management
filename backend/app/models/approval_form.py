@@ -64,7 +64,7 @@ class ApprovalForm(Base):
         index=True,
         comment="关联合同",
     )
-    scenic_id: Mapped[str] = mapped_column(
+    scenic_id: Mapped[str | None] = mapped_column(
         String(64), default="", nullable=True, index=True, comment="景区作用域键"
     )
     remark: Mapped[str] = mapped_column(Text, default="", comment="备注")
