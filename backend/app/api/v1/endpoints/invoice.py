@@ -40,6 +40,7 @@ from app.schemas.invoice import (
     InvoiceUpdate,
 )
 from app.services.assignment_permissions import PermissionContext
+from app.services.cash_execution import ensure_receipt_task
 from app.services.contract_eligibility import (
     ContractEligibilityError,
     eligible_contract_for_user,
@@ -363,6 +364,8 @@ async def upload_attachments(
             db.add(attachment)
             stored_paths.append(path)
         invoice.status = InvoiceStatus.ISSUED
+        db.flush()
+        ensure_receipt_task(db, invoice)
         db.commit()
     except Exception:
         db.rollback()

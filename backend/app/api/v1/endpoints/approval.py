@@ -30,6 +30,7 @@ from app.core.enums import (
 )
 from app.db.session import get_db
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
+from app.models.invoice import Invoice
 from app.models.contract import Contract
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask
@@ -51,6 +52,7 @@ from app.services.contract_eligibility import (
     ContractEligibilityError,
     eligible_contract_for_user,
 )
+from app.services.cash_execution import ensure_payment_task, ensure_receipt_task
 from app.services.assignment_permissions import (
     PermissionContext,
     has_permission,
@@ -174,6 +176,13 @@ def _complete_current_task(
         raise HTTPException(status_code=422, detail="审批单没有可处理的当前工作流任务")
     try:
         complete_task(db, task.id, current_user, action, comment)
+        db.flush()
+        if form.form_type == ContractType.PAYMENT:
+            ensure_payment_task(db, form)
+        elif form.form_type == ContractType.INVOICE and form.invoice_id is not None:
+            invoice = db.get(Invoice, form.invoice_id)
+            if invoice is not None:
+                ensure_receipt_task(db, invoice)
         db.commit()
     except WorkflowTaskConflict as error:
         db.rollback()
