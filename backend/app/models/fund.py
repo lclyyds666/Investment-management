@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import Date, ForeignKey, Numeric, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -37,3 +37,9 @@ class FundTransaction(Base):
     )
     scenic_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     bank_reference: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+
+    execution_task = relationship("CashExecutionTask", foreign_keys=[execution_task_id])
+    allocations = relationship(
+        "InvoiceFundAllocation", back_populates="fund_transaction",
+        cascade="all, delete-orphan",
+    )

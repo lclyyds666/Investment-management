@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS `biz_cash_execution_task` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_cash_task_approval` (`approval_form_id`),
   UNIQUE KEY `uq_cash_task_invoice` (`invoice_id`),
-  CONSTRAINT `ck_cash_task_single_source` CHECK ((`direction`='outflow' AND `approval_form_id` IS NOT NULL AND `invoice_id` IS NULL) OR (`direction`='inflow' AND `invoice_id` IS NOT NULL AND `approval_form_id` IS NULL)),
+  CONSTRAINT `ck_cash_task_single_source` CHECK ((`direction`='outflow' AND `invoice_id` IS NULL) OR (`direction`='inflow' AND `approval_form_id` IS NULL)),
   CONSTRAINT `fk_cash_task_approval` FOREIGN KEY (`approval_form_id`) REFERENCES `biz_approval_form` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_cash_task_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_cash_task_contract` FOREIGN KEY (`contract_id`) REFERENCES `biz_contract` (`id`) ON DELETE SET NULL
@@ -49,4 +49,23 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND column_name='scenic_id'), 'SELECT 1', 'ALTER TABLE `biz_fund_transaction` ADD COLUMN `scenic_id` VARCHAR(64) NULL');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND column_name='bank_reference'), 'SELECT 1', 'ALTER TABLE `biz_fund_transaction` ADD COLUMN `bank_reference` VARCHAR(128) NOT NULL DEFAULT \'\'');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND index_name='ix_fund_execution_task'), 'SELECT 1', 'CREATE INDEX `ix_fund_execution_task` ON `biz_fund_transaction` (`execution_task_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND index_name='ix_fund_contract'), 'SELECT 1', 'CREATE INDEX `ix_fund_contract` ON `biz_fund_transaction` (`contract_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND index_name='ix_fund_approval_form'), 'SELECT 1', 'CREATE INDEX `ix_fund_approval_form` ON `biz_fund_transaction` (`approval_form_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND index_name='ix_fund_invoice'), 'SELECT 1', 'CREATE INDEX `ix_fund_invoice` ON `biz_fund_transaction` (`invoice_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=@schema_name AND table_name='biz_fund_transaction' AND index_name='ix_fund_scenic'), 'SELECT 1', 'CREATE INDEX `ix_fund_scenic` ON `biz_fund_transaction` (`scenic_id`)');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_fund_transaction' AND constraint_name='fk_fund_execution_task'), 'SELECT 1', 'ALTER TABLE `biz_fund_transaction` ADD CONSTRAINT `fk_fund_execution_task` FOREIGN KEY (`execution_task_id`) REFERENCES `biz_cash_execution_task` (`id`) ON DELETE SET NULL');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_fund_transaction' AND constraint_name='fk_fund_contract'), 'SELECT 1', 'ALTER TABLE `biz_fund_transaction` ADD CONSTRAINT `fk_fund_contract` FOREIGN KEY (`contract_id`) REFERENCES `biz_contract` (`id`) ON DELETE SET NULL');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_fund_transaction' AND constraint_name='fk_fund_approval_form'), 'SELECT 1', 'ALTER TABLE `biz_fund_transaction` ADD CONSTRAINT `fk_fund_approval_form` FOREIGN KEY (`approval_form_id`) REFERENCES `biz_approval_form` (`id`) ON DELETE SET NULL');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl = IF(EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE constraint_schema=@schema_name AND table_name='biz_fund_transaction' AND constraint_name='fk_fund_invoice'), 'SELECT 1', 'ALTER TABLE `biz_fund_transaction` ADD CONSTRAINT `fk_fund_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE SET NULL');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

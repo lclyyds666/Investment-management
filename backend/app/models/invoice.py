@@ -82,6 +82,10 @@ class Invoice(Base):
     details: Mapped[list["InvoiceDetail"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", passive_deletes=True,
     )
+    fund_allocations = relationship(
+        "InvoiceFundAllocation", back_populates="invoice",
+        cascade="all, delete-orphan", passive_deletes=True,
+    )
     contract = relationship("Contract", foreign_keys=[contract_id])
 
 

@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 
 from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -23,8 +23,8 @@ class CashExecutionTask(Base):
         UniqueConstraint("approval_form_id", name="uq_cash_task_approval"),
         UniqueConstraint("invoice_id", name="uq_cash_task_invoice"),
         CheckConstraint(
-            "(direction = 'outflow' AND approval_form_id IS NOT NULL AND invoice_id IS NULL) OR "
-            "(direction = 'inflow' AND invoice_id IS NOT NULL AND approval_form_id IS NULL)",
+            "(direction = 'outflow' AND invoice_id IS NULL) OR "
+            "(direction = 'inflow' AND approval_form_id IS NULL)",
             name="ck_cash_task_single_source",
         ),
     )
@@ -60,3 +60,6 @@ class InvoiceFundAllocation(Base):
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     allocated_by: Mapped[int] = mapped_column(ForeignKey("sys_user.id"), nullable=False)
+
+    fund_transaction = relationship("FundTransaction", back_populates="allocations")
+    invoice = relationship("Invoice", back_populates="fund_allocations")
