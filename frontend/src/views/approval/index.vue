@@ -76,7 +76,14 @@
               </template>
               <el-button v-if="canExport" size="small" :icon="Printer" @click="onPrint(row)">打印导出</el-button>
               <el-button v-if="canUpdate && ['draft', 'rejected'].includes(row.status)" size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-              <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
+              <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status) && canSubmitRow(row)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
+              <el-button
+                v-else-if="canSubmit && ['draft', 'rejected'].includes(row.status)"
+                size="small"
+                type="success"
+                disabled
+                title="请先编辑补选已审批合同"
+              >请先补选合同</el-button>
               <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
               <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
               <el-button v-if="canReturn(row)" size="small" type="warning" @click="openAction(row, 'reject')">退回</el-button>
@@ -407,7 +414,6 @@ const emptyForm = () => ({
   contract_id: null,
   department: '',
   apply_date: null,
-  customer_id: null,
   customer_name: '',
   business_type: '',
   business_desc: '详见合同',
@@ -453,7 +459,6 @@ function openEdit(row) {
     contract_id: row.contract_id ?? null,
     department: row.department,
     apply_date: row.apply_date || null,
-    customer_id: row.customer_id || null,
     customer_name: row.customer_name || '',
     business_type: row.business_type || '',
     business_desc: row.business_desc || '详见合同',
@@ -471,7 +476,7 @@ async function onSave() {
   await formRef.value?.validate()
   saving.value = true
   try {
-    const { attachment_name, contract_no, customer_name, ...payload } = form
+    const { attachment_name, contract_no, customer_id, customer_name, ...payload } = form
     let formId = editingId.value
     if (isEdit.value) {
       await updateForm(editingId.value, payload)
@@ -520,6 +525,10 @@ function isHandlerResubmit(row) {
   return Boolean(row.workflow_instance_id && row.active_task?.node_code === 'handler')
 }
 
+function canSubmitRow(row) {
+  return Boolean(row.contract_id)
+}
+
 function resetSubmitDialog() {
   submitCurrent.value = null
   selectedApprovers.value = {}
@@ -533,6 +542,10 @@ async function finishSubmit(row, payload) {
 }
 
 async function onSubmit(row) {
+  if (!canSubmitRow(row)) {
+    ElMessage.warning('请先编辑补选已审批合同')
+    return
+  }
   if (isHandlerResubmit(row)) {
     if (submitSaving.value) return
     submitSaving.value = true

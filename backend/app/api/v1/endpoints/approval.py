@@ -208,10 +208,11 @@ def _apply_payload(form: ApprovalForm, data: dict, db: Session) -> None:
     data = data.copy()
     contract_id = data.pop("contract_id", None)
     data.pop("contract_no", None)
+    data.pop("customer_id", None)
     data.pop("customer_name", None)
     for field, value in data.items():
         setattr(form, field, value)
-    if contract_id is not None:
+    if contract_id is not None and (form.id is None or contract_id != form.contract_id):
         _apply_contract_snapshot(form, _approved_contract(db, contract_id))
     elif form.contract_id is None:
         raise HTTPException(status_code=422, detail="请选择已审批合同")
@@ -449,6 +450,8 @@ def submit_form(
 ):
     form = _get_form_or_404(db, form_id)
     _reject_invoice_form_generic_access(form)
+    if form.contract_id is None:
+        raise HTTPException(status_code=422, detail="请先编辑补选已审批合同")
     enabled_superuser = bool(current_user.is_active and current_user.is_superuser)
     if form.created_by != current_user.id and not (
         form.workflow_instance_id is not None and enabled_superuser

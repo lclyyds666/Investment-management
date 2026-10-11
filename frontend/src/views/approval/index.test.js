@@ -78,6 +78,7 @@ describe('approval contract selection', () => {
     wrapper.vm.openCreate('business')
     wrapper.vm.form.contract_id = 7
     wrapper.vm.form.contract_no = 'CLIENT-OVERRIDE'
+    wrapper.vm.form.customer_id = 99
     wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
 
     await wrapper.vm.onSave()
@@ -86,6 +87,7 @@ describe('approval contract selection', () => {
     const payload = approvalApi.createForm.mock.calls[0][0]
     expect(payload.contract_id).toBe(7)
     expect(payload).not.toHaveProperty('contract_no')
+    expect(payload).not.toHaveProperty('customer_id')
   })
 
   it('marks legacy edits as unlinked until a contract is selected', async () => {
@@ -95,6 +97,34 @@ describe('approval contract selection', () => {
 
     expect(wrapper.vm.editingRow.id).toBe(21)
     expect(wrapper.vm.form.contract_id).toBeNull()
+    expect(wrapper.vm.canSubmitRow(wrapper.vm.editingRow)).toBe(false)
+    await wrapper.vm.onSubmit(wrapper.vm.editingRow)
+    expect(approvalApi.submitForm).not.toHaveBeenCalled()
+    expect(messages.warning).toHaveBeenCalledWith('请先编辑补选已审批合同')
+  })
+
+  it('updates with contract_id but without legacy customer linkage fields', async () => {
+    approvalApi.updateForm.mockResolvedValue({})
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openEdit({
+      id: 22,
+      form_type: 'business',
+      contract_id: 7,
+      customer_id: 99,
+      customer_name: '旧客户',
+      contract_no: 'HT-APPROVED'
+    })
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+
+    await wrapper.vm.onSave()
+
+    expect(approvalApi.updateForm).toHaveBeenCalledTimes(1)
+    const payload = approvalApi.updateForm.mock.calls[0][1]
+    expect(payload.contract_id).toBe(7)
+    expect(payload).not.toHaveProperty('contract_no')
+    expect(payload).not.toHaveProperty('customer_id')
+    expect(payload).not.toHaveProperty('customer_name')
   })
 })
 
@@ -111,7 +141,7 @@ describe('approval form designated submit', () => {
   ])('submits %s forms with two designated users through the matching workflow', async (formType, workflowCode) => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.vm.onSubmit({ id: 9, status: 'draft', form_type: formType, workflow_instance_id: null })
+    await wrapper.vm.onSubmit({ id: 9, status: 'draft', form_type: formType, contract_id: 7, workflow_instance_id: null })
     expect(wrapper.vm.submitWorkflowCode).toBe(workflowCode)
     expect(approvalApi.submitForm).not.toHaveBeenCalled()
 
@@ -124,7 +154,7 @@ describe('approval form designated submit', () => {
   it('resubmits an active handler task with an empty payload', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.vm.onSubmit({ id: 10, form_type: 'business', status: 'rejected', workflow_instance_id: 45, active_task: { node_code: 'handler' } })
+    await wrapper.vm.onSubmit({ id: 10, form_type: 'business', status: 'rejected', contract_id: 7, workflow_instance_id: 45, active_task: { node_code: 'handler' } })
     expect(approvalApi.submitForm).toHaveBeenCalledWith(10, undefined)
   })
 
@@ -133,13 +163,13 @@ describe('approval form designated submit', () => {
     await flushPromises()
     expect(workflowApi.listWorkflowCandidates).not.toHaveBeenCalled()
 
-    await wrapper.vm.onSubmit({ id: 11, status: 'draft', form_type: 'payment', workflow_instance_id: null })
+    await wrapper.vm.onSubmit({ id: 11, status: 'draft', form_type: 'payment', contract_id: 7, workflow_instance_id: null })
     await flushPromises()
     expect(workflowApi.listWorkflowCandidates).toHaveBeenCalledTimes(1)
 
     wrapper.vm.submitVisible = false
     await wrapper.vm.$nextTick()
-    await wrapper.vm.onSubmit({ id: 11, status: 'draft', form_type: 'payment', workflow_instance_id: null })
+    await wrapper.vm.onSubmit({ id: 11, status: 'draft', form_type: 'payment', contract_id: 7, workflow_instance_id: null })
     await flushPromises()
     expect(workflowApi.listWorkflowCandidates).toHaveBeenCalledTimes(2)
   })
@@ -149,7 +179,7 @@ describe('approval form designated submit', () => {
     approvalApi.submitForm.mockImplementationOnce(() => new Promise((resolve) => { resolveSubmit = resolve }))
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.vm.onSubmit({ id: 12, status: 'draft', form_type: 'business', workflow_instance_id: null })
+    await wrapper.vm.onSubmit({ id: 12, status: 'draft', form_type: 'business', contract_id: 7, workflow_instance_id: null })
     wrapper.vm.selectedApprovers = { company_leader: 11, supply_governance_leader: 31 }
     wrapper.vm.submitFieldsRef = { validate: vi.fn().mockResolvedValue(true) }
 

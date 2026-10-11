@@ -1630,7 +1630,10 @@ class ApprovalFormApiTest(unittest.TestCase):
     def add_form(self, form_type, contract_no):
         form = ApprovalForm(
             form_type=form_type,
+            contract_id=self.approved_contract.id,
             contract_no=contract_no,
+            scenic_id=self.approved_contract.scenic_id,
+            customer_name=self.approved_contract.party_b,
             business_desc="Workflow cutover",
             status=ContractStatus.DRAFT,
             created_by=self.handler.id,
@@ -1701,6 +1704,7 @@ class ApprovalFormApiTest(unittest.TestCase):
                 "form_type": "business",
                 "contract_id": self.approved_contract.id,
                 "contract_no": "CLIENT-OVERRIDE",
+                "customer_id": self.approved_contract.id,
                 "customer_name": "客户端客户",
             },
         )
@@ -1711,6 +1715,7 @@ class ApprovalFormApiTest(unittest.TestCase):
         self.assertEqual(form.contract_no, "HT-2026-001")
         self.assertEqual(form.scenic_id, "scenic-1")
         self.assertEqual(form.customer_name, "客户公司")
+        self.assertIsNone(form.customer_id)
 
         self.approved_contract.contract_no = "HT-2026-EDITED"
         self.approved_contract.party_b = "编辑后客户"
@@ -1718,9 +1723,60 @@ class ApprovalFormApiTest(unittest.TestCase):
         self.db.commit()
         self.db.refresh(form)
 
+        edited = self.client.put(
+            f"/api/v1/approval-forms/{form.id}",
+            json={
+                "contract_id": self.approved_contract.id,
+                "contract_no": "CLIENT-OVERRIDE",
+                "customer_id": self.approved_contract.id,
+                "customer_name": "客户端客户",
+                "remark": "只修改备注",
+            },
+        )
+
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.db.refresh(form)
         self.assertEqual(form.contract_no, "HT-2026-001")
         self.assertEqual(form.scenic_id, "scenic-1")
         self.assertEqual(form.customer_name, "客户公司")
+        self.assertIsNone(form.customer_id)
+        self.assertEqual(form.remark, "只修改备注")
+
+    def test_submit_and_resubmit_require_contract_link(self):
+        legacy = ApprovalForm(
+            form_type=ContractType.BUSINESS,
+            contract_no="LEGACY-UNLINKED",
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add(legacy)
+        self.db.commit()
+
+        submitted = self.client.post(
+            f"/api/v1/approval-forms/{legacy.id}/submit",
+            json=self.designation_payload(),
+        )
+        self.assertEqual(submitted.status_code, 422, submitted.text)
+        self.assertEqual(submitted.json()["detail"], "请先编辑补选已审批合同")
+
+        started = self.submit(self.business)
+        self.assertEqual(started.status_code, 200, started.text)
+        self.current_user = self.reviewer_a
+        returned = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/reject",
+            json={"comment": "请补充"},
+        )
+        self.assertEqual(returned.status_code, 200, returned.text)
+        self.business.contract_id = None
+        self.db.commit()
+        self.current_user = self.handler
+
+        resubmitted = self.client.post(
+            f"/api/v1/approval-forms/{self.business.id}/submit",
+            json={},
+        )
+        self.assertEqual(resubmitted.status_code, 422, resubmitted.text)
+        self.assertEqual(resubmitted.json()["detail"], "请先编辑补选已审批合同")
 
     def test_draft_edit_refreshes_snapshot_from_selected_approved_contract(self):
         replacement = Contract(
