@@ -25,6 +25,7 @@ from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail  # noqa: F401
 from app.models.invoice_preference import ScenicInvoicePreference  # noqa: F401
 from app.models.knowledge import KnowledgeDoc  # noqa: F401 确保 create_all 建表
+from app.models.ledger_contract import LedgerContractLink, ScenicContractPreference  # noqa: F401
 from app.models.legal_risk import (  # noqa: F401 确保 create_all 建表
     LegalAlertDelivery,
     LegalAttachment,

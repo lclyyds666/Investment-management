@@ -58,6 +58,15 @@ class ApprovalForm(Base):
     business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型")
     business_desc: Mapped[str] = mapped_column(String(500), default="详见合同", comment="业务情况")
     contract_no: Mapped[str] = mapped_column(String(64), default="", index=True, comment="合同编号")
+    contract_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_contract.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="关联合同",
+    )
+    scenic_id: Mapped[str] = mapped_column(
+        String(64), default="", nullable=True, index=True, comment="景区作用域键"
+    )
     remark: Mapped[str] = mapped_column(Text, default="", comment="备注")
 
     # ---- 付款审批单专有字段 ----
@@ -93,6 +102,7 @@ class ApprovalForm(Base):
     )
     workflow_instance = relationship("WorkflowInstance", foreign_keys=[workflow_instance_id])
     invoice = relationship("Invoice", foreign_keys=[invoice_id])
+    contract = relationship("Contract", foreign_keys=[contract_id])
 
 
 class ApprovalFormAction(Base):
@@ -130,3 +140,4 @@ class ApprovalFormAction(Base):
 
 from app.models.workflow import WorkflowInstance, WorkflowTaskAction  # noqa: E402,F401
 from app.models.invoice import Invoice  # noqa: E402,F401
+from app.models.contract import Contract  # noqa: E402,F401

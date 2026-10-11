@@ -21,3 +21,7 @@ from app.models.legal_risk import (  # noqa: F401
     LegalCaseRecovery,
     LegalCaseSequence,
 )
+from app.models.ledger_contract import (  # noqa: F401
+    LedgerContractLink,
+    ScenicContractPreference,
+)

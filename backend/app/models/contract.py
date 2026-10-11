@@ -2,7 +2,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, Enum as SAEnum, ForeignKey, Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ContractStatus
@@ -33,6 +33,15 @@ class Contract(Base):
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称")
     customer_credit_code: Mapped[str] = mapped_column(String(32), default="", comment="客户统一社会信用代码")
     business_type: Mapped[str] = mapped_column(String(64), default="", comment="业务类型(旧字段，保留兼容)")
+    contract_term: Mapped[str] = mapped_column(
+        String(255), default="", nullable=True, comment="合同期限"
+    )
+    scenic_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="唯一关联景区"
+    )
+    business_scopes: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=True, comment="覆盖业务类型(ticket/hotel)"
+    )
 
     # ---- 合同全生命周期新增字段 ----
     is_internal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否内部合同")

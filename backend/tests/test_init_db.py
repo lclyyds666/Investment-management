@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import init_db
@@ -113,6 +113,17 @@ def _canonical_authorization_snapshot(db: Session) -> dict:
 
 
 class DatabaseInitializationTest(unittest.TestCase):
+    def test_create_all_discovers_contract_ledger_link_tables(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        try:
+            Base.metadata.create_all(engine)
+            table_names = set(inspect(engine).get_table_names())
+
+            self.assertIn("biz_ledger_contract_link", table_names)
+            self.assertIn("biz_scenic_contract_preference", table_names)
+        finally:
+            engine.dispose()
+
     def test_init_creates_normalized_assignment_for_seeded_legacy_user(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         try:

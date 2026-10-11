@@ -36,6 +36,12 @@ class Invoice(Base):
     )
     customer_name: Mapped[str] = mapped_column(String(200), default="", comment="客户名称")
     contract_no: Mapped[str] = mapped_column(String(64), default="", comment="关联合同编号")
+    contract_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_contract.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="关联合同",
+    )
     issued_date: Mapped[date | None] = mapped_column(Date, nullable=True, comment="开票日期")
     remark: Mapped[str] = mapped_column(Text, default="", comment="备注")
 
@@ -76,6 +82,7 @@ class Invoice(Base):
     details: Mapped[list["InvoiceDetail"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", passive_deletes=True,
     )
+    contract = relationship("Contract", foreign_keys=[contract_id])
 
 
 class InvoiceAttachment(Base):
