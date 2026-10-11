@@ -6,7 +6,7 @@ const contractApi = vi.hoisted(() => ({
 }))
 const workflowApi = vi.hoisted(() => ({ getWorkflowTimeline: vi.fn() }))
 const scenicApi = vi.hoisted(() => ({
-  getScenicConfigs: vi.fn(() => Promise.resolve([
+  getScenicOptions: vi.fn(() => Promise.resolve([
     { scenic_id: 'guanquelou', scenic_name: '鹳雀楼' }
   ]))
 }))

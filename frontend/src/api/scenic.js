@@ -32,6 +32,11 @@ export function getScenicConfigs() {
   return request.get('/scenic-spots/configs')
 }
 
+/** 合同等跨业务表单使用的安全景区选项，不包含费率等配置详情。 */
+export function getScenicOptions() {
+  return request.get('/scenic-spots/options')
+}
+
 /** 修改单个景区门票默认配置 */
 export function updateScenicConfig(scenicId, payload) {
   return request.put(

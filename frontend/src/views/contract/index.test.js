@@ -8,7 +8,7 @@ const contractApi = vi.hoisted(() => ({
 const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowSubmissionPlan: vi.fn(), getWorkflowTimeline: vi.fn() }))
 const legalApi = vi.hoisted(() => ({ listLegalInitiatorOptions: vi.fn(() => Promise.resolve([])) }))
 const scenicApi = vi.hoisted(() => ({
-  getScenicConfigs: vi.fn(() => Promise.resolve([
+  getScenicOptions: vi.fn(() => Promise.resolve([
     { scenic_id: 'guanquelou', scenic_name: '鹳雀楼' },
     { scenic_id: 'changsha-dongqu', scenic_name: '长沙动趣王国' }
   ]))
@@ -180,13 +180,32 @@ describe('contract designated submit', () => {
     expect(wrapper.vm.businessScopeText([])).toBe('—')
   })
 
-  it('keeps canonical scenic options when config access is unavailable', async () => {
-    scenicApi.getScenicConfigs.mockRejectedValueOnce(new Error('forbidden'))
+  it('blocks contract creation until scenic options reload successfully', async () => {
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: 12, organization_code: 'supplymanagement', organization_name: '山东出版供应链管理有限公司', company_code: 'supplymanagement' }
+    ])
+    scenicApi.getScenicOptions.mockRejectedValueOnce(new Error('network'))
     const wrapper = mountView()
     await flushPromises()
 
+    expect(wrapper.vm.scenicOptionsError).toBe(true)
+    expect(wrapper.vm.canOpenCreate).toBe(false)
+    expect(wrapper.findComponent({ name: 'ElAlert' }).attributes('title')).toBe('景区选项加载失败，暂时无法新建或编辑合同')
+    wrapper.vm.openEdit({ id: 91, status: 'draft' })
+    expect(wrapper.vm.dialogVisible).toBe(false)
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.onSave()
+    expect(contractApi.createContract).not.toHaveBeenCalled()
+    expect(messages.warning).toHaveBeenCalledWith('景区选项加载失败，请重试')
+
+    scenicApi.getScenicOptions.mockResolvedValueOnce([
+      { scenic_id: 'guanquelou', scenic_name: '鹳雀楼' }
+    ])
+    await wrapper.vm.loadScenicOptions()
+
+    expect(wrapper.vm.scenicOptionsError).toBe(false)
+    expect(wrapper.vm.canOpenCreate).toBe(true)
     expect(wrapper.vm.scenicName('guanquelou')).toBe('鹳雀楼')
-    expect(wrapper.vm.scenicOptions.length).toBeGreaterThan(0)
   })
 
   it('lets a superuser select a real contract organization without a fake assignment', async () => {

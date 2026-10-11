@@ -107,9 +107,8 @@ import { ElMessage } from 'element-plus'
 import { Printer, Guide, Document, View, Download } from '@element-plus/icons-vue'
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
 import { getWorkflowTimeline } from '@/api/workflow'
-import { getScenicConfigs } from '@/api/scenic'
+import { getScenicOptions } from '@/api/scenic'
 import { STATUS_META } from '@/constants/business'
-import { getScenicById } from '@/constants/scenic'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline.vue'
@@ -135,7 +134,7 @@ const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) :
 const scenicName = computed(() => {
   const scenicId = contract.value?.scenic_id
   if (!scenicId) return '—'
-  return scenicOptions.value.find((option) => option.scenic_id === scenicId)?.scenic_name || getScenicById(scenicId)?.name || scenicId
+  return scenicOptions.value.find((option) => option.scenic_id === scenicId)?.scenic_name || scenicId
 })
 const businessScopeText = computed(() => {
   const labels = { ticket: '门票', hotel: '酒店' }
@@ -147,7 +146,7 @@ const businessScopeText = computed(() => {
 })
 
 async function loadScenicOptions() {
-  try { scenicOptions.value = await getScenicConfigs() } catch { scenicOptions.value = [] }
+  try { scenicOptions.value = await getScenicOptions() } catch { scenicOptions.value = [] }
 }
 
 function isSameTarget(left, right) {

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permission
+from app.api.deps import get_current_user, require_permission
 from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.scenic import ScenicLedger
@@ -25,10 +25,15 @@ from app.schemas.scenic_config import (
     HotelScenicConfigUpdate,
     ScenicConfigOut,
     ScenicConfigUpdate,
+    ScenicOptionOut,
 )
 from app.services import scenic_config as scenic_config_svc
 from app.services.scenic_analytics import ScenicAnalyticsService
-from app.services.assignment_permissions import PermissionContext
+from app.services.assignment_permissions import (
+    PermissionContext,
+    active_assignments,
+    has_permission,
+)
 
 router = APIRouter()
 
@@ -122,6 +127,58 @@ def _config_out(config) -> ScenicConfigOut:
         updated_by=config.updated_by,
         updated_at=config.updated_at,
     )
+
+
+def _options_guard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    if has_permission(db, current_user, "supply.scenic.view", _supply_context()):
+        return current_user
+    contexts = [PermissionContext(
+        company_code="investment",
+        participant_ids=frozenset({current_user.id}),
+        assigned_user_id=current_user.id,
+    )]
+    contexts.extend(
+        PermissionContext(
+            company_code=assignment.organization.company_code,
+            department_code=(
+                assignment.organization.code
+                if assignment.organization.organization_type.value == "department"
+                else None
+            ),
+            participant_ids=frozenset({current_user.id}),
+            assigned_user_id=current_user.id,
+        )
+        for assignment in active_assignments(db, current_user.id)
+    )
+    if any(
+        has_permission(
+            db,
+            current_user,
+            "investment.legal.contracts.view",
+            context,
+        )
+        for context in contexts
+    ):
+        return current_user
+    raise HTTPException(status_code=403, detail="权限不足")
+
+
+@router.get(
+    "/options",
+    response_model=Response[list[ScenicOptionOut]],
+    summary="查询安全景区选项",
+)
+def get_options(
+    db: Session = Depends(get_db),
+    _: User = Depends(_options_guard),
+):
+    return Response.ok([
+        ScenicOptionOut(scenic_id=item.scenic_id, scenic_name=item.scenic_name)
+        for item in scenic_config_svc.list_effective_configs(db)
+    ])
 
 
 @router.get(

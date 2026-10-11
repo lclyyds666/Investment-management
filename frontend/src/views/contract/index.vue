@@ -26,6 +26,17 @@
           <el-button :icon="Refresh" @click="load">刷新</el-button>
         </div>
       </div>
+      <el-alert
+        v-if="scenicOptionsError"
+        type="error"
+        :closable="false"
+        title="景区选项加载失败，暂时无法新建或编辑合同"
+        class="mb"
+      >
+        <template #default>
+          <el-button link type="primary" :loading="scenicOptionsLoading" @click="loadScenicOptions">重试</el-button>
+        </template>
+      </el-alert>
 
       <el-table :data="filteredList" border stripe>
         <el-table-column prop="contract_no" label="合同编号" width="150" />
@@ -49,7 +60,7 @@
                 <el-button size="small" type="primary" plain :icon="View" @click="previewContractAttachment(row)">预览附件</el-button>
                 <el-button size="small" type="primary" plain :icon="Download" @click="downloadContractAttachment(row)">下载附件</el-button>
               </template>
-              <el-button v-if="canUpdate && ['draft', 'rejected'].includes(row.status)" size="small" type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canUpdate && ['draft', 'rejected'].includes(row.status)" size="small" type="primary" :icon="Edit" :disabled="!scenicOptionsReady" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canSubmit && ['draft', 'rejected'].includes(row.status)" size="small" type="success" @click="onSubmit(row)">提交审批</el-button>
               <el-button v-if="canDelete && ['draft', 'rejected'].includes(row.status)" size="small" type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
               <el-button v-if="canApprove(row)" size="small" type="success" @click="openAction(row, 'approve')">通过</el-button>
@@ -445,7 +456,6 @@ import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { COMPANY_NAMES, STATUS_META } from '@/constants/business'
-import { scenicSpots } from '@/constants/scenic'
 import { canUsePermission } from '@/utils/businessAuthorization'
 import { renderSafeMarkdown } from '@/utils/safeMarkdown'
 import { previewBlob, downloadBlob } from '@/utils/file'
@@ -459,7 +469,7 @@ import {
 import { listCustomers } from '@/api/customer'
 import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge'
 import { listLegalInitiatorOptions } from '@/api/legalRisk'
-import { getScenicConfigs } from '@/api/scenic'
+import { getScenicOptions } from '@/api/scenic'
 import { getWorkflowSubmissionPlan } from '@/api/workflow'
 
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
@@ -520,13 +530,25 @@ function onCustomerChange(name) {
   if (c) form.customer_credit_code = c.social_credit_code || ''
 }
 
-const defaultScenicOptions = scenicSpots.map((scenic) => ({
-  scenic_id: scenic.id,
-  scenic_name: scenic.name
-}))
-const scenicOptions = ref(defaultScenicOptions)
+const scenicOptions = ref([])
+const scenicOptionsLoading = ref(true)
+const scenicOptionsError = ref(false)
+const scenicOptionsReady = computed(() => (
+  !scenicOptionsLoading.value && !scenicOptionsError.value && scenicOptions.value.length > 0
+))
 async function loadScenicOptions() {
-  try { scenicOptions.value = await getScenicConfigs() } catch { scenicOptions.value = defaultScenicOptions }
+  scenicOptionsLoading.value = true
+  scenicOptionsError.value = false
+  try {
+    const options = await getScenicOptions()
+    if (!Array.isArray(options) || options.length === 0) throw new Error('empty scenic options')
+    scenicOptions.value = options
+  } catch {
+    scenicOptions.value = []
+    scenicOptionsError.value = true
+  } finally {
+    scenicOptionsLoading.value = false
+  }
 }
 function scenicName(scenicId) {
   if (!scenicId) return '—'
@@ -540,7 +562,9 @@ function businessScopeText(scopes) {
 
 const initiatorOptions = ref([])
 const initiatorOptionsLoading = ref(true)
-const canOpenCreate = computed(() => canCreate.value && !initiatorOptionsLoading.value && initiatorOptions.value.length > 0)
+const canOpenCreate = computed(() => (
+  canCreate.value && !initiatorOptionsLoading.value && initiatorOptions.value.length > 0 && scenicOptionsReady.value
+))
 async function loadInitiatorOptions() {
   initiatorOptionsLoading.value = true
   try {
@@ -614,6 +638,10 @@ const rules = reactive({
 })
 
 function openCreate() {
+  if (!scenicOptionsReady.value) {
+    ElMessage.warning('景区选项加载失败，请重试')
+    return
+  }
   if (!canOpenCreate.value) return
   isEdit.value = false
   editingId.value = null
@@ -628,6 +656,10 @@ function openCreate() {
   dialogVisible.value = true
 }
 function openEdit(row) {
+  if (!scenicOptionsReady.value) {
+    ElMessage.warning('景区选项加载失败，请重试')
+    return
+  }
   isEdit.value = true
   editingId.value = row.id
   pickedFile.value = null
@@ -658,6 +690,10 @@ function openEdit(row) {
   dialogVisible.value = true
 }
 async function onSave() {
+  if (!scenicOptionsReady.value) {
+    ElMessage.warning('景区选项加载失败，请重试')
+    return
+  }
   if (!isEdit.value && !canOpenCreate.value) return
   await formRef.value?.validate()
   if (!isEdit.value && !(isSuperuser.value ? form.organization_code : form.initiator_assignment_id)) return

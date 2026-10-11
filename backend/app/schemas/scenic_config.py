@@ -76,3 +76,8 @@ class ScenicConfigOut(BaseModel):
     configured: bool = True
     updated_by: int | None = None
     updated_at: datetime | None = None
+
+
+class ScenicOptionOut(BaseModel):
+    scenic_id: str
+    scenic_name: str
