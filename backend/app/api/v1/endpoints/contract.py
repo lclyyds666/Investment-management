@@ -22,6 +22,7 @@ from app.core.enums import (
 from app.db.session import get_db
 from app.models.approval import Approval
 from app.models.contract import Contract
+from app.models.ledger_contract import ScenicContractPreference
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
@@ -337,10 +338,24 @@ def list_eligible_contracts(
         contract_access_predicate(legal_record_scope(db, current_user)),
     )
     names = _names_map(db, {contract.created_by for contract in rows})
-    return Response.ok([
-        _to_out(db, contract, current_user, names.get(contract.created_by, ""))
-        for contract in rows
-    ])
+    preference = db.scalar(
+        select(ScenicContractPreference).where(
+            ScenicContractPreference.scenic_id == scenic_id,
+            ScenicContractPreference.source_kind == source_kind,
+        )
+    )
+    preferred_contract_id = preference.last_contract_id if preference else None
+    return Response.ok(
+        [
+            _to_out(
+                db,
+                contract,
+                current_user,
+                names.get(contract.created_by, ""),
+            ).model_copy(update={"is_preferred": contract.id == preferred_contract_id})
+            for contract in rows
+        ]
+    )
 
 
 @router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同")

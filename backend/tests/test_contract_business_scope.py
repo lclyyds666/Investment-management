@@ -15,6 +15,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
 from app.models.contract import Contract
+from app.models.ledger_contract import ScenicContractPreference
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
 from app.schemas.contract import ContractCreate, ContractUpdate
@@ -235,6 +236,14 @@ class ContractBusinessScopeApiTest(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
 
         self.current_user["value"] = self.contract_user
+        self.db.add(
+            ScenicContractPreference(
+                scenic_id="guanquelou",
+                source_kind=InvoiceSourceKind.TICKET,
+                last_contract_id=self.visible_contract.id,
+            )
+        )
+        self.db.commit()
         allowed = self.client.get(
             "/api/v1/contracts/eligible",
             params={"scenic_id": "guanquelou", "source_kind": "ticket"},
@@ -245,6 +254,7 @@ class ContractBusinessScopeApiTest(unittest.TestCase):
             [item["id"] for item in allowed.json()["data"]],
             [self.visible_contract.id],
         )
+        self.assertTrue(allowed.json()["data"][0]["is_preferred"])
 
     def test_contract_user_reads_safe_scenic_options_without_rate_access(self):
         denied_options = self.client.get("/api/v1/scenic-spots/options")

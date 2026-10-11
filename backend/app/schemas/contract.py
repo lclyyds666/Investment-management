@@ -129,6 +129,7 @@ class ContractOut(ContractBase):
     can_act: bool = False
     scenic_id: Optional[str] = None
     business_scopes: list[str] = Field(default_factory=list)
+    is_preferred: bool = False
 
     @field_validator("business_scopes", mode="before")
     @classmethod

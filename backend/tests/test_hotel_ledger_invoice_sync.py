@@ -1,6 +1,7 @@
 import asyncio
 from io import BytesIO
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
@@ -9,10 +10,14 @@ from starlette.datastructures import UploadFile
 import app.db.init_db  # noqa: F401
 from app.api.v1.endpoints import hotel_ledger as endpoint
 from app.api.v1.endpoints.hotel_ledger import approve_confirm, delete_row, update_row, upload_confirm
+from app.core.enums import ContractStatus, InvoiceSourceKind
 from app.db.base import Base
+from app.models.contract import Contract
 from app.models.hotel_ledger import HotelLedger
 from app.models.invoice import Invoice
+from app.models.ledger_contract import LedgerContractLink, ScenicContractPreference
 from app.schemas.hotel_ledger import HotelUpdateIn
+from app.schemas.ledger_contract import LedgerConfirmApproveIn
 from app.services.invoice_generation import hotel_period_key
 
 
@@ -26,17 +31,38 @@ def test_hotel_period_key_matches_ledger_grouping_rule():
     assert hotel_period_key(Row()) == "period"
 
 
+def _approved_contract(db):
+    contract = Contract(
+        contract_no="HOTEL-001",
+        title="HOTEL-001",
+        scenic_id="s",
+        business_scopes=[InvoiceSourceKind.HOTEL.value],
+        status=ContractStatus.APPROVED,
+        created_by=1,
+    )
+    db.add(contract)
+    db.flush()
+    return contract
+
+
 def _confirmed_period():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = Session(engine)
+    contract = _approved_contract(db)
     rows = [
         HotelLedger(scenic_id="s", row_no=1, platform="A", source_file="p", hexiao_amount=1, jinying_amount=2, confirm_stored="c.pdf"),
         HotelLedger(scenic_id="s", row_no=2, platform="B", source_file="p", hexiao_amount=3, jinying_amount=4, confirm_stored="c.pdf"),
     ]
     db.add_all(rows)
     db.commit()
-    approve_confirm("s", rows[0].id, db=db, _=None)
+    approve_confirm(
+        "s",
+        rows[0].id,
+        LedgerConfirmApproveIn(contract_id=contract.id),
+        db=db,
+        _=SimpleNamespace(id=1),
+    )
     return db, rows
 
 
@@ -77,3 +103,13 @@ def test_invalidation_failure_removes_new_hotel_file_and_rolls_back(tmp_path, mo
     assert all(row.confirmed and row.confirm_stored == "c.pdf" for row in period)
     assert [path.name for path in tmp_path.iterdir()] == ["c.pdf"]
     assert db.scalar(select(func.count()).select_from(Invoice)) == 2
+
+
+def test_hotel_approve_links_hotel_preference_independently():
+    db, rows = _confirmed_period()
+
+    link = db.scalar(select(LedgerContractLink))
+    preference = db.scalar(select(ScenicContractPreference))
+    assert link.source_kind == InvoiceSourceKind.HOTEL
+    assert preference.source_kind == InvoiceSourceKind.HOTEL
+    assert link.contract_id == preference.last_contract_id

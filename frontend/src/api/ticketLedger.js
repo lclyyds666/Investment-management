@@ -76,8 +76,11 @@ export function uploadTicketConfirm(scenicId, rowId, file) {
 }
 
 /** 确认本期确认函（业务复核/信息维护）→ 已确认 */
-export function approveTicketConfirm(scenicId, rowId) {
-  return request.post(`/scenic-spots/${encodeURIComponent(scenicId)}/ticket-ledger/${rowId}/confirm/approve`)
+export function approveTicketConfirm(scenicId, rowId, payload) {
+  return request.post(
+    `/scenic-spots/${encodeURIComponent(scenicId)}/ticket-ledger/${rowId}/confirm/approve`,
+    payload
+  )
 }
 
 /** 删除本期确认函（业务经办/信息维护） */

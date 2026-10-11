@@ -141,7 +141,19 @@
               <el-tag :type="row.confirmed ? 'success' : 'warning'" size="small" effect="plain">{{ row.confirmed ? '已确认' : '待确认' }}</el-tag>
               <el-button v-if="canExport" size="small" text type="primary" @click="onConfirmView(row)">查看</el-button>
               <el-button v-if="canExport" size="small" text @click="onConfirmDownload(row)">下载</el-button>
-              <el-button v-if="!row.confirmed && canApproveConfirm" size="small" text type="success" @click="onConfirmApprove(row)">确认</el-button>
+              <el-button
+                v-if="!row.confirmed && canApproveConfirm"
+                size="small"
+                text
+                type="success"
+                :disabled="contractsLoaded && !canConfirmWithContract"
+                @click="openConfirmContract(row)"
+              >确认</el-button>
+              <el-link
+                v-if="!row.confirmed && canApproveConfirm && contractsLoaded && !canConfirmWithContract"
+                type="warning"
+                href="#/investment/legal-risk/contracts"
+              >请先维护合资格合同</el-link>
               <el-upload
                 v-if="canUpdate" :auto-upload="false" :show-file-list="false"
                 accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
@@ -243,6 +255,25 @@
         <el-button type="primary" :loading="savingEdit" @click="onSaveEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="contractDialogVisible" title="选择酒店合同并确认本期" width="min(560px, 92vw)" append-to-body>
+      <el-form label-width="90px">
+        <el-form-item label="关联合同" required>
+          <el-select v-model="confirmForm.contract_id" placeholder="请选择合资格合同" style="width: 100%">
+            <el-option
+              v-for="contract in eligibleContracts"
+              :key="contract.id"
+              :label="`${contract.contract_no} · ${contract.title}`"
+              :value="contract.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="contractDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="confirming" :disabled="!confirmForm.contract_id" @click="confirmPeriod">确认本期</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -255,6 +286,7 @@ import {
   previewHotelRow, updateHotelRow, deleteHotelRow, fetchHotelLedgerExportBlob,
   uploadHotelConfirm, approveHotelConfirm, deleteHotelConfirm, fetchHotelConfirmBlob
 } from '@/api/hotelLedger'
+import { listEligibleContracts } from '@/api/contract'
 import { downloadBlob } from '@/utils/file'
 import {
   compareHotelLedgerRows,
@@ -284,6 +316,13 @@ const parsing = ref(false)
 const saving = ref(false)
 const savedRows = ref([])
 const draftRows = ref([])
+const eligibleContracts = ref([])
+const contractsLoaded = ref(false)
+const contractDialogVisible = ref(false)
+const confirmPeriodRow = ref(null)
+const confirming = ref(false)
+const confirmForm = reactive({ contract_id: null })
+const canConfirmWithContract = computed(() => eligibleContracts.value.length > 0)
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 function numberOr(value, fallback = 0) {
@@ -721,13 +760,45 @@ async function onConfirmPick(row, file) {
     ElMessage.error('确认函上传失败')
   }
 }
-async function onConfirmApprove(row) {
+async function refreshEligibleContracts() {
   try {
-    await approveHotelConfirm(props.scenicId, row.period_row_id)
+    const result = await listEligibleContracts(props.scenicId, 'hotel')
+    eligibleContracts.value = Array.isArray(result) ? result : (result?.items || [])
+    return result
+  } catch {
+    eligibleContracts.value = []
+    return []
+  } finally {
+    contractsLoaded.value = true
+  }
+}
+async function openConfirmContract(row) {
+  const result = await refreshEligibleContracts()
+  if (!eligibleContracts.value.length) {
+    ElMessage.warning('当前景区没有合资格酒店合同，请先进入合同管理维护并完成审批')
+    return
+  }
+  const preferredContractId = Array.isArray(result)
+    ? result.find((contract) => contract.is_preferred)?.id
+    : result?.preferred_contract_id
+  confirmForm.contract_id = preferredContractId || eligibleContracts.value[0].id
+  confirmPeriodRow.value = row
+  contractDialogVisible.value = true
+}
+async function confirmPeriod() {
+  if (!confirmPeriodRow.value || !confirmForm.contract_id) return
+  confirming.value = true
+  try {
+    await approveHotelConfirm(props.scenicId, confirmPeriodRow.value.period_row_id, {
+      contract_id: confirmForm.contract_id
+    })
+    contractDialogVisible.value = false
     ElMessage.success('本期状态：已确认')
     await loadSaved()
   } catch {
     ElMessage.error('确认失败')
+  } finally {
+    confirming.value = false
   }
 }
 async function onConfirmView(row) {
@@ -763,7 +834,14 @@ async function onConfirmDelete(row) {
   }
 }
 
-watch(() => props.scenicId, loadSaved, { immediate: true })
+watch(
+  () => props.scenicId,
+  () => {
+    loadSaved()
+    refreshEligibleContracts()
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped lang="scss">

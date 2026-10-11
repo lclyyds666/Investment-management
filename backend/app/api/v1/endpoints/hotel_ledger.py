@@ -26,6 +26,7 @@ from app.db.session import get_db
 from app.models.hotel_ledger import HotelLedger
 from app.models.user import User
 from app.schemas.common import Response
+from app.schemas.ledger_contract import LedgerConfirmApproveIn
 from app.schemas.hotel_ledger import (
     HotelCalculationPreview,
     HotelLedgerOut,
@@ -38,6 +39,7 @@ from app.schemas.hotel_ledger import (
 )
 from app.services import hotel_ledger as hl_svc
 from app.services import invoice_generation as invoice_svc
+from app.services.contract_linkage import ContractLinkError, link_period_contract
 from app.services.scenic_config import get_effective_config
 from app.services.assignment_permissions import PermissionContext
 
@@ -278,9 +280,9 @@ def _calculation_preview(
     )
 
 
-def _load_rows(db: Session, sid: str) -> list[HotelLedger]:
+def _load_rows(db: Session, sid: str, *, for_update: bool = False) -> list[HotelLedger]:
     """按核对日期(period_start)升序，再平台名、row_no 稳定排序。"""
-    return db.scalars(
+    statement = (
         select(HotelLedger)
         .where(HotelLedger.scenic_id == sid)
         .order_by(
@@ -290,7 +292,10 @@ def _load_rows(db: Session, sid: str) -> list[HotelLedger]:
             HotelLedger.row_no.asc(),
             HotelLedger.id.asc(),
         )
-    ).all()
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    return db.scalars(statement).all()
 
 
 def _period_key(r: HotelLedger) -> str:
@@ -907,24 +912,46 @@ async def upload_confirm(
     summary="确认本期确认函(仅业务复核/信息维护)→已确认",
 )
 def approve_confirm(
-    scenic_id: str, row_id: int,
-    db: Session = Depends(get_db), _: User = Depends(_confirm_guard),
+    scenic_id: str,
+    row_id: int,
+    payload: LedgerConfirmApproveIn,
+    db: Session = Depends(get_db),
+    _: User = Depends(_confirm_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    row = db.scalar(select(HotelLedger).where(HotelLedger.id == row_id, HotelLedger.scenic_id == sid))
+    row = db.scalar(
+        select(HotelLedger)
+        .where(HotelLedger.id == row_id, HotelLedger.scenic_id == sid)
+        .with_for_update()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     if not row.confirm_stored:
         raise HTTPException(status_code=400, detail="本期尚未上传确认函，无法确认")
     key = _period_key(row)
-    for sib in _load_rows(db, sid):
-        if _period_key(sib) == key:
-            sib.confirmed = True
-    invoice_svc.sync_confirmed_period_invoices(
-        db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
-    )
     try:
+        link_period_contract(
+            db,
+            sid,
+            invoice_svc.InvoiceSourceKind.HOTEL,
+            key,
+            payload.contract_id,
+            _.id,
+        )
+        for sib in _load_rows(db, sid, for_update=True):
+            if _period_key(sib) == key:
+                sib.confirmed = True
+        invoice_svc.sync_confirmed_period_invoices(
+            db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.HOTEL, period_key=key
+        )
         db.commit()
+    except ContractLinkError as exc:
+        db.rollback()
+        status_code = 409 if exc.code == "confirmed_period_contract_locked" else 400
+        raise HTTPException(status_code=status_code, detail=exc.code) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
         db.rollback()
         raise
