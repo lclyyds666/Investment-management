@@ -31,6 +31,7 @@ from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
 from app.schemas.ledger_contract import LedgerEligibleContractOut
 from app.schemas.workflow import WorkflowStartRequest
 from app.services.contract_evidence import deterministic_findings, retrieve_evidence
+from app.services.contract_eligibility import eligible_contracts_for_user
 from app.services.contract_review import render_review_markdown
 from app.services.contract_review_llm import review_with_evidence
 from app.services import customer_research as research_svc
@@ -344,11 +345,11 @@ def list_eligible_contracts(
     db: Session = Depends(get_db),
     current_user: User = Depends(_eligible_contract_guard),
 ):
-    rows = eligible_contracts(
+    rows = eligible_contracts_for_user(
         db,
-        scenic_id,
-        source_kind,
-        contract_access_predicate(legal_record_scope(db, current_user)),
+        current_user,
+        scenic_id=scenic_id,
+        source_kind=source_kind,
     )
     names = _names_map(db, {contract.created_by for contract in rows})
     preference = db.scalar(

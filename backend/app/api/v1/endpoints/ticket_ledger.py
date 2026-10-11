@@ -45,6 +45,11 @@ from app.schemas.ticket_ledger import (
 from app.services import ticket_ledger as tl_svc
 from app.services import invoice_generation as invoice_svc
 from app.services.contract_linkage import ContractLinkError, link_period_contract
+from app.services.ledger_period_lock import (
+    lock_period_rows,
+    lock_period_rows_for_row,
+    lock_scenic_rows,
+)
 from app.services.scenic_config import get_effective_config
 from app.services.assignment_permissions import PermissionContext
 
@@ -88,7 +93,13 @@ def _invalidate_source_period(db: Session, sid: str, key: str) -> None:
 
 
 def _invalidate_confirmed_period(db: Session, sid: str, key: str) -> None:
-    if any(r.confirmed and _period_key(r) == key for r in _load_rows(db, sid)):
+    rows = lock_period_rows(
+        db,
+        scenic_id=sid,
+        source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+        period_key=key,
+    )
+    if any(r.confirmed for r in rows):
         _invalidate_source_period(db, sid, key)
 
 
@@ -493,6 +504,9 @@ def save_ledger(
 ):
     sid = _valid_scenic_id(scenic_id)
     config = get_effective_config(db, sid)
+    lock_scenic_rows(
+        db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET
+    )
 
     if payload.mode == "replace":
         for key in {_period_key(row) for row in _load_rows(db, sid) if row.confirmed}:
@@ -624,14 +638,18 @@ def update_row(
     _: User = Depends(_update_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    row = db.scalar(
-        select(TicketLedger).where(
-            TicketLedger.id == row_id, TicketLedger.scenic_id == sid
-        )
-    )
+    row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
 
+    row, _period_rows, _period = lock_period_rows_for_row(
+        db,
+        scenic_id=sid,
+        source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+        row_id=row_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     _invalidate_confirmed_period(db, sid, _period_key(row))
     fields_set = payload.model_fields_set
     if "pay_date" in fields_set:
@@ -740,12 +758,16 @@ def delete_row(
     _: User = Depends(_delete_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    row = db.scalar(
-        select(TicketLedger).where(
-            TicketLedger.id == row_id, TicketLedger.scenic_id == sid
-        )
-    )
+    row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
     if not row:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
+    row, _period_rows, _period = lock_period_rows_for_row(
+        db,
+        scenic_id=sid,
+        source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+        row_id=row_id,
+    )
+    if row is None:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     # 顺带清理明细源文件
     if row.detail_stored:
@@ -775,7 +797,10 @@ def clear_ledger(
     _: User = Depends(_delete_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    for key in {_period_key(row) for row in _load_rows(db, sid) if row.confirmed}:
+    locked_rows = lock_scenic_rows(
+        db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET
+    )
+    for key in {_period_key(row) for row in locked_rows if row.confirmed}:
         _invalidate_source_period(db, sid, key)
     result = db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))
     db.commit()
@@ -870,6 +895,14 @@ async def upload_confirm(
     row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
+    row, _period_rows, _period = lock_period_rows_for_row(
+        db,
+        scenic_id=sid,
+        source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+        row_id=row_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     fname = file.filename or "确认函"
     ext = Path(fname).suffix.lower()
     if ext not in _CONFIRM_EXT:
@@ -890,11 +923,10 @@ async def upload_confirm(
         key = _period_key(row)
         old_stored = row.confirm_stored
         _invalidate_confirmed_period(db, sid, key)
-        for sib in _load_rows(db, sid):
-            if _period_key(sib) == key:
-                sib.confirm_stored = stored
-                sib.confirm_name = fname
-                sib.confirmed = False   # 新上传/重传 → 待确认，需业务复核重新确认
+        for sibling in _period_rows:
+            sibling.confirm_stored = stored
+            sibling.confirm_name = fname
+            sibling.confirmed = False   # 新上传/重传 → 待确认，需业务复核重新确认
         db.commit()
     except Exception:
         db.rollback()
@@ -927,28 +959,33 @@ def approve_confirm(
     _: User = Depends(_confirm_guard),
 ):
     sid = _valid_scenic_id(scenic_id)
-    row = db.scalar(
-        select(TicketLedger)
-        .where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid)
-        .with_for_update()
+    row, period_rows, key = lock_period_rows_for_row(
+        db,
+        scenic_id=sid,
+        source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+        row_id=row_id,
     )
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     if not row.confirm_stored:
         raise HTTPException(status_code=400, detail="本期尚未上传确认函，无法确认")
-    key = _period_key(row)
     try:
+        invoice_svc.lock_period_invoices(
+            db,
+            scenic_id=sid,
+            source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+            period_key=key,
+        )
         link_period_contract(
             db,
             sid,
             invoice_svc.InvoiceSourceKind.TICKET,
             key,
             payload.contract_id,
-            _.id,
+            _,
         )
-        for sib in _load_rows(db, sid, for_update=True):
-            if _period_key(sib) == key:
-                sib.confirmed = True
+        for sibling in period_rows:
+            sibling.confirmed = True
         invoice_svc.sync_confirmed_period_invoices(
             db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET, period_key=key
         )
@@ -999,14 +1036,20 @@ def delete_confirm(
     row = db.scalar(select(TicketLedger).where(TicketLedger.id == row_id, TicketLedger.scenic_id == sid))
     if not row:
         raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
-    key = _period_key(row)
+    row, period_rows, key = lock_period_rows_for_row(
+        db,
+        scenic_id=sid,
+        source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+        row_id=row_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="台账行不存在或不属于该景区")
     _invalidate_confirmed_period(db, sid, key)
     stored = row.confirm_stored
-    for sib in _load_rows(db, sid):
-        if _period_key(sib) == key:
-            sib.confirm_stored = ""
-            sib.confirm_name = ""
-            sib.confirmed = False
+    for sibling in period_rows:
+        sibling.confirm_stored = ""
+        sibling.confirm_name = ""
+        sibling.confirmed = False
     try:
         db.commit()
     except Exception:

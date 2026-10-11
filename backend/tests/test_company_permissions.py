@@ -496,6 +496,8 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             json={
                 "contract_no": "ADMIN-DISPOSABLE",
                 "title": "Admin Draft",
+                "scenic_id": "guanquelou",
+                "business_scopes": ["ticket"],
                 "organization_code": "supplymanagement",
             },
         )
@@ -506,14 +508,16 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
             json={"title": "Updated Admin Draft"},
         )
         self.assertEqual(updated_contract.status_code, 200, updated_contract.text)
-        self.assertEqual(
-            self.client.delete(f"/api/v1/contracts/{contract_id}").status_code,
-            200,
-        )
+        self.db.get(Contract, contract_id).status = ContractStatus.APPROVED
+        self.db.commit()
 
         created_form = self.client.post(
             "/api/v1/approval-forms",
-            json={"form_type": "business", "business_desc": "Admin Draft"},
+            json={
+                "form_type": "business",
+                "contract_id": contract_id,
+                "business_desc": "Admin Draft",
+            },
         )
         self.assertEqual(created_form.status_code, 200, created_form.text)
         form_id = created_form.json()["data"]["id"]
@@ -524,6 +528,12 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         self.assertEqual(updated_form.status_code, 200, updated_form.text)
         self.assertEqual(
             self.client.delete(f"/api/v1/approval-forms/{form_id}").status_code,
+            200,
+        )
+        self.db.get(Contract, contract_id).status = ContractStatus.DRAFT
+        self.db.commit()
+        self.assertEqual(
+            self.client.delete(f"/api/v1/contracts/{contract_id}").status_code,
             200,
         )
 
@@ -850,13 +860,14 @@ class ResourceSpecificEndpointTest(unittest.TestCase):
         rows = list(csv.reader(StringIO(response.content.decode("utf-8-sig"))))
         self.assertEqual(rows[0], [
             "合同编号", "合同名称", "合同类型", "是否内部合同", "合同标的", "签订日期",
+            "合同期限", "景区", "业务范围",
             "客户社会信用代码", "客户名称", "合同金额", "币种", "付款条件",
         ])
         self.assertEqual(rows[1][0:5], [
             "'=EXPORT-SUPPLY", "'+Supply", "'-Type", "是", "'@Subject",
         ])
-        self.assertEqual(rows[1][6:8], ["'\tCredit", "'\rCustomer"])
-        self.assertEqual(rows[1][9:11], ["'@Currency", "'=Terms"])
+        self.assertEqual(rows[1][9:11], ["'\tCredit", "'\rCustomer"])
+        self.assertEqual(rows[1][12:14], ["'@Currency", "'=Terms"])
         self.assertNotIn("EXPORT-FUND", response.text)
 
     def test_superuser_without_business_assignment_has_zero_pending_tasks(self):

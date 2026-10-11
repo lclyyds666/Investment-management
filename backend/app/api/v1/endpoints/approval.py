@@ -47,6 +47,10 @@ from app.services import approval_print as print_svc
 from app.services import approval_proofread as proof_svc
 from app.services import customer_research as research_svc
 from app.services.num_cn import amount_to_cn
+from app.services.contract_eligibility import (
+    ContractEligibilityError,
+    eligible_contract_for_user,
+)
 from app.services.assignment_permissions import (
     PermissionContext,
     has_permission,
@@ -189,11 +193,13 @@ def _complete_current_task(
     return _to_out(db, form, current_user, current_user.full_name)
 
 
-def _approved_contract(db: Session, contract_id: int) -> Contract:
-    contract = db.get(Contract, contract_id)
-    if not contract or contract.status != ContractStatus.APPROVED:
+def _approved_contract(db: Session, contract_id: int, current_user: User) -> Contract:
+    try:
+        return eligible_contract_for_user(
+            db, current_user, contract_id, for_update=True
+        )
+    except ContractEligibilityError:
         raise HTTPException(status_code=422, detail="请选择已审批合同")
-    return contract
 
 
 def _apply_contract_snapshot(form: ApprovalForm, contract: Contract) -> None:
@@ -203,7 +209,12 @@ def _apply_contract_snapshot(form: ApprovalForm, contract: Contract) -> None:
     form.customer_name = contract.party_b or contract.party_a or ""
 
 
-def _apply_payload(form: ApprovalForm, data: dict, db: Session) -> None:
+def _apply_payload(
+    form: ApprovalForm,
+    data: dict,
+    db: Session,
+    current_user: User,
+) -> None:
     """写入字段：合同快照由已审批合同生成，付款单自动生成大写金额。"""
     data = data.copy()
     contract_id = data.pop("contract_id", None)
@@ -213,7 +224,7 @@ def _apply_payload(form: ApprovalForm, data: dict, db: Session) -> None:
     for field, value in data.items():
         setattr(form, field, value)
     if contract_id is not None and (form.id is None or contract_id != form.contract_id):
-        _apply_contract_snapshot(form, _approved_contract(db, contract_id))
+        _apply_contract_snapshot(form, _approved_contract(db, contract_id, current_user))
     elif form.contract_id is None:
         raise HTTPException(status_code=422, detail="请选择已审批合同")
     # 付款/销项发票审批单保留金额；普通业务审批单金额归零
@@ -364,7 +375,7 @@ def create_form(
         current_step=0,
         created_by=current_user.id,
     )
-    _apply_payload(form, payload.model_dump(exclude={"form_type"}), db)
+    _apply_payload(form, payload.model_dump(exclude={"form_type"}), db, current_user)
     db.add(form)
     db.commit()
     db.refresh(form)
@@ -391,7 +402,7 @@ def update_form(
         raise HTTPException(status_code=403, detail="只能修改本人创建的审批单")
     if form.status not in (ContractStatus.DRAFT, ContractStatus.REJECTED):
         raise HTTPException(status_code=400, detail="当前状态不可修改")
-    _apply_payload(form, payload.model_dump(exclude_unset=True), db)
+    _apply_payload(form, payload.model_dump(exclude_unset=True), db, current_user)
     db.commit()
     db.refresh(form)
     return Response.ok(

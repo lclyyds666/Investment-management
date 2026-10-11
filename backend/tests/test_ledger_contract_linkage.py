@@ -92,6 +92,29 @@ class LedgerContractLinkageTest(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, "contract_scope_mismatch")
 
+    def test_confirm_rejects_approved_contract_outside_current_user_scope(self):
+        user = User(
+            id=99,
+            username="ledger-scope-user",
+            full_name="台账用户",
+            hashed_password="test",
+            is_active=True,
+        )
+        self.db.add(user)
+        self.db.flush()
+
+        with self.assertRaises(ContractLinkError) as caught:
+            link_period_contract(
+                self.db,
+                "scenic-a",
+                InvoiceSourceKind.TICKET,
+                "P-hidden",
+                self.ticket_contract.id,
+                user,
+            )
+
+        self.assertEqual(caught.exception.code, "contract_not_approved")
+
     def test_confirmed_period_keeps_original_contract(self):
         link = link_period_contract(
             self.db,

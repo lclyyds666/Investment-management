@@ -4,6 +4,11 @@ from sqlalchemy.orm import Session
 from app.core.enums import ContractStatus, InvoiceSourceKind
 from app.models.contract import Contract
 from app.models.ledger_contract import LedgerContractLink, ScenicContractPreference
+from app.models.user import User
+from app.services.contract_eligibility import (
+    ContractEligibilityError,
+    eligible_contract_for_user,
+)
 
 
 class ContractLinkError(ValueError):
@@ -44,7 +49,7 @@ def link_period_contract(
     source_kind: InvoiceSourceKind,
     period_key: str,
     contract_id: int,
-    user_id: int,
+    current_user: User | int,
 ) -> LedgerContractLink:
     existing = db.scalar(
         select(LedgerContractLink)
@@ -58,15 +63,32 @@ def link_period_contract(
     if existing is not None:
         if existing.contract_id != contract_id:
             raise ContractLinkError("confirmed_period_contract_locked")
+    try:
+        if not isinstance(current_user, User):
+            contract = db.scalar(
+                select(Contract)
+                .where(Contract.id == contract_id)
+                .with_for_update()
+            )
+            if contract is None or contract.status != ContractStatus.APPROVED:
+                raise ContractEligibilityError("contract_not_approved")
+            if contract.scenic_id != scenic_id:
+                raise ContractEligibilityError("contract_scenic_mismatch")
+            if source_kind.value not in (contract.business_scopes or []):
+                raise ContractEligibilityError("contract_scope_mismatch")
+        else:
+            contract = eligible_contract_for_user(
+                db,
+                current_user,
+                contract_id,
+                scenic_id=scenic_id,
+                source_kind=source_kind,
+                for_update=True,
+            )
+    except ContractEligibilityError as exc:
+        raise ContractLinkError(exc.code) from exc
+    if existing is not None:
         return existing
-
-    contract = db.get(Contract, contract_id)
-    if contract is None or contract.status != ContractStatus.APPROVED:
-        raise ContractLinkError("contract_not_approved")
-    if contract.scenic_id != scenic_id:
-        raise ContractLinkError("contract_scenic_mismatch")
-    if source_kind.value not in (contract.business_scopes or []):
-        raise ContractLinkError("contract_scope_mismatch")
 
     link = LedgerContractLink(
         scenic_id=scenic_id,
@@ -74,7 +96,7 @@ def link_period_contract(
         period_key=period_key,
         contract_id=contract.id,
         contract_no_snapshot=contract.contract_no,
-        selected_by=user_id,
+        selected_by=current_user if isinstance(current_user, int) else current_user.id,
     )
     db.add(link)
     remember_contract_preference(db, scenic_id, source_kind, contract.id)

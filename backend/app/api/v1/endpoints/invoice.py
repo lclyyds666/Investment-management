@@ -24,7 +24,6 @@ from app.core.enums import (
 )
 from app.db.session import get_db
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
-from app.models.contract import Contract
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask
@@ -41,6 +40,10 @@ from app.schemas.invoice import (
     InvoiceUpdate,
 )
 from app.services.assignment_permissions import PermissionContext
+from app.services.contract_eligibility import (
+    ContractEligibilityError,
+    eligible_contract_for_user,
+)
 from app.services.invoice_documents import (
     assert_invoice_details_balanced,
     invoice_attachment_path,
@@ -306,13 +309,16 @@ def update_invoice(
             raise HTTPException(status_code=422, detail="仅历史来源发票支持补选合同")
         if invoice.contract_id is not None:
             raise HTTPException(status_code=409, detail="来源发票合同已形成快照，不能更换")
-        contract = db.get(Contract, contract_id)
-        if (
-            contract is None
-            or contract.status != ContractStatus.APPROVED
-            or contract.scenic_id != invoice.scenic_id
-            or invoice.source_kind.value not in (contract.business_scopes or [])
-        ):
+        try:
+            contract = eligible_contract_for_user(
+                db,
+                _,
+                contract_id,
+                scenic_id=invoice.scenic_id,
+                source_kind=invoice.source_kind,
+                for_update=True,
+            )
+        except ContractEligibilityError:
             raise HTTPException(status_code=422, detail="只能选择同景区、同业务范围的已审批合同")
         invoice.contract_id = contract.id
         invoice.contract_no = contract.contract_no

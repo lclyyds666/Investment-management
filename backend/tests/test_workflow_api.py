@@ -1697,6 +1697,31 @@ class ApprovalFormApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(response.json()["detail"], "请选择已审批合同")
 
+    def test_payment_form_rejects_approved_contract_outside_user_scope(self):
+        hidden = Contract(
+            contract_no="HT-HIDDEN-SCOPE",
+            title="不可见合同",
+            scenic_id="scenic-hidden",
+            business_scopes=["ticket"],
+            status=ContractStatus.APPROVED,
+            created_by=self.other_handler.id,
+            company_code="fundmanagement",
+            organization_code="fundmanagement",
+        )
+        self.db.add(hidden)
+        self.db.commit()
+
+        response = self.client.post(
+            "/api/v1/approval-forms",
+            json={
+                "form_type": "payment",
+                "contract_id": hidden.id,
+                "amount": "100.00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+
     def test_contract_snapshot_is_not_changed_after_contract_edit(self):
         response = self.client.post(
             "/api/v1/approval-forms",

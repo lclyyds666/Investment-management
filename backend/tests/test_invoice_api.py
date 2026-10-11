@@ -259,6 +259,39 @@ def test_historical_source_invoice_rejects_ineligible_contract(invoice_api):
     assert invoice.contract_no == ""
 
 
+def test_historical_source_invoice_rejects_invisible_eligible_contract(invoice_api):
+    db, client, _, users, invoice, _, _, _ = invoice_api
+    hidden_owner = User(
+        username="hidden-invoice-contract-owner",
+        full_name="不可见合同创建人",
+        hashed_password="test",
+        is_active=True,
+    )
+    hidden = Contract(
+        contract_no="HT-HIDDEN-ELIGIBLE",
+        title="不可见但条件匹配",
+        scenic_id=invoice.scenic_id,
+        business_scopes=[invoice.source_kind.value],
+        status=ContractStatus.APPROVED,
+        created_by=hidden_owner.id,
+        company_code="fundmanagement",
+        organization_code="fundmanagement",
+    )
+    db.add(hidden_owner)
+    db.flush()
+    hidden.created_by = hidden_owner.id
+    db.add(hidden)
+    db.commit()
+
+    response = client.put(
+        f"/api/v1/invoices/{invoice.id}", json={"contract_id": hidden.id}
+    )
+
+    assert response.status_code == 422
+    db.refresh(invoice)
+    assert invoice.contract_id is None
+
+
 def test_stale_session_cannot_overwrite_first_contract_backfill(tmp_path):
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'invoice-race.db'}")
     Base.metadata.create_all(engine)

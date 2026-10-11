@@ -19,6 +19,7 @@ from app.models.contract import Contract
 from app.models.invoice import Invoice, InvoiceAttachment
 from app.models.ledger_contract import LedgerContractLink, ScenicContractPreference
 from app.models.ticket_ledger import TicketLedger
+from app.models.user import User
 from app.schemas.ledger_contract import LedgerConfirmApproveIn
 from app.schemas.ticket_ledger import TicketLedgerUpdateIn
 from app.services.invoice_generation import ticket_period_key
@@ -34,14 +35,14 @@ def test_ticket_period_key_matches_ledger_grouping_rule():
     assert ticket_period_key(Row()) == "source.xlsx"
 
 
-def _approved_contract(db, contract_no="TICKET-001"):
+def _approved_contract(db, contract_no="TICKET-001", created_by=1):
     contract = Contract(
         contract_no=contract_no,
         title=contract_no,
         scenic_id="s",
         business_scopes=[InvoiceSourceKind.TICKET.value],
         status=ContractStatus.APPROVED,
-        created_by=1,
+        created_by=created_by,
     )
     db.add(contract)
     db.flush()
@@ -255,6 +256,43 @@ def test_reconfirm_with_different_contract_returns_conflict():
     db.expire_all()
     assert db.scalar(select(LedgerContractLink)).contract_id != other_contract.id
     assert db.scalar(select(func.count()).select_from(Invoice)) == 2
+
+
+def test_confirm_rejects_invisible_matching_contract():
+    db, rows = _confirmed_period()
+    user = User(
+        id=99,
+        username="ticket-scope-user",
+        full_name="台账用户",
+        hashed_password="test",
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    other = _approved_contract(db, "TICKET-HIDDEN", created_by=999)
+    hidden_period = TicketLedger(
+        scenic_id="s",
+        row_no=3,
+        platform="C",
+        source_file="hidden-period",
+        hexiao_amount=1,
+        jinying_amount=2,
+        confirm_stored="c.pdf",
+    )
+    db.add(hidden_period)
+    db.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        approve_confirm(
+            "s",
+            hidden_period.id,
+            LedgerConfirmApproveIn(contract_id=other.id),
+            db=db,
+            _=user,
+        )
+
+    assert raised.value.status_code == 400
+    assert raised.value.detail == "contract_not_approved"
 
 
 def test_invoice_sync_failure_rolls_back_contract_link_and_confirmation(monkeypatch):

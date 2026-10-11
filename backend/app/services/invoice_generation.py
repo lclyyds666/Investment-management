@@ -23,6 +23,7 @@ from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.ledger_contract import LedgerContractLink
 from app.models.ticket_ledger import TicketLedger
 from app.models.approval_form import ApprovalForm
+from app.services.ledger_period_lock import lock_period_rows
 
 
 class InvoiceGenerationError(ValueError):
@@ -164,6 +165,21 @@ def _period_invoices_for_update(
     ).all()
 
 
+def lock_period_invoices(
+    db: Session,
+    *,
+    scenic_id: str,
+    source_kind: InvoiceSourceKind,
+    period_key: str,
+) -> list[Invoice]:
+    return _period_invoices_for_update(
+        db,
+        scenic_id=scenic_id,
+        source_kind=source_kind,
+        period_key=period_key,
+    )
+
+
 def _invoice_snapshot(
     *,
     direction: InvoiceDirection,
@@ -233,18 +249,36 @@ def sync_confirmed_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> tuple[Invoice, Invoice]:
+    period_rows = lock_period_rows(
+        db,
+        scenic_id=scenic_id,
+        source_kind=source_kind,
+        period_key=period_key,
+    )
+    rows = sorted(
+        [row for row in period_rows if _is_platform_row(row)],
+        key=lambda row: (getattr(row, "row_no", 0) or 0, row.id),
+    )
+    if not rows:
+        raise ValueError("cannot generate invoices for an empty source period")
+    lock_period_invoices(
+        db,
+        scenic_id=scenic_id,
+        source_kind=source_kind,
+        period_key=period_key,
+    )
     link = db.scalar(
-        select(LedgerContractLink).where(
+        select(LedgerContractLink)
+        .where(
             LedgerContractLink.scenic_id == scenic_id,
             LedgerContractLink.source_kind == source_kind,
             LedgerContractLink.period_key == period_key,
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if link is None:
         raise InvoiceGenerationError("period_contract_missing")
-    rows = _source_rows(db, source_kind, scenic_id, period_key)
-    if not rows:
-        raise ValueError("cannot generate invoices for an empty source period")
     remove_period_invoices(
         db, scenic_id=scenic_id, source_kind=source_kind, period_key=period_key
     )
@@ -301,14 +335,22 @@ def invalidate_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> None:
-    invoices = _period_invoices_for_update(
-        db, scenic_id=scenic_id, source_kind=source_kind, period_key=period_key
-    )
-    if any(source_invoice_is_locked(db, invoice) for invoice in invoices):
-        raise InvoiceSourceLocked()
-    rows = _period_rows(db, source_kind, scenic_id, period_key)
-    for row in rows:
-        row.confirmed = False
     remove_period_invoices(
         db, scenic_id=scenic_id, source_kind=source_kind, period_key=period_key
     )
+    rows = lock_period_rows(
+        db,
+        scenic_id=scenic_id,
+        source_kind=source_kind,
+        period_key=period_key,
+    )
+    for row in rows:
+        row.confirmed = False
+    db.execute(
+        delete(LedgerContractLink).where(
+            LedgerContractLink.scenic_id == scenic_id,
+            LedgerContractLink.source_kind == source_kind,
+            LedgerContractLink.period_key == period_key,
+        )
+    )
+    db.flush()
