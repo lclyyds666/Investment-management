@@ -17,6 +17,7 @@ from app.core.enums import (
 
 class ApprovalFormBase(BaseModel):
     form_type: ContractType
+    contract_id: Optional[int] = None
     department: str = ""
     apply_date: Optional[date] = None
     customer_id: Optional[int] = None
@@ -41,10 +42,11 @@ class ApprovalFormBase(BaseModel):
 
 
 class ApprovalFormCreate(ApprovalFormBase):
-    pass
+    contract_id: int
 
 
 class ApprovalFormUpdate(BaseModel):
+    contract_id: Optional[int] = None
     department: Optional[str] = None
     apply_date: Optional[date] = None
     customer_id: Optional[int] = None
@@ -75,9 +77,15 @@ class ApprovalFormOut(ApprovalFormBase):
     invoice_customer_address: str = ""
     invoice_customer_phone: str = ""
     invoice_type_snapshot: str = ""
+    scenic_id: str = ""
     workflow_version: Optional[int] = None
     active_task: Optional[dict] = None
     can_act: bool = False
+
+    @field_validator("scenic_id", mode="before")
+    @classmethod
+    def _scenic_none_to_empty(cls, value):
+        return "" if value is None else value
 
     @computed_field
     @property

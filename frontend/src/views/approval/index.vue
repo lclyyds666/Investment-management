@@ -100,28 +100,32 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="客户名称" prop="customer_id">
-              <el-select
-                v-model="form.customer_id" filterable clearable placeholder="选择客户"
-                style="width: 100%" @change="onCustomerChange"
-              >
-                <el-option v-for="c in customers" :key="c.id" :label="c.name" :value="c.id" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="业务类型"><el-input v-model="form.business_type" placeholder="如 门票代理" /></el-form-item>
-          </el-col>
-        </el-row>
+        <el-form-item label="关联合同" prop="contract_id">
+          <el-select v-model="form.contract_id" filterable placeholder="选择已审批合同" style="width: 100%">
+            <el-option
+              v-for="item in approvedContracts"
+              :key="item.id"
+              :value="item.id"
+              :label="`${item.contract_no} · ${item.title}`"
+            />
+          </el-select>
+        </el-form-item>
+        <el-alert
+          v-if="editingRow && !editingRow.contract_id"
+          title="历史未关联，请补选合同后再提交"
+          type="warning"
+          :closable="false"
+          class="mb"
+        />
+        <el-descriptions v-if="selectedContract" :column="3" border class="mb">
+          <el-descriptions-item label="合同编号">{{ selectedContract.contract_no || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="景区">{{ selectedContract.scenic_id || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="客户">{{ selectedContract.party_b || selectedContract.party_a || selectedContract.customer_name || '—' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-form-item label="业务类型"><el-input v-model="form.business_type" placeholder="如 门票代理" /></el-form-item>
         <el-form-item label="业务情况">
           <el-input v-model="form.business_desc" placeholder="默认：详见合同" />
         </el-form-item>
-        <el-form-item label="合同编号" prop="contract_no">
-          <el-input v-model="form.contract_no" placeholder="如 HT-2026-010（AI 校对将据此匹配合同管理记录）" />
-        </el-form-item>
-
         <!-- 付款审批单专有字段 -->
         <template v-if="form.form_type === 'payment'">
           <el-form-item label="付款金额" prop="amount">
@@ -338,7 +342,7 @@ import {
   uploadFormAttachment, approveForm, rejectForm, listActions,
   proofreadForm, downloadFormPrint, getForm, fetchFormAttachmentBlob
 } from '@/api/approval'
-import { listCustomers } from '@/api/customer'
+import { listContracts } from '@/api/contract'
 import { getWorkflowTimeline } from '@/api/workflow'
 
 const portalStore = usePortalStore()
@@ -380,14 +384,14 @@ async function load() {
   }
 }
 
-// 客户库（客户名称外键联动）
-const customers = ref([])
-async function loadCustomers() {
-  try { customers.value = await listCustomers() } catch { /* 不阻断 */ }
-}
-function onCustomerChange(id) {
-  const c = customers.value.find((x) => x.id === id)
-  form.customer_name = c ? c.name : ''
+const approvedContracts = ref([])
+async function loadApprovedContracts() {
+  try {
+    const contracts = await listContracts({ status: 'approved', page_size: 200 })
+    approvedContracts.value = contracts.filter((item) => item.status === 'approved')
+  } catch {
+    approvedContracts.value = []
+  }
 }
 
 // 新建 / 编辑
@@ -395,10 +399,12 @@ const dialogVisible = ref(false)
 const saving = ref(false)
 const isEdit = ref(false)
 const editingId = ref(null)
+const editingRow = ref(null)
 const formRef = ref()
 const pickedFile = ref(null)
 const emptyForm = () => ({
   form_type: 'payment',
+  contract_id: null,
   department: '',
   apply_date: null,
   customer_id: null,
@@ -413,9 +419,11 @@ const emptyForm = () => ({
   attachment_name: ''
 })
 const form = reactive(emptyForm())
+const selectedContract = computed(() =>
+  approvedContracts.value.find((item) => item.id === form.contract_id)
+)
 const rules = {
-  customer_id: [{ required: true, message: '请选择客户', trigger: 'change' }],
-  contract_no: [{ required: true, message: '请输入合同编号', trigger: 'blur' }],
+  contract_id: [{ required: true, message: '请选择已审批合同', trigger: 'change' }],
   amount: [{ required: true, message: '请输入付款金额', trigger: 'blur' }]
 }
 const dialogTitle = computed(() => {
@@ -429,6 +437,7 @@ const amountWordsPreview = computed(() =>
 function openCreate(type) {
   isEdit.value = false
   editingId.value = null
+  editingRow.value = null
   pickedFile.value = null
   Object.assign(form, emptyForm(), { form_type: type })
   formRef.value?.clearValidate?.()
@@ -437,9 +446,11 @@ function openCreate(type) {
 function openEdit(row) {
   isEdit.value = true
   editingId.value = row.id
+  editingRow.value = row
   pickedFile.value = null
   Object.assign(form, {
     form_type: row.form_type,
+    contract_id: row.contract_id ?? null,
     department: row.department,
     apply_date: row.apply_date || null,
     customer_id: row.customer_id || null,
@@ -460,7 +471,7 @@ async function onSave() {
   await formRef.value?.validate()
   saving.value = true
   try {
-    const { attachment_name, ...payload } = form
+    const { attachment_name, contract_no, customer_name, ...payload } = form
     let formId = editingId.value
     if (isEdit.value) {
       await updateForm(editingId.value, payload)
@@ -753,7 +764,7 @@ function copyAi() {
 }
 
 load()
-loadCustomers()
+loadApprovedContracts()
 </script>
 
 <style scoped lang="scss">

@@ -294,6 +294,8 @@ class WorkflowApiTest(unittest.TestCase):
             json={
                 "contract_no": "WF-API-CREATE-ROUTE",
                 "title": "new routed contract",
+                "scenic_id": "scenic-1",
+                "business_scopes": ["ticket"],
                 "initiator_assignment_id": initiator_assignment.id,
             },
         )
@@ -1517,7 +1519,7 @@ class ContractWorkflowApiTest(unittest.TestCase):
         self.assertEqual(opinions["governance.supply_leader"]["comment"], "历史治理意见")
 
 
-class ApprovalFormWorkflowApiTest(unittest.TestCase):
+class ApprovalFormApiTest(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
@@ -1561,6 +1563,27 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
             service_scopes=["contract_legal_review"],
         ))
         seed_workflow_definitions(self.db, self.publisher.id)
+        self.approved_contract = Contract(
+            contract_no="HT-2026-001",
+            title="Approved scenic contract",
+            party_a="甲方公司",
+            party_b="客户公司",
+            scenic_id="scenic-1",
+            business_scopes=["ticket"],
+            status=ContractStatus.APPROVED,
+            created_by=self.handler.id,
+        )
+        self.draft_contract = Contract(
+            contract_no="HT-2026-DRAFT",
+            title="Draft scenic contract",
+            party_b="草稿客户",
+            scenic_id="scenic-2",
+            business_scopes=["hotel"],
+            status=ContractStatus.DRAFT,
+            created_by=self.handler.id,
+        )
+        self.db.add_all([self.approved_contract, self.draft_contract])
+        self.db.flush()
         self.payment = self.add_form(ContractType.PAYMENT, "WF-FORM-PAYMENT")
         self.business = self.add_form(ContractType.BUSINESS, "WF-FORM-BUSINESS")
         self.db.commit()
@@ -1652,6 +1675,81 @@ class ApprovalFormWorkflowApiTest(unittest.TestCase):
         response = self.client.get("/api/v1/approval-forms")
         self.assertEqual(response.status_code, 200, response.text)
         return {item["id"] for item in response.json()["data"]}
+
+    def test_payment_form_requires_approved_contract(self):
+        missing = self.client.post(
+            "/api/v1/approval-forms",
+            json={"form_type": "payment", "amount": "100.00"},
+        )
+        response = self.client.post(
+            "/api/v1/approval-forms",
+            json={
+                "form_type": "payment",
+                "contract_id": self.draft_contract.id,
+                "amount": "100.00",
+            },
+        )
+
+        self.assertEqual(missing.status_code, 422, missing.text)
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["detail"], "请选择已审批合同")
+
+    def test_contract_snapshot_is_not_changed_after_contract_edit(self):
+        response = self.client.post(
+            "/api/v1/approval-forms",
+            json={
+                "form_type": "business",
+                "contract_id": self.approved_contract.id,
+                "contract_no": "CLIENT-OVERRIDE",
+                "customer_name": "客户端客户",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        form_id = response.json()["data"]["id"]
+        form = self.db.get(ApprovalForm, form_id)
+        self.assertEqual(form.contract_id, self.approved_contract.id)
+        self.assertEqual(form.contract_no, "HT-2026-001")
+        self.assertEqual(form.scenic_id, "scenic-1")
+        self.assertEqual(form.customer_name, "客户公司")
+
+        self.approved_contract.contract_no = "HT-2026-EDITED"
+        self.approved_contract.party_b = "编辑后客户"
+        self.approved_contract.scenic_id = "scenic-edited"
+        self.db.commit()
+        self.db.refresh(form)
+
+        self.assertEqual(form.contract_no, "HT-2026-001")
+        self.assertEqual(form.scenic_id, "scenic-1")
+        self.assertEqual(form.customer_name, "客户公司")
+
+    def test_draft_edit_refreshes_snapshot_from_selected_approved_contract(self):
+        replacement = Contract(
+            contract_no="HT-2026-002",
+            title="Replacement approved contract",
+            party_a="替代甲方",
+            scenic_id="scenic-2",
+            business_scopes=["hotel"],
+            status=ContractStatus.APPROVED,
+            created_by=self.handler.id,
+        )
+        self.db.add(replacement)
+        self.db.commit()
+
+        response = self.client.put(
+            f"/api/v1/approval-forms/{self.business.id}",
+            json={
+                "contract_id": replacement.id,
+                "contract_no": "CLIENT-OVERRIDE",
+                "customer_name": "客户端客户",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.refresh(self.business)
+        self.assertEqual(self.business.contract_id, replacement.id)
+        self.assertEqual(self.business.contract_no, "HT-2026-002")
+        self.assertEqual(self.business.scenic_id, "scenic-2")
+        self.assertEqual(self.business.customer_name, "替代甲方")
 
     def test_list_forms_pure_handler_sees_only_own_forms(self):
         other_form = self.add_other_handler_form("WF-FORM-OTHER-HANDLER")

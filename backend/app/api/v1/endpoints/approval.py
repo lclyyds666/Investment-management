@@ -31,7 +31,6 @@ from app.core.enums import (
 from app.db.session import get_db
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
 from app.models.contract import Contract
-from app.models.customer import Customer
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.approval_form import (
@@ -190,15 +189,32 @@ def _complete_current_task(
     return _to_out(db, form, current_user, current_user.full_name)
 
 
+def _approved_contract(db: Session, contract_id: int) -> Contract:
+    contract = db.get(Contract, contract_id)
+    if not contract or contract.status != ContractStatus.APPROVED:
+        raise HTTPException(status_code=422, detail="请选择已审批合同")
+    return contract
+
+
+def _apply_contract_snapshot(form: ApprovalForm, contract: Contract) -> None:
+    form.contract_id = contract.id
+    form.contract_no = contract.contract_no
+    form.scenic_id = contract.scenic_id or ""
+    form.customer_name = contract.party_b or contract.party_a or ""
+
+
 def _apply_payload(form: ApprovalForm, data: dict, db: Session) -> None:
-    """写入字段：付款单自动生成大写金额；客户外键联动快照客户名称。"""
+    """写入字段：合同快照由已审批合同生成，付款单自动生成大写金额。"""
+    data = data.copy()
+    contract_id = data.pop("contract_id", None)
+    data.pop("contract_no", None)
+    data.pop("customer_name", None)
     for field, value in data.items():
         setattr(form, field, value)
-    # 客户外键 → 快照客户名称（若前端未同时传 customer_name）
-    if "customer_id" in data and data["customer_id"] and not data.get("customer_name"):
-        cust = db.get(Customer, data["customer_id"])
-        if cust:
-            form.customer_name = cust.name
+    if contract_id is not None:
+        _apply_contract_snapshot(form, _approved_contract(db, contract_id))
+    elif form.contract_id is None:
+        raise HTTPException(status_code=422, detail="请选择已审批合同")
     # 付款/销项发票审批单保留金额；普通业务审批单金额归零
     if form.form_type in {ContractType.PAYMENT, ContractType.INVOICE}:
         form.amount_words = amount_to_cn(form.amount or 0)

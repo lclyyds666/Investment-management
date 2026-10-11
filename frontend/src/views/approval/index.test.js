@@ -6,9 +6,11 @@ const approvalApi = vi.hoisted(() => ({
   approveForm: vi.fn(), rejectForm: vi.fn(), listActions: vi.fn(), proofreadForm: vi.fn(), downloadFormPrint: vi.fn(), getForm: vi.fn(), fetchFormAttachmentBlob: vi.fn()
 }))
 const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowTimeline: vi.fn() }))
+const contractApi = vi.hoisted(() => ({ listContracts: vi.fn(() => Promise.resolve([])) }))
 const badgeStore = vi.hoisted(() => ({ refresh: vi.fn() }))
 vi.mock('@/api/approval', () => approvalApi)
 vi.mock('@/api/customer', () => ({ listCustomers: vi.fn(() => Promise.resolve([])) }))
+vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/workflow', () => workflowApi)
 vi.mock('@/components/workflow/DesignatedApproverFields.vue', () => ({
   default: {
@@ -46,6 +48,55 @@ function mountView() {
     }
   })
 }
+
+describe('approval contract selection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    approvalApi.listForms.mockResolvedValue([])
+    approvalApi.createForm.mockResolvedValue({ id: 15 })
+    contractApi.listContracts.mockResolvedValue([
+      { id: 7, contract_no: 'HT-APPROVED', title: '已审批合同', status: 'approved', scenic_id: 'scenic-1', party_b: '客户甲' },
+      { id: 8, contract_no: 'HT-DRAFT', title: '草稿合同', status: 'draft', scenic_id: 'scenic-2', party_b: '客户乙' }
+    ])
+  })
+
+  it('loads only approved contracts and derives the selected snapshot preview', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(contractApi.listContracts).toHaveBeenCalled()
+    expect(wrapper.vm.approvedContracts.map((item) => item.id)).toEqual([7])
+    wrapper.vm.form.contract_id = 7
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.selectedContract.contract_no).toBe('HT-APPROVED')
+    expect(wrapper.vm.selectedContract.scenic_id).toBe('scenic-1')
+  })
+
+  it('creates with contract_id and never submits a client contract number', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openCreate('business')
+    wrapper.vm.form.contract_id = 7
+    wrapper.vm.form.contract_no = 'CLIENT-OVERRIDE'
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+
+    await wrapper.vm.onSave()
+
+    expect(approvalApi.createForm).toHaveBeenCalledTimes(1)
+    const payload = approvalApi.createForm.mock.calls[0][0]
+    expect(payload.contract_id).toBe(7)
+    expect(payload).not.toHaveProperty('contract_no')
+  })
+
+  it('marks legacy edits as unlinked until a contract is selected', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openEdit({ id: 21, form_type: 'payment', contract_id: null, contract_no: 'LEGACY-1' })
+
+    expect(wrapper.vm.editingRow.id).toBe(21)
+    expect(wrapper.vm.form.contract_id).toBeNull()
+  })
+})
 
 describe('approval form designated submit', () => {
   beforeEach(() => {
