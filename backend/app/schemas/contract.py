@@ -29,12 +29,14 @@ class ContractBase(BaseModel):
     subject: str = ""
     currency: str = "人民币"
     payment_terms: str = ""
+    contract_term: str = ""
 
     # 兼容历史数据：迁移新增的可空列在旧行为 NULL，
     # 序列化为 ContractOut 时按空串处理，避免 string_type 校验 500。
     @field_validator(
         "party_a", "party_b", "remark", "contract_type", "department", "customer_name",
         "customer_credit_code", "business_type", "subject", "currency", "payment_terms",
+        "contract_term",
         mode="before",
     )
     @classmethod
@@ -44,8 +46,26 @@ class ContractBase(BaseModel):
 
 class ContractCreate(ContractBase):
     contract_no: str
+    scenic_id: str
+    business_scopes: list[str]
     initiator_assignment_id: Optional[int] = None
     organization_code: Optional[str] = None
+
+    @field_validator("scenic_id")
+    @classmethod
+    def validate_scenic_id(cls, value):
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("必须选择所属景区")
+        return normalized
+
+    @field_validator("business_scopes")
+    @classmethod
+    def validate_business_scopes(cls, value):
+        normalized = list(dict.fromkeys(value))
+        if not normalized or not set(normalized) <= {"ticket", "hotel"}:
+            raise ValueError("业务范围只能选择门票或酒店，且至少选择一项")
+        return normalized
 
 
 class ContractUpdate(BaseModel):
@@ -64,6 +84,29 @@ class ContractUpdate(BaseModel):
     subject: Optional[str] = None
     currency: Optional[str] = None
     payment_terms: Optional[str] = None
+    contract_term: Optional[str] = None
+    scenic_id: Optional[str] = None
+    business_scopes: Optional[list[str]] = None
+
+    @field_validator("scenic_id")
+    @classmethod
+    def validate_scenic_id(cls, value):
+        if value is None:
+            raise ValueError("必须选择所属景区")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("必须选择所属景区")
+        return normalized
+
+    @field_validator("business_scopes")
+    @classmethod
+    def validate_business_scopes(cls, value):
+        if value is None:
+            raise ValueError("业务范围只能选择门票或酒店，且至少选择一项")
+        normalized = list(dict.fromkeys(value))
+        if not normalized or not set(normalized) <= {"ticket", "hotel"}:
+            raise ValueError("业务范围只能选择门票或酒店，且至少选择一项")
+        return normalized
 
 
 class ContractOut(ContractBase):
@@ -84,14 +127,8 @@ class ContractOut(ContractBase):
     workflow_version: Optional[int] = None
     active_task: Optional[dict] = None
     can_act: bool = False
-    contract_term: str = ""
     scenic_id: Optional[str] = None
     business_scopes: list[str] = Field(default_factory=list)
-
-    @field_validator("contract_term", mode="before")
-    @classmethod
-    def _contract_term_none_to_empty_str(cls, value):
-        return "" if value is None else value
 
     @field_validator("business_scopes", mode="before")
     @classmethod

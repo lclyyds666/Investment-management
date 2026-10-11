@@ -31,6 +31,9 @@
         <el-descriptions-item label="客户名称">{{ contract.customer_name || '—' }}</el-descriptions-item>
         <el-descriptions-item label="客户社会信用代码">{{ contract.customer_credit_code || '—' }}</el-descriptions-item>
         <el-descriptions-item label="签订日期">{{ contract.sign_date || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="合同期限">{{ contract.contract_term || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="所属景区">{{ scenicName }}</el-descriptions-item>
+        <el-descriptions-item label="业务范围">{{ businessScopeText }}</el-descriptions-item>
         <el-descriptions-item label="合同金额">
           {{ Number(contract.amount).toLocaleString() }} {{ contract.currency || '' }}
           <span class="rmb">（{{ rmb }}）</span>
@@ -104,7 +107,9 @@ import { ElMessage } from 'element-plus'
 import { Printer, Guide, Document, View, Download } from '@element-plus/icons-vue'
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
 import { getWorkflowTimeline } from '@/api/workflow'
+import { getScenicConfigs } from '@/api/scenic'
 import { STATUS_META } from '@/constants/business'
+import { getScenicById } from '@/constants/scenic'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline.vue'
@@ -123,9 +128,27 @@ const workflowTasks = ref([])
 const timelineLoading = ref(false)
 const timelineError = ref(false)
 const docLoading = ref(false)
+const scenicOptions = ref([])
 let loadGeneration = 0
 
 const rmb = computed(() => (contract.value ? digitToRMB(contract.value.amount) : ''))
+const scenicName = computed(() => {
+  const scenicId = contract.value?.scenic_id
+  if (!scenicId) return '—'
+  return scenicOptions.value.find((option) => option.scenic_id === scenicId)?.scenic_name || getScenicById(scenicId)?.name || scenicId
+})
+const businessScopeText = computed(() => {
+  const labels = { ticket: '门票', hotel: '酒店' }
+  const text = (contract.value?.business_scopes || [])
+    .map((scope) => labels[scope])
+    .filter(Boolean)
+    .join('、')
+  return text || '—'
+})
+
+async function loadScenicOptions() {
+  try { scenicOptions.value = await getScenicConfigs() } catch { scenicOptions.value = [] }
+}
 
 function isSameTarget(left, right) {
   return String(left) === String(right)
@@ -235,7 +258,10 @@ async function downloadLegalDoc() {
 watch(
   () => [props.modelValue, props.contractId],
   ([visible]) => {
-    if (visible && props.contractId) load()
+    if (visible && props.contractId) {
+      loadScenicOptions()
+      load()
+    }
   },
   { immediate: true }
 )

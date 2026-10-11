@@ -7,6 +7,12 @@ const contractApi = vi.hoisted(() => ({
 }))
 const workflowApi = vi.hoisted(() => ({ listWorkflowCandidates: vi.fn(() => Promise.resolve([])), getWorkflowSubmissionPlan: vi.fn(), getWorkflowTimeline: vi.fn() }))
 const legalApi = vi.hoisted(() => ({ listLegalInitiatorOptions: vi.fn(() => Promise.resolve([])) }))
+const scenicApi = vi.hoisted(() => ({
+  getScenicConfigs: vi.fn(() => Promise.resolve([
+    { scenic_id: 'guanquelou', scenic_name: '鹳雀楼' },
+    { scenic_id: 'changsha-dongqu', scenic_name: '长沙动趣王国' }
+  ]))
+}))
 const badgeStore = vi.hoisted(() => ({ refresh: vi.fn() }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
@@ -28,6 +34,7 @@ vi.mock('@/api/customer', () => ({ listCustomers: vi.fn(() => Promise.resolve([]
 vi.mock('@/api/knowledge', () => ({ listKnowledge: vi.fn(), uploadKnowledge: vi.fn(), deleteKnowledge: vi.fn() }))
 vi.mock('@/api/workflow', () => workflowApi)
 vi.mock('@/api/legalRisk', () => legalApi)
+vi.mock('@/api/scenic', () => scenicApi)
 vi.mock('@/components/workflow/DesignatedApproverFields.vue', () => ({
   default: {
     props: ['workflowCode', 'nodes', 'targetType', 'targetId'],
@@ -62,6 +69,12 @@ function mountView() {
         ElDialog: { template: '<div><slot /><slot name="footer" /></div>' },
         ElCard: { template: '<div><slot name="header" /><slot /></div>' },
         ElButton: { props: ['disabled'], template: '<button :disabled="disabled"><slot /></button>' },
+        ElForm: { template: '<form><slot /></form>' },
+        ElFormItem: { props: ['label'], template: '<label>{{ label }}<slot /></label>' },
+        ElRow: { template: '<div><slot /></div>' },
+        ElCol: { template: '<div><slot /></div>' },
+        ElSelect: { template: '<div><slot /></div>' },
+        ElOption: { props: ['label'], template: '<span>{{ label }}</span>' },
         DesignatedApproverFields: false
       }
     }
@@ -128,6 +141,52 @@ describe('contract designated submit', () => {
     await wrapper.vm.onSave()
 
     expect(contractApi.createContract).toHaveBeenCalledWith(expect.objectContaining({ initiator_assignment_id: 12 }))
+  })
+
+  it('submits contract term, one scenic and selected business scopes', async () => {
+    legalApi.listLegalInitiatorOptions.mockResolvedValue([
+      { assignment_id: 12, organization_code: 'supplymanagement', organization_name: '山东出版供应链管理有限公司', company_code: 'supplymanagement' }
+    ])
+    contractApi.createContract.mockResolvedValue({ id: 83 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    wrapper.vm.openCreate()
+    Object.assign(wrapper.vm.form, {
+      contract_no: 'HT-2026-083',
+      title: '鹳雀楼联营合同',
+      contract_term: ' 2026年1月1日至2027年12月31日 ',
+      scenic_id: 'guanquelou',
+      business_scopes: ['ticket', 'hotel']
+    })
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.onSave()
+
+    expect(contractApi.createContract).toHaveBeenCalledWith(expect.objectContaining({
+      contract_term: '2026年1月1日至2027年12月31日',
+      scenic_id: 'guanquelou',
+      business_scopes: ['ticket', 'hotel']
+    }))
+    expect(wrapper.text()).toContain('合同期限')
+    expect(wrapper.text()).toContain('鹳雀楼')
+  })
+
+  it('maps scenic and business scope values for the contract ledger', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.vm.scenicName('guanquelou')).toBe('鹳雀楼')
+    expect(wrapper.vm.businessScopeText(['ticket', 'hotel'])).toBe('门票、酒店')
+    expect(wrapper.vm.businessScopeText([])).toBe('—')
+  })
+
+  it('keeps canonical scenic options when config access is unavailable', async () => {
+    scenicApi.getScenicConfigs.mockRejectedValueOnce(new Error('forbidden'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.vm.scenicName('guanquelou')).toBe('鹳雀楼')
+    expect(wrapper.vm.scenicOptions.length).toBeGreaterThan(0)
   })
 
   it('lets a superuser select a real contract organization without a fake assignment', async () => {

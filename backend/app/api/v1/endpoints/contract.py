@@ -14,6 +14,7 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.enums import (
     ContractStatus,
+    InvoiceSourceKind,
     WorkflowAction,
     WorkflowTargetType,
     WorkflowTaskStatus,
@@ -40,6 +41,7 @@ from app.services.legal_record_scope import (
     contract_access_predicate,
     legal_record_scope,
 )
+from app.services.scenic_config import list_effective_configs
 from app.services.workflow_engine import (
     WorkflowTaskConflict,
     WorkflowValidationError,
@@ -99,6 +101,11 @@ def _names_map(db: Session, ids: set[int]) -> dict[int, str]:
 def _csv_cell(value: object) -> str:
     text = "" if value is None else str(value)
     return f"'{text}" if text.startswith(_CSV_FORMULA_PREFIXES) else text
+
+
+def _business_scope_label(scopes: list[str] | None) -> str:
+    labels = {"ticket": "门票", "hotel": "酒店"}
+    return "、".join(labels[scope] for scope in (scopes or []) if scope in labels)
 
 
 def _active_task_for_contract(db: Session, contract: Contract) -> WorkflowTask | None:
@@ -249,6 +256,26 @@ def list_contracts(
     return Response.ok([_to_out(db, c, current_user, names.get(c.created_by, "")) for c in rows])
 
 
+def eligible_contracts(
+    db: Session,
+    scenic_id: str,
+    source_kind: InvoiceSourceKind,
+    visibility_predicate=None,
+) -> list[Contract]:
+    stmt = select(Contract).where(
+        Contract.status == ContractStatus.APPROVED,
+        Contract.scenic_id == scenic_id,
+    )
+    if visibility_predicate is not None:
+        stmt = stmt.where(visibility_predicate)
+    rows = db.scalars(stmt.order_by(Contract.id.asc())).all()
+    return [
+        contract
+        for contract in rows
+        if source_kind.value in (contract.business_scopes or [])
+    ]
+
+
 @router.get("/export", summary="导出合同列表(CSV)")
 def export_contracts(
     db: Session = Depends(get_db),
@@ -259,10 +286,15 @@ def export_contracts(
         .where(contract_access_predicate(legal_record_scope(db, current_user)))
         .order_by(Contract.id.desc())
     ).all()
+    scenic_names = {
+        config.scenic_id: config.scenic_name
+        for config in list_effective_configs(db)
+    }
     content = io.StringIO()
     writer = csv.writer(content)
     writer.writerow([
         "合同编号", "合同名称", "合同类型", "是否内部合同", "合同标的", "签订日期",
+        "合同期限", "景区", "业务范围",
         "客户社会信用代码", "客户名称", "合同金额", "币种", "付款条件",
     ])
     for contract in rows:
@@ -273,6 +305,9 @@ def export_contracts(
             "是" if contract.is_internal else "否",
             contract.subject,
             contract.sign_date,
+            contract.contract_term,
+            scenic_names.get(contract.scenic_id, contract.scenic_id or ""),
+            _business_scope_label(contract.business_scopes),
             contract.customer_credit_code,
             contract.customer_name,
             contract.amount,
@@ -286,6 +321,26 @@ def export_contracts(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+@router.get("/eligible", response_model=Response[list[ContractOut]], summary="合资格合同")
+def list_eligible_contracts(
+    scenic_id: str,
+    source_kind: InvoiceSourceKind,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_view_guard),
+):
+    rows = eligible_contracts(
+        db,
+        scenic_id,
+        source_kind,
+        contract_access_predicate(legal_record_scope(db, current_user)),
+    )
+    names = _names_map(db, {contract.created_by for contract in rows})
+    return Response.ok([
+        _to_out(db, contract, current_user, names.get(contract.created_by, ""))
+        for contract in rows
+    ])
 
 
 @router.get("/todo", response_model=Response[list[ContractOut]], summary="待我审批的合同")

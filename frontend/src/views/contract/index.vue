@@ -149,6 +149,36 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="合同期限">
+              <el-input v-model="form.contract_term" placeholder="如：2026年1月1日至2027年12月31日" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="所属景区" prop="scenic_id">
+              <el-select v-model="form.scenic_id" filterable placeholder="请选择所属景区" style="width: 100%">
+                <el-option
+                  v-for="option in scenicOptions"
+                  :key="option.scenic_id"
+                  :label="option.scenic_name"
+                  :value="option.scenic_id"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="业务范围" prop="business_scopes">
+          <el-checkbox-group v-model="form.business_scopes">
+            <el-checkbox
+              v-for="option in BUSINESS_SCOPE_OPTIONS"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
         <el-form-item label="客户社会信用代码">
           <el-input v-model="form.customer_credit_code" placeholder="选择客户名称后自动填充，可手动修改" />
         </el-form-item>
@@ -244,6 +274,15 @@
         </el-table-column>
         <el-table-column prop="subject" label="合同标的" min-width="140" show-overflow-tooltip />
         <el-table-column prop="sign_date" label="签订日期" width="110" align="center" />
+        <el-table-column prop="contract_term" label="合同期限" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.contract_term || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="景区" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ scenicName(row.scenic_id) }}</template>
+        </el-table-column>
+        <el-table-column label="业务范围" width="120" align="center">
+          <template #default="{ row }">{{ businessScopeText(row.business_scopes) }}</template>
+        </el-table-column>
         <el-table-column prop="customer_credit_code" label="客户社会信用代码" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.customer_credit_code || '—' }}</template>
         </el-table-column>
@@ -406,6 +445,7 @@ import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { COMPANY_NAMES, STATUS_META } from '@/constants/business'
+import { scenicSpots } from '@/constants/scenic'
 import { canUsePermission } from '@/utils/businessAuthorization'
 import { renderSafeMarkdown } from '@/utils/safeMarkdown'
 import { previewBlob, downloadBlob } from '@/utils/file'
@@ -419,9 +459,14 @@ import {
 import { listCustomers } from '@/api/customer'
 import { listKnowledge, uploadKnowledge, deleteKnowledge } from '@/api/knowledge'
 import { listLegalInitiatorOptions } from '@/api/legalRisk'
+import { getScenicConfigs } from '@/api/scenic'
 import { getWorkflowSubmissionPlan } from '@/api/workflow'
 
 const CURRENCIES = ['人民币', '美元', '欧元', '港币', '日元']
+const BUSINESS_SCOPE_OPTIONS = [
+  { value: 'ticket', label: '门票' },
+  { value: 'hotel', label: '酒店' }
+]
 
 const portalStore = usePortalStore()
 const userStore = useUserStore()
@@ -473,6 +518,24 @@ async function loadCustomers() {
 function onCustomerChange(name) {
   const c = customers.value.find((x) => x.name === name)
   if (c) form.customer_credit_code = c.social_credit_code || ''
+}
+
+const defaultScenicOptions = scenicSpots.map((scenic) => ({
+  scenic_id: scenic.id,
+  scenic_name: scenic.name
+}))
+const scenicOptions = ref(defaultScenicOptions)
+async function loadScenicOptions() {
+  try { scenicOptions.value = await getScenicConfigs() } catch { scenicOptions.value = defaultScenicOptions }
+}
+function scenicName(scenicId) {
+  if (!scenicId) return '—'
+  return scenicOptions.value.find((option) => option.scenic_id === scenicId)?.scenic_name || scenicId
+}
+function businessScopeText(scopes) {
+  const labels = Object.fromEntries(BUSINESS_SCOPE_OPTIONS.map((option) => [option.value, option.label]))
+  const text = (scopes || []).map((scope) => labels[scope]).filter(Boolean).join('、')
+  return text || '—'
 }
 
 const initiatorOptions = ref([])
@@ -532,6 +595,9 @@ const emptyForm = () => ({
   currency: '人民币',
   payment_terms: '',
   sign_date: null,
+  contract_term: '',
+  scenic_id: '',
+  business_scopes: [],
   remark: '',
   attachment_name: '',
   initiator_assignment_id: null,
@@ -541,6 +607,8 @@ const form = reactive(emptyForm())
 const rules = reactive({
   contract_no: [{ required: true, message: '请输入合同编号', trigger: 'blur' }],
   title: [{ required: true, message: '请输入合同名称', trigger: 'blur' }],
+  scenic_id: [{ required: true, message: '请选择所属景区', trigger: 'change' }],
+  business_scopes: [{ type: 'array', required: true, min: 1, message: '至少选择一种业务类型', trigger: 'change' }],
   initiator_assignment_id: [{ required: false, message: '请选择发起归属', trigger: 'change' }],
   organization_code: [{ required: false, message: '请选择发起归属', trigger: 'change' }]
 })
@@ -578,6 +646,9 @@ function openEdit(row) {
     currency: row.currency || '人民币',
     payment_terms: row.payment_terms || '',
     sign_date: row.sign_date || null,
+    contract_term: row.contract_term || '',
+    scenic_id: row.scenic_id || '',
+    business_scopes: [...(row.business_scopes || [])],
     remark: row.remark,
     attachment_name: row.attachment_name || '',
     initiator_assignment_id: null,
@@ -593,15 +664,20 @@ async function onSave() {
   saving.value = true
   try {
     let contractId = editingId.value
+    const linkage = {
+      contract_term: form.contract_term.trim(),
+      scenic_id: form.scenic_id,
+      business_scopes: [...form.business_scopes]
+    }
     if (isEdit.value) {
       const { contract_no, attachment_name, initiator_assignment_id, organization_code, ...rest } = form
-      await updateContract(editingId.value, { ...rest })
+      await updateContract(editingId.value, { ...rest, ...linkage })
     } else {
       const { attachment_name, initiator_assignment_id, organization_code, ...rest } = form
       const initiator = isSuperuser.value
         ? { organization_code }
         : { initiator_assignment_id }
-      const created = await createContract({ ...rest, ...initiator })
+      const created = await createContract({ ...rest, ...linkage, ...initiator })
       contractId = created?.id
     }
     // 附件：保存合同后再真实上传（覆盖式）
@@ -900,7 +976,7 @@ async function onKbDelete(row) {
   await loadKb()
 }
 
-onMounted(() => { load(); loadCustomers(); loadInitiatorOptions() })
+onMounted(() => { load(); loadCustomers(); loadInitiatorOptions(); loadScenicOptions() })
 </script>
 
 <style scoped lang="scss">

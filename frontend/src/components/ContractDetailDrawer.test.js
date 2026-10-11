@@ -5,8 +5,14 @@ const contractApi = vi.hoisted(() => ({
   getContract: vi.fn(), listApprovals: vi.fn(), fetchContractAttachmentBlob: vi.fn(), fetchLegalDocBlob: vi.fn()
 }))
 const workflowApi = vi.hoisted(() => ({ getWorkflowTimeline: vi.fn() }))
+const scenicApi = vi.hoisted(() => ({
+  getScenicConfigs: vi.fn(() => Promise.resolve([
+    { scenic_id: 'guanquelou', scenic_name: '鹳雀楼' }
+  ]))
+}))
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/workflow', () => workflowApi)
+vi.mock('@/api/scenic', () => scenicApi)
 vi.mock('@/utils/rmb', () => ({ digitToRMB: () => '' }))
 vi.mock('@/utils/file', () => ({ previewBlob: vi.fn(), downloadBlob: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: { success: vi.fn(), error: vi.fn() } }))
@@ -143,5 +149,54 @@ describe('ContractDetailDrawer timeline error', () => {
     await flushPromises()
 
     expect(workflowApi.getWorkflowTimeline).not.toHaveBeenCalled()
+  })
+
+  it('shows contract term, scenic name and business scopes', async () => {
+    contractApi.getContract.mockResolvedValue({
+      id: 61,
+      workflow_instance_id: null,
+      workflow_version: 0,
+      status: 'approved',
+      amount: 0,
+      contract_term: '2026年1月1日至2027年12月31日',
+      scenic_id: 'guanquelou',
+      business_scopes: ['ticket', 'hotel']
+    })
+    contractApi.listApprovals.mockResolvedValue([])
+    const wrapper = shallowMount(ContractDetailDrawer, {
+      props: { modelValue: true, contractId: 61 },
+      global: {
+        stubs: {
+          ElDrawer: { template: '<div><slot /></div>' },
+          ElDescriptions: { template: '<div><slot /></div>' },
+          ElDescriptionsItem: { props: ['label'], template: '<div>{{ label }}：<slot /></div>' }
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('合同期限')
+    expect(wrapper.text()).toContain('2026年1月1日至2027年12月31日')
+    expect(wrapper.text()).toContain('鹳雀楼')
+    expect(wrapper.text()).toContain('门票、酒店')
+  })
+
+  it('shows dashes for historical empty linkage fields', async () => {
+    contractApi.getContract.mockResolvedValue({
+      id: 62,
+      workflow_instance_id: null,
+      workflow_version: 0,
+      status: 'approved',
+      amount: 0,
+      contract_term: '',
+      scenic_id: null,
+      business_scopes: []
+    })
+    contractApi.listApprovals.mockResolvedValue([])
+    const wrapper = mountDrawer(62)
+    await flushPromises()
+
+    expect(wrapper.vm.scenicName).toBe('—')
+    expect(wrapper.vm.businessScopeText).toBe('—')
   })
 })

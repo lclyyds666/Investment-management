@@ -4,6 +4,12 @@ export function listContracts() {
   return request.get('/contracts')
 }
 
+export function listEligibleContracts(scenicId, sourceKind) {
+  return request.get('/contracts/eligible', {
+    params: { scenic_id: scenicId, source_kind: sourceKind }
+  })
+}
+
 export function exportContracts() {
   return request.get('/contracts/export', { responseType: 'blob', timeout: 60000 })
 }
