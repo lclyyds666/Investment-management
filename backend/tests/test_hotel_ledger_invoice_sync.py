@@ -3,6 +3,8 @@ from io import BytesIO
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
@@ -14,7 +16,7 @@ from app.core.enums import ContractStatus, InvoiceSourceKind
 from app.db.base import Base
 from app.models.contract import Contract
 from app.models.hotel_ledger import HotelLedger
-from app.models.invoice import Invoice
+from app.models.invoice import Invoice, InvoiceAttachment
 from app.models.ledger_contract import LedgerContractLink, ScenicContractPreference
 from app.schemas.hotel_ledger import HotelUpdateIn
 from app.schemas.ledger_contract import LedgerConfirmApproveIn
@@ -80,6 +82,32 @@ def test_delete_unconfirms_surviving_hotel_rows():
     survivor = db.scalar(select(HotelLedger))
     assert survivor is not None and not survivor.confirmed
     assert db.scalar(select(func.count()).select_from(Invoice)) == 0
+
+
+def test_hotel_update_maps_used_invoice_lock_to_conflict():
+    db, rows = _confirmed_period()
+    invoice = db.scalar(select(Invoice).where(Invoice.direction == "output"))
+    db.add(InvoiceAttachment(
+        invoice_id=invoice.id,
+        original_name="issued.pdf",
+        stored_name="issued.pdf",
+    ))
+    db.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        update_row(
+            "s",
+            rows[0].id,
+            HotelUpdateIn(jinying_amount=Decimal("9")),
+            db=db,
+            _=None,
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "invoice_source_locked"
+    db.expire_all()
+    assert all(row.confirmed for row in db.scalars(select(HotelLedger)).all())
+    assert db.scalar(select(func.count()).select_from(Invoice)) == 2
 
 
 def test_invalidation_failure_removes_new_hotel_file_and_rolls_back(tmp_path, monkeypatch):

@@ -161,6 +161,18 @@ describe('invoice management redesign', () => {
     expect(invoiceApi.updateInvoice.mock.calls.at(-1)[1]).not.toHaveProperty('contract_no')
   })
 
+  it('hides historical backfill when backend reports source usage', async () => {
+    const wrapper = mountView()
+    wrapper.vm.openEdit({
+      id: 23, direction: 'output', generated_by_source: true,
+      contract_id: null, contract_no: '', scenic_id: 'scenic-a', source_kind: 'ticket',
+      status: 'pending', source_locked: true, has_approval_form: true
+    })
+    await flushPromises()
+    expect(wrapper.vm.canBackfillContract).toBe(false)
+    expect(contractApi.listEligibleContracts).not.toHaveBeenCalled()
+  })
+
   it('only enables output detail save and print when totals balance', async () => {
     invoiceApi.listInvoiceDetails.mockResolvedValue({ items: [{ id: 9, amount: 80 }], detail_total: 80, difference: 20 })
     const wrapper = mountView()

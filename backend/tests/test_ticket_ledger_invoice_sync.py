@@ -16,7 +16,7 @@ from app.api.v1.endpoints.ticket_ledger import approve_confirm, delete_confirm, 
 from app.core.enums import ContractStatus, InvoiceSourceKind
 from app.db.base import Base
 from app.models.contract import Contract
-from app.models.invoice import Invoice
+from app.models.invoice import Invoice, InvoiceAttachment
 from app.models.ledger_contract import LedgerContractLink, ScenicContractPreference
 from app.models.ticket_ledger import TicketLedger
 from app.schemas.ledger_contract import LedgerConfirmApproveIn
@@ -292,3 +292,29 @@ def test_invoice_sync_failure_rolls_back_contract_link_and_confirmation(monkeypa
     assert db.scalar(select(LedgerContractLink)) is None
     assert db.scalar(select(ScenicContractPreference)) is None
     assert db.scalar(select(func.count()).select_from(Invoice)) == 0
+
+
+def test_ticket_update_maps_used_invoice_lock_to_conflict():
+    db, rows = _confirmed_period()
+    invoice = db.scalar(select(Invoice).where(Invoice.direction == "output"))
+    db.add(InvoiceAttachment(
+        invoice_id=invoice.id,
+        original_name="issued.pdf",
+        stored_name="issued.pdf",
+    ))
+    db.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        update_row(
+            "s",
+            rows[0].id,
+            TicketLedgerUpdateIn(jinying_amount=Decimal("9")),
+            db=db,
+            _=None,
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "invoice_source_locked"
+    db.expire_all()
+    assert all(row.confirmed for row in db.scalars(select(TicketLedger)).all())
+    assert db.scalar(select(func.count()).select_from(Invoice)) == 2

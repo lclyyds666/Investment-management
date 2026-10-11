@@ -75,11 +75,21 @@ def _period_key(r: TicketLedger) -> str:
     return r.source_file or r.detail_name or r.period_text or r.check_date_text or "NA"
 
 
+def _invalidate_source_period(db: Session, sid: str, key: str) -> None:
+    try:
+        invoice_svc.invalidate_period_invoices(
+            db,
+            scenic_id=sid,
+            source_kind=invoice_svc.InvoiceSourceKind.TICKET,
+            period_key=key,
+        )
+    except invoice_svc.InvoiceSourceLocked as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+
+
 def _invalidate_confirmed_period(db: Session, sid: str, key: str) -> None:
     if any(r.confirmed and _period_key(r) == key for r in _load_rows(db, sid)):
-        invoice_svc.invalidate_period_invoices(
-            db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET, period_key=key
-        )
+        _invalidate_source_period(db, sid, key)
 
 
 def _confirm_dir(sid: str) -> Path:
@@ -486,9 +496,7 @@ def save_ledger(
 
     if payload.mode == "replace":
         for key in {_period_key(row) for row in _load_rows(db, sid) if row.confirmed}:
-            invoice_svc.invalidate_period_invoices(
-                db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET, period_key=key
-            )
+            _invalidate_source_period(db, sid, key)
         db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))
         base_no = 0
     else:
@@ -768,9 +776,7 @@ def clear_ledger(
 ):
     sid = _valid_scenic_id(scenic_id)
     for key in {_period_key(row) for row in _load_rows(db, sid) if row.confirmed}:
-        invoice_svc.invalidate_period_invoices(
-            db, scenic_id=sid, source_kind=invoice_svc.InvoiceSourceKind.TICKET, period_key=key
-        )
+        _invalidate_source_period(db, sid, key)
     result = db.execute(sa_delete(TicketLedger).where(TicketLedger.scenic_id == sid))
     db.commit()
     return Response.ok({"deleted": result.rowcount or 0}, message="已清空该景区台账")
@@ -951,6 +957,9 @@ def approve_confirm(
         db.rollback()
         status_code = 409 if exc.code == "confirmed_period_contract_locked" else 400
         raise HTTPException(status_code=status_code, detail=exc.code) from exc
+    except invoice_svc.InvoiceSourceLocked as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=exc.code) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -150,6 +150,8 @@ class InvoiceOut(InvoiceBase):
     approval_status: Optional[InvoiceApprovalStatus] = None
     generated_at: Optional[datetime] = None
     source_synced_at: Optional[datetime] = None
+    source_locked: bool = False
+    has_approval_form: bool = False
 
     @computed_field
     @property

@@ -7,8 +7,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.enums import (
@@ -20,7 +19,7 @@ from app.core.enums import (
 from app.models.contract import Contract
 from app.models.customer import Customer
 from app.models.hotel_ledger import HotelLedger
-from app.models.invoice import Invoice, InvoiceDetail
+from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.ledger_contract import LedgerContractLink
 from app.models.ticket_ledger import TicketLedger
 from app.models.approval_form import ApprovalForm
@@ -32,15 +31,10 @@ class InvoiceGenerationError(ValueError):
         super().__init__(code)
 
 
-class InvoiceSourceLocked(HTTPException):
+class InvoiceSourceLocked(RuntimeError):
     def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "invoice_source_locked",
-                "message": "来源发票已开票或已进入审批，不能失效或重建",
-            },
-        )
+        self.code = "invoice_source_locked"
+        super().__init__(self.code)
 
 
 def ticket_period_key(row: TicketLedger) -> str:
@@ -114,12 +108,60 @@ def _contract_customer(db: Session, contract: Contract):
     return customer
 
 
-def source_invoice_is_locked(invoice: Invoice) -> bool:
+def source_invoice_has_approval_form(db: Session, invoice_id: int) -> bool:
+    return db.scalar(
+        select(ApprovalForm.id).where(ApprovalForm.invoice_id == invoice_id).limit(1)
+    ) is not None
+
+
+def _source_invoice_has_fund_allocation(db: Session, invoice_id: int) -> bool:
+    connection = db.connection()
+    if not inspect(connection).has_table("biz_invoice_fund_allocation"):
+        return False
+    return db.scalar(
+        text(
+            "SELECT 1 FROM biz_invoice_fund_allocation "
+            "WHERE invoice_id = :invoice_id LIMIT 1"
+        ),
+        {"invoice_id": invoice_id},
+    ) is not None
+
+
+def source_invoice_is_locked(db: Session, invoice: Invoice) -> bool:
+    if invoice.status == InvoiceStatus.ISSUED or invoice.workflow_instance_id is not None:
+        return True
+    if invoice.id is None:
+        return False
     return (
-        invoice.status == InvoiceStatus.ISSUED
-        or invoice.workflow_instance_id is not None
-        or bool(getattr(invoice, "allocations", ()))
+        db.scalar(
+            select(InvoiceAttachment.id)
+            .where(InvoiceAttachment.invoice_id == invoice.id)
+            .limit(1)
+        ) is not None
+        or source_invoice_has_approval_form(db, invoice.id)
+        or _source_invoice_has_fund_allocation(db, invoice.id)
     )
+
+
+def _period_invoices_for_update(
+    db: Session,
+    *,
+    scenic_id: str,
+    source_kind: InvoiceSourceKind,
+    period_key: str,
+) -> list[Invoice]:
+    return db.scalars(
+        select(Invoice)
+        .where(
+            Invoice.scenic_id == scenic_id,
+            Invoice.source_kind == source_kind,
+            Invoice.period_key == period_key,
+            Invoice.direction.in_((InvoiceDirection.INPUT, InvoiceDirection.OUTPUT)),
+        )
+        .order_by(Invoice.id.asc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
 
 
 def _invoice_snapshot(
@@ -170,21 +212,13 @@ def remove_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> None:
-    invoices = db.scalars(
-        select(Invoice).where(
-            Invoice.scenic_id == scenic_id,
-            Invoice.source_kind == source_kind,
-            Invoice.period_key == period_key,
-            Invoice.direction.in_((InvoiceDirection.INPUT, InvoiceDirection.OUTPUT)),
-        )
-    ).all()
+    invoices = _period_invoices_for_update(
+        db, scenic_id=scenic_id, source_kind=source_kind, period_key=period_key
+    )
     if not invoices:
         return
     ids = [invoice.id for invoice in invoices]
-    has_approval = db.scalar(
-        select(ApprovalForm.id).where(ApprovalForm.invoice_id.in_(ids)).limit(1)
-    ) is not None
-    if has_approval or any(source_invoice_is_locked(invoice) for invoice in invoices):
+    if any(source_invoice_is_locked(db, invoice) for invoice in invoices):
         raise InvoiceSourceLocked()
     db.execute(delete(ApprovalForm).where(ApprovalForm.invoice_id.in_(ids)))
     for invoice in invoices:
@@ -267,19 +301,10 @@ def invalidate_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> None:
-    invoices = db.scalars(
-        select(Invoice).where(
-            Invoice.scenic_id == scenic_id,
-            Invoice.source_kind == source_kind,
-            Invoice.period_key == period_key,
-            Invoice.direction.in_((InvoiceDirection.INPUT, InvoiceDirection.OUTPUT)),
-        )
-    ).all()
-    invoice_ids = [invoice.id for invoice in invoices]
-    has_approval = bool(invoice_ids) and db.scalar(
-        select(ApprovalForm.id).where(ApprovalForm.invoice_id.in_(invoice_ids)).limit(1)
-    ) is not None
-    if has_approval or any(source_invoice_is_locked(invoice) for invoice in invoices):
+    invoices = _period_invoices_for_update(
+        db, scenic_id=scenic_id, source_kind=source_kind, period_key=period_key
+    )
+    if any(source_invoice_is_locked(db, invoice) for invoice in invoices):
         raise InvoiceSourceLocked()
     rows = _period_rows(db, source_kind, scenic_id, period_key)
     for row in rows:

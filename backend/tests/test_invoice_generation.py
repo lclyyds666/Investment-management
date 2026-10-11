@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -20,6 +20,7 @@ from app.services.invoice_generation import (
     InvoiceSourceLocked,
     invalidate_period_invoices,
     remove_period_invoices,
+    source_invoice_is_locked,
     sync_confirmed_period_invoices,
 )
 
@@ -123,7 +124,7 @@ def test_ticket_and_hotel_same_period_are_isolated():
     assert db.scalar(select(func.count()).select_from(Invoice)) == 4
 
 
-def test_remove_unused_period_cleans_dependents():
+def test_attachment_locks_source_invoice_against_removal():
     db = _session()
     contract = _link_contract(db)
     db.add_all([
@@ -140,12 +141,31 @@ def test_remove_unused_period_cleans_dependents():
     assert output.contract_id == contract.id
     output.attachments.append(InvoiceAttachment(original_name="a.pdf", stored_name="a"))
     db.commit()
-    remove_period_invoices(db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p")
+    with pytest.raises(InvoiceSourceLocked):
+        remove_period_invoices(
+            db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"
+        )
+    assert db.scalar(select(func.count()).select_from(Invoice)) == 2
+    assert db.scalar(select(func.count()).select_from(InvoiceAttachment)) == 1
+
+
+def test_unused_period_without_evidence_can_be_removed():
+    db = _session()
+    _link_contract(db)
+    db.add(TicketLedger(
+        scenic_id="s", row_no=1, platform="A", source_file="p",
+        hexiao_amount=1, jinying_amount=2,
+    ))
+    db.flush()
+    sync_confirmed_period_invoices(
+        db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"
+    )
+    db.commit()
+    remove_period_invoices(
+        db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"
+    )
     db.commit()
     assert db.scalar(select(func.count()).select_from(Invoice)) == 0
-    assert db.scalar(select(func.count()).select_from(InvoiceAttachment)) == 0
-    assert db.scalar(select(func.count()).select_from(InvoiceDetail)) == 0
-    assert db.scalar(select(func.count()).select_from(ApprovalForm)) == 0
 
 
 def test_used_source_invoice_cannot_be_invalidated_or_rebuilt():
@@ -194,6 +214,34 @@ def test_source_invoice_with_approval_form_cannot_be_removed():
     ))
     db.flush()
 
+    with pytest.raises(InvoiceSourceLocked):
+        remove_period_invoices(
+            db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"
+        )
+
+
+def test_persisted_fund_allocation_locks_source_invoice():
+    db = _session()
+    _link_contract(db)
+    db.add(TicketLedger(
+        scenic_id="s", row_no=1, platform="A", source_file="p",
+        hexiao_amount=1, jinying_amount=2,
+    ))
+    db.flush()
+    input_invoice, _ = sync_confirmed_period_invoices(
+        db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"
+    )
+    db.execute(text(
+        "CREATE TABLE biz_invoice_fund_allocation "
+        "(id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL)"
+    ))
+    db.execute(
+        text("INSERT INTO biz_invoice_fund_allocation (invoice_id) VALUES (:invoice_id)"),
+        {"invoice_id": input_invoice.id},
+    )
+    db.flush()
+
+    assert source_invoice_is_locked(db, input_invoice) is True
     with pytest.raises(InvoiceSourceLocked):
         remove_period_invoices(
             db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"

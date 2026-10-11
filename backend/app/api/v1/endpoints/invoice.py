@@ -47,7 +47,11 @@ from app.services.invoice_documents import (
     invoice_detail_totals,
     save_invoice_attachment,
 )
-from app.services.invoice_generation import source_invoice_is_locked
+from app.services.invoice_generation import (
+    InvoiceSourceLocked,
+    source_invoice_has_approval_form,
+    source_invoice_is_locked,
+)
 from app.services.invoice_approval_print import (
     build_invoice_approval_docx,
     build_invoice_detail_xlsx,
@@ -70,25 +74,54 @@ _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _invoice_or_404(db: Session, invoice_id: int, *, with_details: bool = False) -> Invoice:
+def _invoice_or_404(
+    db: Session,
+    invoice_id: int,
+    *,
+    with_details: bool = False,
+    for_update: bool = False,
+) -> Invoice:
+    statement = select(Invoice).where(Invoice.id == invoice_id)
     if with_details:
-        invoice = db.scalar(
-            select(Invoice)
-            .where(Invoice.id == invoice_id)
-            .options(selectinload(Invoice.details))
-        )
-    else:
-        invoice = db.get(Invoice, invoice_id)
+        statement = statement.options(selectinload(Invoice.details))
+    if for_update:
+        statement = statement.with_for_update()
+    invoice = db.scalar(statement.execution_options(populate_existing=True))
     if invoice is None:
         raise HTTPException(status_code=404, detail="发票不存在")
     return invoice
 
 
-def _output_invoice_or_409(db: Session, invoice_id: int) -> Invoice:
-    invoice = _invoice_or_404(db, invoice_id, with_details=True)
+def _output_invoice_or_409(
+    db: Session,
+    invoice_id: int,
+    *,
+    for_update: bool = False,
+) -> Invoice:
+    invoice = _invoice_or_404(
+        db, invoice_id, with_details=True, for_update=for_update
+    )
     if invoice.direction != InvoiceDirection.OUTPUT:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="仅销项发票包含核销明细")
     return invoice
+
+
+def _source_locked_http(error: InvoiceSourceLocked) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": error.code,
+            "message": "来源发票已进入使用状态，不能失效、修改来源金额或更换合同",
+        },
+    )
+
+
+def _invoice_out(db: Session, invoice: Invoice) -> InvoiceOut:
+    output = InvoiceOut.model_validate(invoice)
+    if invoice.generated_by_source:
+        output.has_approval_form = source_invoice_has_approval_form(db, invoice.id)
+        output.source_locked = source_invoice_is_locked(db, invoice)
+    return output
 
 
 def _invoice_form(db: Session, invoice_id: int) -> ApprovalForm | None:
@@ -208,7 +241,7 @@ def list_invoices(
     if not include_legacy and any(value is not None for _, value in filters[:-1]):
         statement = statement.where(Invoice.generated_by_source.is_(True))
     rows = db.scalars(statement.order_by(Invoice.id.desc())).all()
-    return Response.ok([InvoiceOut.model_validate(row) for row in rows])
+    return Response.ok([_invoice_out(db, row) for row in rows])
 
 
 @router.get("/stats", response_model=Response[InvoiceStats], summary="发票开票统计")
@@ -252,7 +285,7 @@ def update_invoice(
     db: Session = Depends(get_db),
     _: User = Depends(_manage_guard),
 ):
-    invoice = _invoice_or_404(db, invoice_id)
+    invoice = _invoice_or_404(db, invoice_id, for_update=True)
     changes = payload.model_dump(exclude_unset=True)
     changes_source_data = (
         ("amount" in changes and changes["amount"] != invoice.amount)
@@ -260,11 +293,8 @@ def update_invoice(
         or ("contract_no" in changes and changes["contract_no"] != invoice.contract_no)
     )
     if invoice.generated_by_source and changes_source_data:
-        if source_invoice_is_locked(invoice) or _invoice_form(db, invoice.id) is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="来源发票已开票或已有审批，不能修改合同或来源金额",
-            )
+        if source_invoice_is_locked(db, invoice):
+            raise _source_locked_http(InvoiceSourceLocked())
     if invoice.generated_by_source and "contract_no" in changes:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -290,7 +320,7 @@ def update_invoice(
         setattr(invoice, field, value)
     db.commit()
     db.refresh(invoice)
-    return Response.ok(InvoiceOut.model_validate(invoice))
+    return Response.ok(_invoice_out(db, invoice))
 
 
 @router.get("/{invoice_id}/attachments", response_model=Response[list[InvoiceAttachmentOut]])
@@ -315,7 +345,7 @@ async def upload_attachments(
     db: Session = Depends(get_db),
     current_user: User = Depends(_manage_guard),
 ):
-    invoice = _invoice_or_404(db, invoice_id)
+    invoice = _invoice_or_404(db, invoice_id, for_update=True)
     if not files:
         raise HTTPException(status_code=422, detail="至少上传一个附件")
     stored_paths = []
@@ -390,14 +420,11 @@ def update_detail(
     db: Session = Depends(get_db),
     _: User = Depends(_manage_guard),
 ):
-    invoice = _output_invoice_or_409(db, invoice_id)
+    invoice = _output_invoice_or_409(db, invoice_id, for_update=True)
     if invoice.generated_by_source and (
-        source_invoice_is_locked(invoice) or _invoice_form(db, invoice.id) is not None
+        source_invoice_is_locked(db, invoice)
     ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="来源发票已开票或已有审批，不能修改来源金额",
-        )
+        raise _source_locked_http(InvoiceSourceLocked())
     detail = next((row for row in invoice.details if row.id == detail_id), None)
     if detail is None:
         raise HTTPException(status_code=404, detail="发票明细不存在")
@@ -426,7 +453,7 @@ def create_invoice_approval_form(
     db: Session = Depends(get_db),
     current_user: User = Depends(_manage_guard),
 ):
-    invoice = _output_invoice_or_409(db, invoice_id)
+    invoice = _output_invoice_or_409(db, invoice_id, for_update=True)
     _validate_approval_invoice(invoice)
     form = _invoice_form(db, invoice_id)
     if form is not None and form.status in {
@@ -462,7 +489,7 @@ def submit_invoice_approval_form(
     db: Session = Depends(get_db),
     current_user: User = Depends(_manage_guard),
 ):
-    invoice = _output_invoice_or_409(db, invoice_id)
+    invoice = _output_invoice_or_409(db, invoice_id, for_update=True)
     _validate_approval_invoice(invoice)
     form = _invoice_form(db, invoice_id)
     if form is None:

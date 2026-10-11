@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -24,10 +24,11 @@ from app.models.contract import Contract
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
-from app.schemas.invoice import InvoiceCreate
+from app.schemas.invoice import InvoiceCreate, InvoiceUpdate
+from app.api.v1.endpoints.invoice import update_invoice
 from app.services.assignment_permissions import PermissionContext, has_permission
 from app.services.invoice_documents import assert_invoice_details_balanced
-from app.services.invoice_generation import remove_period_invoices
+from app.services.invoice_generation import InvoiceSourceLocked, remove_period_invoices
 from app.services.organization_catalog import seed_authorization_catalog
 
 
@@ -258,6 +259,55 @@ def test_historical_source_invoice_rejects_ineligible_contract(invoice_api):
     assert invoice.contract_no == ""
 
 
+def test_stale_session_cannot_overwrite_first_contract_backfill(tmp_path):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'invoice-race.db'}")
+    Base.metadata.create_all(engine)
+    setup = Session(engine)
+    user = User(username="race-owner", hashed_password="x")
+    setup.add(user)
+    setup.flush()
+    first = Contract(
+        contract_no="RACE-1", title="先选合同", scenic_id="scenic-a",
+        business_scopes=["ticket"], status=ContractStatus.APPROVED, created_by=user.id,
+    )
+    second = Contract(
+        contract_no="RACE-2", title="后选合同", scenic_id="scenic-a",
+        business_scopes=["ticket"], status=ContractStatus.APPROVED, created_by=user.id,
+    )
+    invoice = Invoice(
+        invoice_title="历史来源发票", amount=Decimal("100"),
+        direction=InvoiceDirection.OUTPUT, source_kind=InvoiceSourceKind.TICKET,
+        scenic_id="scenic-a", period_key="race", generated_by_source=True,
+    )
+    setup.add_all([first, second, invoice])
+    setup.commit()
+    invoice_id, first_id, second_id = invoice.id, first.id, second.id
+    setup.close()
+
+    stale = Session(engine)
+    winner = Session(engine)
+    assert stale.get(Invoice, invoice_id).contract_id is None
+    winner_invoice = winner.get(Invoice, invoice_id)
+    winner_invoice.contract_id = first_id
+    winner_invoice.contract_no = "RACE-1"
+    winner.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        update_invoice(
+            invoice_id,
+            InvoiceUpdate(contract_id=second_id),
+            db=stale,
+            _=user,
+        )
+    assert raised.value.status_code == 409
+    stale.rollback()
+    stale.expire_all()
+    assert stale.get(Invoice, invoice_id).contract_id == first_id
+    stale.close()
+    winner.close()
+    engine.dispose()
+
+
 @pytest.mark.parametrize("usage", ["issued", "approval"])
 def test_used_source_invoice_rejects_amount_and_contract_changes(invoice_api, usage):
     db, client, _, users, invoice, _, _, _ = invoice_api
@@ -288,6 +338,44 @@ def test_used_source_invoice_rejects_amount_and_contract_changes(invoice_api, us
     assert invoice.amount == Decimal("100.00")
     assert invoice.contract_id is None
     assert invoice.remark == "仅更新备注"
+
+
+def test_fund_allocation_blocks_amount_and_contract_backfill(invoice_api):
+    db, client, _, _, invoice, _, _, _ = invoice_api
+    contract = db.scalar(select(Contract).where(Contract.contract_no == "HT-ELIGIBLE"))
+    db.execute(text(
+        "CREATE TABLE biz_invoice_fund_allocation "
+        "(id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL)"
+    ))
+    db.execute(
+        text("INSERT INTO biz_invoice_fund_allocation (invoice_id) VALUES (:invoice_id)"),
+        {"invoice_id": invoice.id},
+    )
+    db.commit()
+
+    assert client.put(
+        f"/api/v1/invoices/{invoice.id}", json={"amount": "999.00"}
+    ).status_code == 409
+    assert client.put(
+        f"/api/v1/invoices/{invoice.id}", json={"contract_id": contract.id}
+    ).status_code == 409
+
+
+def test_invoice_output_exposes_unified_source_lock_flags(invoice_api):
+    db, client, _, users, invoice, _, _, _ = invoice_api
+    db.add(ApprovalForm(
+        form_type=ContractType.INVOICE,
+        invoice_id=invoice.id,
+        created_by=users["reviewer"].id,
+    ))
+    db.commit()
+
+    row = next(
+        item for item in client.get("/api/v1/invoices").json()["data"]
+        if item["id"] == invoice.id
+    )
+    assert row["has_approval_form"] is True
+    assert row["source_locked"] is True
 
 
 @pytest.mark.parametrize("field", ["amount", "tax_no", "customer_name"])
@@ -468,13 +556,12 @@ def test_source_lifecycle_preserves_invoice_with_approval_form(invoice_api):
         created_by=users["reviewer"].id,
     ))
     db.commit()
-    with pytest.raises(Exception) as raised:
+    with pytest.raises(InvoiceSourceLocked):
         remove_period_invoices(
             db,
             scenic_id=invoice.scenic_id,
             source_kind=invoice.source_kind,
             period_key=invoice.period_key,
         )
-    assert getattr(raised.value, "status_code", None) == 409
     assert db.get(Invoice, invoice.id) is invoice
     assert db.scalar(select(func.count()).select_from(ApprovalForm)) == 1

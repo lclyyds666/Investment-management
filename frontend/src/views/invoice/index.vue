@@ -179,6 +179,8 @@ const canBackfillContract = computed(() => Boolean(
   && !editingRow.value?.contract_id
   && !editingRow.value?.workflow_instance_id
   && editingRow.value?.status !== 'issued'
+  && !editingRow.value?.source_locked
+  && !editingRow.value?.has_approval_form
 ))
 const rules = {
   invoice_title: [{ required: true, message: '请输入发票抬头', trigger: 'blur' }],
