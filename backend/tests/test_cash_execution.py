@@ -9,6 +9,7 @@ from app.core.enums import ContractStatus, ContractType, InvoiceApprovalStatus, 
 from app.db.base import Base
 from app.models.approval_form import ApprovalForm
 from app.models.cash_execution import CashExecutionTask
+from app.models.fund import FundTransaction
 from app.models.invoice import Invoice, InvoiceAttachment
 from app.services.cash_execution import ensure_payment_task, ensure_receipt_task
 
@@ -38,6 +39,7 @@ class CashExecutionServiceTest(unittest.TestCase):
             again = ensure_payment_task(db, form)
             self.assertEqual(task.id, again.id)
             self.assertEqual(db.query(CashExecutionTask).count(), 1)
+            self.assertEqual(db.query(FundTransaction).count(), 0)
 
     def test_output_receipt_task_waits_for_approval_and_attachment(self):
         with Session(self.engine) as db:

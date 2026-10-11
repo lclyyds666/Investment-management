@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS `biz_cash_execution_task` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_cash_task_approval` (`approval_form_id`),
   UNIQUE KEY `uq_cash_task_invoice` (`invoice_id`),
-  CONSTRAINT `ck_cash_task_single_source` CHECK ((`direction`='outflow' AND `invoice_id` IS NULL) OR (`direction`='inflow' AND `approval_form_id` IS NULL)),
-  CONSTRAINT `fk_cash_task_approval` FOREIGN KEY (`approval_form_id`) REFERENCES `biz_approval_form` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_cash_task_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `ck_cash_task_single_source` CHECK ((`direction`='outflow' AND `approval_form_id` IS NOT NULL AND `invoice_id` IS NULL) OR (`direction`='inflow' AND `invoice_id` IS NOT NULL AND `approval_form_id` IS NULL)),
+  CONSTRAINT `fk_cash_task_approval` FOREIGN KEY (`approval_form_id`) REFERENCES `biz_approval_form` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_cash_task_invoice` FOREIGN KEY (`invoice_id`) REFERENCES `biz_invoice` (`id`) ON DELETE RESTRICT,
   CONSTRAINT `fk_cash_task_contract` FOREIGN KEY (`contract_id`) REFERENCES `biz_contract` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

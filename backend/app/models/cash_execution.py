@@ -23,8 +23,8 @@ class CashExecutionTask(Base):
         UniqueConstraint("approval_form_id", name="uq_cash_task_approval"),
         UniqueConstraint("invoice_id", name="uq_cash_task_invoice"),
         CheckConstraint(
-            "(direction = 'outflow' AND invoice_id IS NULL) OR "
-            "(direction = 'inflow' AND approval_form_id IS NULL)",
+            "(direction = 'outflow' AND approval_form_id IS NOT NULL AND invoice_id IS NULL) OR "
+            "(direction = 'inflow' AND invoice_id IS NOT NULL AND approval_form_id IS NULL)",
             name="ck_cash_task_single_source",
         ),
     )
@@ -32,10 +32,10 @@ class CashExecutionTask(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
     approval_form_id: Mapped[int | None] = mapped_column(
-        ForeignKey("biz_approval_form.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("biz_approval_form.id", ondelete="RESTRICT"), nullable=True
     )
     invoice_id: Mapped[int | None] = mapped_column(
-        ForeignKey("biz_invoice.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("biz_invoice.id", ondelete="RESTRICT"), nullable=True
     )
     contract_id: Mapped[int | None] = mapped_column(
         ForeignKey("biz_contract.id", ondelete="SET NULL"), nullable=True
