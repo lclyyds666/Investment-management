@@ -21,6 +21,7 @@ class InvoiceBase(BaseModel):
     amount: Decimal = Decimal("0")
     status: InvoiceStatus = InvoiceStatus.PENDING
     customer_name: str = ""
+    contract_id: Optional[int] = None
     contract_no: str = ""
     issued_date: Optional[date] = None
     remark: str = ""
@@ -64,6 +65,7 @@ class InvoiceUpdate(BaseModel):
     tax_no: Optional[str] = None
     amount: Optional[Decimal] = None
     customer_name: Optional[str] = None
+    contract_id: Optional[int] = None
     contract_no: Optional[str] = None
     remark: Optional[str] = None
     customer_social_credit_code: Optional[str] = None
@@ -77,6 +79,7 @@ class InvoiceUpdate(BaseModel):
         "tax_no",
         "amount",
         "customer_name",
+        "contract_id",
         "contract_no",
         "remark",
         "customer_social_credit_code",

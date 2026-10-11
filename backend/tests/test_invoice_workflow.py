@@ -202,7 +202,7 @@ def test_invoice_approval_two_node_permissions_and_projection(invoice_workflow_a
     assert client.get(f"/api/v1/invoices/{invoice.id}/approval-form/print").status_code == 409
 
 
-def test_rejected_invoice_form_reopens_and_resubmits_after_edits(invoice_workflow_api):
+def test_rejected_invoice_form_keeps_contract_locked_and_resubmits_after_other_edits(invoice_workflow_api):
     db, client, current, users, invoice = invoice_workflow_api
     created = client.post(f"/api/v1/invoices/{invoice.id}/approval-form")
     form_id = created.json()["data"]["id"]
@@ -212,7 +212,7 @@ def test_rejected_invoice_form_reopens_and_resubmits_after_edits(invoice_workflo
     current["user"] = users["governance"]
     rejected = client.post(
         f"/api/v1/approval-forms/{form_id}/reject",
-        json={"comment": "请更新合同号"},
+        json={"comment": "请更新备注"},
     )
     assert rejected.status_code == 200, rejected.text
 
@@ -221,11 +221,17 @@ def test_rejected_invoice_form_reopens_and_resubmits_after_edits(invoice_workflo
         f"/api/v1/invoices/{invoice.id}",
         json={"contract_no": "HT-2026-002"},
     )
+    assert updated.status_code == 409, updated.text
+    updated = client.put(
+        f"/api/v1/invoices/{invoice.id}",
+        json={"remark": "已按驳回意见补充"},
+    )
     assert updated.status_code == 200, updated.text
     reopened = client.post(f"/api/v1/invoices/{invoice.id}/approval-form")
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["data"]["id"] == form_id
-    assert reopened.json()["data"]["contract_no"] == "HT-2026-002"
+    assert reopened.json()["data"]["contract_no"] == invoice.contract_no
+    assert reopened.json()["data"]["remark"] == "已按驳回意见补充"
     resumed = client.post(f"/api/v1/invoices/{invoice.id}/approval-form/submit")
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["data"]["workflow_instance_id"] == instance_id

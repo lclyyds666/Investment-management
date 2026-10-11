@@ -13,7 +13,7 @@ const invoiceApi = vi.hoisted(() => ({
   createInvoiceApprovalForm: vi.fn(),
   downloadInvoiceDocument: vi.fn()
 }))
-const contractApi = vi.hoisted(() => ({ listContracts: vi.fn() }))
+const contractApi = vi.hoisted(() => ({ listContracts: vi.fn(), listEligibleContracts: vi.fn() }))
 const customerApi = vi.hoisted(() => ({ listCustomers: vi.fn(), getCustomer: vi.fn() }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
@@ -82,6 +82,7 @@ describe('invoice management redesign', () => {
     invoiceApi.createInvoiceApprovalForm.mockResolvedValue({})
     invoiceApi.downloadInvoiceDocument.mockResolvedValue(new Blob(['ok']))
     contractApi.listContracts.mockResolvedValue([{ id: 7, contract_no: 'HT-001', title: '测试合同' }])
+    contractApi.listEligibleContracts.mockResolvedValue([{ id: 7, contract_no: 'HT-001', title: '测试合同' }])
     customerApi.listCustomers.mockResolvedValue([])
     customerApi.getCustomer.mockResolvedValue(null)
   })
@@ -125,6 +126,39 @@ describe('invoice management redesign', () => {
     expect(contractApi.listContracts).toHaveBeenCalled()
     expect(wrapper.vm.form.contract_no).toBe('HT-001')
     expect(wrapper.vm.form.customer_name).toBe('客户')
+  })
+
+  it('shows contract, scenic, source business and period columns', () => {
+    const wrapper = mountView()
+    expect(wrapper.vm.columns.map(column => column.label)).toEqual(expect.arrayContaining([
+      '合同编号', '景区', '来源业务', '台账期次'
+    ]))
+  })
+
+  it('keeps inherited source contract read-only', async () => {
+    const wrapper = mountView()
+    wrapper.vm.openEdit({
+      id: 21, direction: 'output', generated_by_source: true,
+      contract_id: 7, contract_no: 'HT-001', scenic_id: 'scenic-a', source_kind: 'ticket'
+    })
+    await flushPromises()
+    expect(wrapper.vm.canBackfillContract).toBe(false)
+    expect(contractApi.listEligibleContracts).not.toHaveBeenCalled()
+  })
+
+  it('backfills a historical source contract once from eligible choices', async () => {
+    const wrapper = mountView()
+    wrapper.vm.openEdit({
+      id: 22, direction: 'output', generated_by_source: true,
+      contract_id: null, contract_no: '', scenic_id: 'scenic-a', source_kind: 'ticket', status: 'pending'
+    })
+    await flushPromises()
+    expect(wrapper.vm.canBackfillContract).toBe(true)
+    expect(contractApi.listEligibleContracts).toHaveBeenCalledWith('scenic-a', 'ticket')
+    wrapper.vm.form.contract_id = 7
+    await wrapper.vm.saveEdit()
+    expect(invoiceApi.updateInvoice).toHaveBeenCalledWith(22, expect.objectContaining({ contract_id: 7 }))
+    expect(invoiceApi.updateInvoice.mock.calls.at(-1)[1]).not.toHaveProperty('contract_no')
   })
 
   it('only enables output detail save and print when totals balance', async () => {

@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -20,9 +21,26 @@ from app.models.contract import Contract
 from app.models.customer import Customer
 from app.models.hotel_ledger import HotelLedger
 from app.models.invoice import Invoice, InvoiceDetail
-from app.models.invoice_preference import ScenicInvoicePreference
+from app.models.ledger_contract import LedgerContractLink
 from app.models.ticket_ledger import TicketLedger
 from app.models.approval_form import ApprovalForm
+
+
+class InvoiceGenerationError(ValueError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+class InvoiceSourceLocked(HTTPException):
+    def __init__(self):
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "invoice_source_locked",
+                "message": "来源发票已开票或已进入审批，不能失效或重建",
+            },
+        )
 
 
 def ticket_period_key(row: TicketLedger) -> str:
@@ -85,19 +103,7 @@ def _fingerprint(rows, source_kind: InvoiceSourceKind) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _remembered_customer(db: Session, scenic_id: str, direction: InvoiceDirection):
-    preference = db.scalar(
-        select(ScenicInvoicePreference).where(
-            ScenicInvoicePreference.scenic_id == scenic_id,
-            ScenicInvoicePreference.direction == direction,
-        )
-    )
-    remembered_no = ((preference.last_contract_no if preference else "") or "").strip()
-    if not remembered_no:
-        return "", None
-    contract = db.scalar(select(Contract).where(Contract.contract_no == remembered_no))
-    if not contract:
-        return "", None
+def _contract_customer(db: Session, contract: Contract):
     customer = None
     if contract.customer_credit_code:
         customer = db.scalar(
@@ -105,7 +111,15 @@ def _remembered_customer(db: Session, scenic_id: str, direction: InvoiceDirectio
         )
     if not customer and contract.customer_name:
         customer = db.scalar(select(Customer).where(Customer.name == contract.customer_name))
-    return contract.contract_no, customer
+    return customer
+
+
+def source_invoice_is_locked(invoice: Invoice) -> bool:
+    return (
+        invoice.status == InvoiceStatus.ISSUED
+        or invoice.workflow_instance_id is not None
+        or bool(getattr(invoice, "allocations", ()))
+    )
 
 
 def _invoice_snapshot(
@@ -117,6 +131,7 @@ def _invoice_snapshot(
     amount: Decimal,
     source_revision: int,
     fingerprint: str,
+    contract_id: int,
     contract_no: str,
     customer: Customer | None,
 ) -> Invoice:
@@ -131,6 +146,7 @@ def _invoice_snapshot(
         source_revision=source_revision,
         source_fingerprint=fingerprint,
         generated_by_source=True,
+        contract_id=contract_id,
         contract_no=contract_no,
         approval_status=InvoiceApprovalStatus.DRAFT,
         generated_at=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -165,6 +181,11 @@ def remove_period_invoices(
     if not invoices:
         return
     ids = [invoice.id for invoice in invoices]
+    has_approval = db.scalar(
+        select(ApprovalForm.id).where(ApprovalForm.invoice_id.in_(ids)).limit(1)
+    ) is not None
+    if has_approval or any(source_invoice_is_locked(invoice) for invoice in invoices):
+        raise InvoiceSourceLocked()
     db.execute(delete(ApprovalForm).where(ApprovalForm.invoice_id.in_(ids)))
     for invoice in invoices:
         db.delete(invoice)
@@ -178,6 +199,15 @@ def sync_confirmed_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> tuple[Invoice, Invoice]:
+    link = db.scalar(
+        select(LedgerContractLink).where(
+            LedgerContractLink.scenic_id == scenic_id,
+            LedgerContractLink.source_kind == source_kind,
+            LedgerContractLink.period_key == period_key,
+        )
+    )
+    if link is None:
+        raise InvoiceGenerationError("period_contract_missing")
     rows = _source_rows(db, source_kind, scenic_id, period_key)
     if not rows:
         raise ValueError("cannot generate invoices for an empty source period")
@@ -186,7 +216,10 @@ def sync_confirmed_period_invoices(
     )
     fingerprint = _fingerprint(rows, source_kind)
     revision = max((row.id for row in rows), default=0)
-    contract_no, customer = _remembered_customer(db, scenic_id, InvoiceDirection.OUTPUT)
+    contract = db.get(Contract, link.contract_id)
+    if contract is None:
+        raise InvoiceGenerationError("period_contract_missing")
+    customer = _contract_customer(db, contract)
     input_invoice = _invoice_snapshot(
         direction=InvoiceDirection.INPUT,
         source_kind=source_kind,
@@ -195,7 +228,8 @@ def sync_confirmed_period_invoices(
         amount=sum((_money(row.hexiao_amount) for row in rows), Decimal("0")),
         source_revision=revision,
         fingerprint=fingerprint,
-        contract_no="",
+        contract_id=link.contract_id,
+        contract_no=link.contract_no_snapshot,
         customer=None,
     )
     output_invoice = _invoice_snapshot(
@@ -206,7 +240,8 @@ def sync_confirmed_period_invoices(
         amount=sum((_money(row.jinying_amount) for row in rows), Decimal("0")),
         source_revision=revision,
         fingerprint=fingerprint,
-        contract_no=contract_no,
+        contract_id=link.contract_id,
+        contract_no=link.contract_no_snapshot,
         customer=customer,
     )
     for line_no, row in enumerate(rows, start=1):
@@ -232,6 +267,20 @@ def invalidate_period_invoices(
     source_kind: InvoiceSourceKind,
     period_key: str,
 ) -> None:
+    invoices = db.scalars(
+        select(Invoice).where(
+            Invoice.scenic_id == scenic_id,
+            Invoice.source_kind == source_kind,
+            Invoice.period_key == period_key,
+            Invoice.direction.in_((InvoiceDirection.INPUT, InvoiceDirection.OUTPUT)),
+        )
+    ).all()
+    invoice_ids = [invoice.id for invoice in invoices]
+    has_approval = bool(invoice_ids) and db.scalar(
+        select(ApprovalForm.id).where(ApprovalForm.invoice_id.in_(invoice_ids)).limit(1)
+    ) is not None
+    if has_approval or any(source_invoice_is_locked(invoice) for invoice in invoices):
+        raise InvoiceSourceLocked()
     rows = _period_rows(db, source_kind, scenic_id, period_key)
     for row in rows:
         row.confirmed = False

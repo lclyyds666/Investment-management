@@ -24,6 +24,7 @@ from app.core.enums import (
 )
 from app.db.session import get_db
 from app.models.approval_form import ApprovalForm, ApprovalFormAction
+from app.models.contract import Contract
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.user import User
 from app.models.workflow import WorkflowInstance, WorkflowTask
@@ -46,6 +47,7 @@ from app.services.invoice_documents import (
     invoice_detail_totals,
     save_invoice_attachment,
 )
+from app.services.invoice_generation import source_invoice_is_locked
 from app.services.invoice_approval_print import (
     build_invoice_approval_docx,
     build_invoice_detail_xlsx,
@@ -251,7 +253,40 @@ def update_invoice(
     _: User = Depends(_manage_guard),
 ):
     invoice = _invoice_or_404(db, invoice_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    changes_source_data = (
+        ("amount" in changes and changes["amount"] != invoice.amount)
+        or ("contract_id" in changes and changes["contract_id"] != invoice.contract_id)
+        or ("contract_no" in changes and changes["contract_no"] != invoice.contract_no)
+    )
+    if invoice.generated_by_source and changes_source_data:
+        if source_invoice_is_locked(invoice) or _invoice_form(db, invoice.id) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="来源发票已开票或已有审批，不能修改合同或来源金额",
+            )
+    if invoice.generated_by_source and "contract_no" in changes:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="来源发票合同编号为快照，只能通过合同关联补选",
+        )
+    if "contract_id" in changes:
+        contract_id = changes.pop("contract_id")
+        if not invoice.generated_by_source or not invoice.scenic_id or not invoice.source_kind:
+            raise HTTPException(status_code=422, detail="仅历史来源发票支持补选合同")
+        if invoice.contract_id is not None:
+            raise HTTPException(status_code=409, detail="来源发票合同已形成快照，不能更换")
+        contract = db.get(Contract, contract_id)
+        if (
+            contract is None
+            or contract.status != ContractStatus.APPROVED
+            or contract.scenic_id != invoice.scenic_id
+            or invoice.source_kind.value not in (contract.business_scopes or [])
+        ):
+            raise HTTPException(status_code=422, detail="只能选择同景区、同业务范围的已审批合同")
+        invoice.contract_id = contract.id
+        invoice.contract_no = contract.contract_no
+    for field, value in changes.items():
         setattr(invoice, field, value)
     db.commit()
     db.refresh(invoice)
@@ -356,6 +391,13 @@ def update_detail(
     _: User = Depends(_manage_guard),
 ):
     invoice = _output_invoice_or_409(db, invoice_id)
+    if invoice.generated_by_source and (
+        source_invoice_is_locked(invoice) or _invoice_form(db, invoice.id) is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="来源发票已开票或已有审批，不能修改来源金额",
+        )
     detail = next((row for row in invoice.details if row.id == detail_id), None)
     if detail is None:
         raise HTTPException(status_code=404, detail="发票明细不存在")

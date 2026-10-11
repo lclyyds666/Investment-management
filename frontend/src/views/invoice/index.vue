@@ -47,7 +47,13 @@
         <el-form-item label="发票抬头" prop="invoice_title"><el-input v-model="form.invoice_title" /></el-form-item>
         <el-form-item label="税号"><el-input v-model="form.tax_no" /></el-form-item>
         <el-form-item label="金额（元）" prop="amount"><el-input-number v-model="form.amount" :min="0" :precision="2" style="width: 100%" /></el-form-item>
-        <el-form-item v-if="activeDirection === 'output'" label="关联合同" prop="contract_no">
+        <el-form-item v-if="form.generated_by_source" label="关联合同">
+          <el-select v-if="canBackfillContract" v-model="form.contract_id" filterable style="width: 100%" @change="onHistoricalContractChange">
+            <el-option v-for="contract in contracts" :key="contract.id" :label="`${contract.contract_no || ''} ${contract.title || ''}`" :value="contract.id" />
+          </el-select>
+          <span v-else class="readonly-status">{{ form.contract_no || '未关联（当前不可补选）' }}</span>
+        </el-form-item>
+        <el-form-item v-else-if="activeDirection === 'output'" label="关联合同" prop="contract_no">
           <el-select v-model="form.contract_no" filterable clearable style="width: 100%" @change="onContractChange">
             <el-option v-for="contract in contracts" :key="contract.id || contract.contract_no" :label="`${contract.contract_no || ''} ${contract.title || ''}`" :value="contract.contract_no" />
           </el-select>
@@ -110,13 +116,14 @@ import { Edit, Refresh, Upload } from '@element-plus/icons-vue'
 import { usePortalStore } from '@/store/portal'
 import { canUsePermission } from '@/utils/businessAuthorization'
 import { INVOICE_STATUS_META } from '@/constants/business'
+import { getScenicById } from '@/constants/scenic'
 import { downloadBlob } from '@/utils/file'
 import {
   listInvoices, invoiceStats, updateInvoice,
   listInvoiceAttachments, uploadInvoiceAttachments, listInvoiceDetails,
   updateInvoiceDetail, createInvoiceApprovalForm, submitInvoiceApproval, downloadInvoiceDocument
 } from '@/api/invoice'
-import { listContracts } from '@/api/contract'
+import { listContracts, listEligibleContracts } from '@/api/contract'
 import { getCustomer, listCustomers } from '@/api/customer'
 import ProTable from '@/components/ProTable.vue'
 
@@ -137,7 +144,10 @@ const columns = [
   { prop: 'invoice_title', label: '发票抬头', minWidth: 190, showOverflowTooltip: true },
   { prop: 'tax_no', label: '税号', width: 180 },
   { label: '金额（元）', width: 130, align: 'right', formatter: row => money(row.amount) },
-  { prop: 'contract_no', label: '关联合同', width: 150, showOverflowTooltip: true },
+  { prop: 'contract_no', label: '合同编号', minWidth: 150, showOverflowTooltip: true },
+  { prop: 'scenic_id', label: '景区', minWidth: 140, formatter: row => scenicName(row.scenic_id) },
+  { prop: 'source_kind', label: '来源业务', width: 110, formatter: row => sourceKindText(row.source_kind) },
+  { prop: 'period_key', label: '台账期次', minWidth: 180, showOverflowTooltip: true },
   { label: '状态', width: 110, align: 'center', slot: 'status' },
   { label: '操作', minWidth: 300, align: 'center', fixed: 'right', slot: 'actions' }
 ]
@@ -149,16 +159,27 @@ async function loadStats() {
 }
 function money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
 function statusText(status) { return INVOICE_STATUS_META[status]?.text || status || '未知' }
+function scenicName(scenicId) { return getScenicById(scenicId)?.name || scenicId || '-' }
+function sourceKindText(sourceKind) { return ({ ticket: '门票', hotel: '酒店' })[sourceKind] || sourceKind || '-' }
 const editVisible = ref(false)
 const saving = ref(false)
 const editingId = ref(null)
+const editingRow = ref(null)
 const editingScenicId = ref('global')
 const formRef = ref()
 const form = reactive({
-  invoice_title: '', tax_no: '', amount: 0, contract_no: '', customer_name: '',
+  invoice_title: '', tax_no: '', amount: 0, contract_id: null, contract_no: '', customer_name: '',
   customer_social_credit_code: '', customer_address: '', customer_phone: '',
-  customer_bank_name: '', customer_bank_account: '', status: 'pending', remark: ''
+  customer_bank_name: '', customer_bank_account: '', status: 'pending', remark: '',
+  generated_by_source: false, workflow_instance_id: null
 })
+const canBackfillContract = computed(() => Boolean(
+  canManage.value
+  && editingRow.value?.generated_by_source
+  && !editingRow.value?.contract_id
+  && !editingRow.value?.workflow_instance_id
+  && editingRow.value?.status !== 'issued'
+))
 const rules = {
   invoice_title: [{ required: true, message: '请输入发票抬头', trigger: 'blur' }],
   amount: [{ required: true, message: '请输入金额', trigger: 'blur' }]
@@ -166,21 +187,24 @@ const rules = {
 function resetForm(row) {
   Object.assign(form, {
     invoice_title: row.invoice_title || '', tax_no: row.tax_no || '', amount: Number(row.amount || 0),
-    contract_no: row.contract_no || '', customer_name: row.customer_name || '',
+    contract_id: row.contract_id || null, contract_no: row.contract_no || '', customer_name: row.customer_name || '',
     customer_social_credit_code: row.customer_social_credit_code || '', customer_address: row.customer_address || '',
     customer_phone: row.customer_phone || '', customer_bank_name: row.customer_bank_name || '',
-    customer_bank_account: row.customer_bank_account || '', status: row.status || 'pending', remark: row.remark || ''
+    customer_bank_account: row.customer_bank_account || '', status: row.status || 'pending', remark: row.remark || '',
+    generated_by_source: Boolean(row.generated_by_source), workflow_instance_id: row.workflow_instance_id || null
   })
 }
 function openEdit(row) {
   activeDirection.value = row.direction || activeDirection.value
   editingId.value = row.id
+  editingRow.value = row
   editingScenicId.value = row.scenic_id || row.scenicId || 'global'
   resetForm(row)
   pendingFiles.value = []
   attachments.value = []
   editVisible.value = true
-  if (activeDirection.value === 'output') loadOutputReferences(row)
+  if (canBackfillContract.value) loadHistoricalContracts(row)
+  else if (activeDirection.value === 'output' && !row.generated_by_source) loadOutputReferences(row)
   if (activeDirection.value === 'input') loadAttachments(row.id)
 }
 function contractMemoryKey(row = {}) {
@@ -212,6 +236,20 @@ function applyContractCustomer(contract) {
 function onContractChange(contractNo) {
   const contract = contractForNumber(contractNo)
   if (contract) applyContractCustomer(contract)
+}
+function onHistoricalContractChange(contractId) {
+  const contract = contracts.value.find(item => item.id === contractId)
+  if (!contract) return
+  form.contract_no = contract.contract_no || ''
+  applyContractCustomer(contract)
+}
+async function loadHistoricalContracts(row) {
+  try {
+    const result = await listEligibleContracts(row.scenic_id, row.source_kind)
+    contracts.value = Array.isArray(result) ? result : (result?.items || [])
+  } catch {
+    contracts.value = []
+  }
 }
 async function loadOutputReferences(row) {
   try {
@@ -261,6 +299,14 @@ async function saveEdit() {
   try {
     const payload = { ...form }
     delete payload.status
+    delete payload.generated_by_source
+    delete payload.workflow_instance_id
+    if (form.generated_by_source) {
+      delete payload.contract_no
+      if (!canBackfillContract.value) delete payload.contract_id
+    } else {
+      delete payload.contract_id
+    }
     await updateInvoice(editingId.value, payload)
     if (pendingFiles.value.length) await uploadFiles({ id: editingId.value }, pendingFiles.value)
     if (activeDirection.value === 'output' && form.contract_no) localStorage.setItem(contractMemoryKey(), form.contract_no)

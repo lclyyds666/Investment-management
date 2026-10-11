@@ -15,11 +15,12 @@ from sqlalchemy.pool import StaticPool
 
 import app.db.init_db  # noqa: F401
 from app.api.deps import get_current_user
-from app.core.enums import AssignmentStatus, ContractType, InvoiceDirection, InvoiceSourceKind, InvoiceStatus
+from app.core.enums import AssignmentStatus, ContractStatus, ContractType, InvoiceDirection, InvoiceSourceKind, InvoiceStatus
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
 from app.models.approval_form import ApprovalForm
+from app.models.contract import Contract
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
@@ -96,6 +97,23 @@ def invoice_api(monkeypatch):
         generated_by_source=True,
     )
     db.add_all([invoice, legacy, other])
+    eligible_contract = Contract(
+        contract_no="HT-ELIGIBLE",
+        title="合资格合同",
+        scenic_id="scenic-a",
+        business_scopes=[InvoiceSourceKind.TICKET.value],
+        status=ContractStatus.APPROVED,
+        created_by=users["reviewer"].id,
+    )
+    wrong_scenic_contract = Contract(
+        contract_no="HT-WRONG-SCENIC",
+        title="其他景区合同",
+        scenic_id="scenic-b",
+        business_scopes=[InvoiceSourceKind.TICKET.value],
+        status=ContractStatus.APPROVED,
+        created_by=users["reviewer"].id,
+    )
+    db.add_all([eligible_contract, wrong_scenic_contract])
     db.commit()
 
     app = create_app()
@@ -186,7 +204,6 @@ def test_update_allows_business_snapshot_fields(invoice_api):
         "invoice_title": "新抬头",
         "tax_no": "9137",
         "amount": "120.00",
-        "contract_no": "HT-1",
         "customer_name": "客户",
         "customer_social_credit_code": "913700",
         "customer_address": "地址",
@@ -199,6 +216,78 @@ def test_update_allows_business_snapshot_fields(invoice_api):
     db.refresh(invoice)
     assert invoice.amount == Decimal("120.00")
     assert invoice.customer_bank_account == "账号"
+
+
+def test_historical_source_invoice_contract_can_be_backfilled_once(invoice_api):
+    db, client, _, _, invoice, _, _, _ = invoice_api
+    contract = db.scalar(select(Contract).where(Contract.contract_no == "HT-ELIGIBLE"))
+
+    response = client.put(f"/api/v1/invoices/{invoice.id}", json={"contract_id": contract.id})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["contract_id"] == contract.id
+    db.refresh(invoice)
+    assert invoice.contract_id == contract.id
+    assert invoice.contract_no == contract.contract_no
+
+    replacement = Contract(
+        contract_no="HT-SECOND",
+        title="第二份合资格合同",
+        scenic_id="scenic-a",
+        business_scopes=[InvoiceSourceKind.TICKET.value],
+        status=ContractStatus.APPROVED,
+        created_by=contract.created_by,
+    )
+    db.add(replacement)
+    db.commit()
+    response = client.put(f"/api/v1/invoices/{invoice.id}", json={"contract_id": replacement.id})
+    assert response.status_code == 409
+    db.refresh(invoice)
+    assert invoice.contract_id == contract.id
+
+
+def test_historical_source_invoice_rejects_ineligible_contract(invoice_api):
+    db, client, _, _, invoice, _, _, _ = invoice_api
+    contract = db.scalar(select(Contract).where(Contract.contract_no == "HT-WRONG-SCENIC"))
+
+    response = client.put(f"/api/v1/invoices/{invoice.id}", json={"contract_id": contract.id})
+
+    assert response.status_code == 422
+    db.refresh(invoice)
+    assert invoice.contract_id is None
+    assert invoice.contract_no == ""
+
+
+@pytest.mark.parametrize("usage", ["issued", "approval"])
+def test_used_source_invoice_rejects_amount_and_contract_changes(invoice_api, usage):
+    db, client, _, users, invoice, _, _, _ = invoice_api
+    contract = db.scalar(select(Contract).where(Contract.contract_no == "HT-ELIGIBLE"))
+    if usage == "issued":
+        invoice.status = InvoiceStatus.ISSUED
+    else:
+        db.add(ApprovalForm(
+            form_type=ContractType.INVOICE,
+            invoice_id=invoice.id,
+            created_by=users["reviewer"].id,
+        ))
+    db.commit()
+
+    amount_response = client.put(f"/api/v1/invoices/{invoice.id}", json={"amount": "999.00"})
+    contract_response = client.put(
+        f"/api/v1/invoices/{invoice.id}", json={"contract_id": contract.id}
+    )
+    remark_response = client.put(
+        f"/api/v1/invoices/{invoice.id}",
+        json={"amount": "100.00", "remark": "仅更新备注"},
+    )
+
+    assert amount_response.status_code == 409
+    assert contract_response.status_code == 409
+    assert remark_response.status_code == 200
+    db.refresh(invoice)
+    assert invoice.amount == Decimal("100.00")
+    assert invoice.contract_id is None
+    assert invoice.remark == "仅更新备注"
 
 
 @pytest.mark.parametrize("field", ["amount", "tax_no", "customer_name"])
@@ -371,7 +460,7 @@ def test_detail_update_rejects_explicit_null(invoice_api, field):
     assert response.status_code == 422, response.text
 
 
-def test_source_lifecycle_delete_cascades_approval_form(invoice_api):
+def test_source_lifecycle_preserves_invoice_with_approval_form(invoice_api):
     db, _, _, users, invoice, _, _, _ = invoice_api
     db.add(ApprovalForm(
         form_type=ContractType.INVOICE,
@@ -379,11 +468,13 @@ def test_source_lifecycle_delete_cascades_approval_form(invoice_api):
         created_by=users["reviewer"].id,
     ))
     db.commit()
-    remove_period_invoices(
-        db,
-        scenic_id=invoice.scenic_id,
-        source_kind=invoice.source_kind,
-        period_key=invoice.period_key,
-    )
-    db.commit()
-    assert db.scalar(select(func.count()).select_from(ApprovalForm)) == 0
+    with pytest.raises(Exception) as raised:
+        remove_period_invoices(
+            db,
+            scenic_id=invoice.scenic_id,
+            source_kind=invoice.source_kind,
+            period_key=invoice.period_key,
+        )
+    assert getattr(raised.value, "status_code", None) == 409
+    assert db.get(Invoice, invoice.id) is invoice
+    assert db.scalar(select(func.count()).select_from(ApprovalForm)) == 1
