@@ -256,6 +256,48 @@ class ContractBusinessScopeApiTest(unittest.TestCase):
         )
         self.assertTrue(allowed.json()["data"][0]["is_preferred"])
 
+    def test_supply_reviewer_reads_minimal_eligible_contract_options(self):
+        reviewer = self._add_user("supply-reviewer")
+        self.db.flush()
+        self.db.add(UserAssignment(
+            user_id=reviewer.id,
+            organization_id=self.db.scalar(
+                select(Organization.id).where(Organization.code == "supplymanagement")
+            ),
+            position_id=self.db.scalar(
+                select(Position.id).where(Position.code == "supply.business_reviewer")
+            ),
+            valid_from=date(2026, 1, 1),
+            status=AssignmentStatus.ACTIVE,
+        ))
+        supply_contract = Contract(
+            contract_no="SUPPLY-ELIGIBLE",
+            title="供应链门票合同",
+            status=ContractStatus.APPROVED,
+            scenic_id="guanquelou",
+            business_scopes=["ticket"],
+            created_by=reviewer.id,
+            company_code="supplymanagement",
+            organization_code="supplymanagement",
+            customer_name="景区客户",
+        )
+        self.db.add(supply_contract)
+        self.db.commit()
+        self.current_user["value"] = reviewer
+
+        response = self.client.get(
+            "/api/v1/contracts/eligible",
+            params={"scenic_id": "guanquelou", "source_kind": "ticket"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()["data"]
+        self.assertEqual([item["contract_no"] for item in payload], ["SUPPLY-ELIGIBLE"])
+        self.assertEqual(
+            set(payload[0]),
+            {"id", "contract_no", "title", "scenic_id", "customer_name", "business_scopes", "is_preferred"},
+        )
+
     def test_contract_user_reads_safe_scenic_options_without_rate_access(self):
         denied_options = self.client.get("/api/v1/scenic-spots/options")
         self.assertEqual(denied_options.status_code, 403)

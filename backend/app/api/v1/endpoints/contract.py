@@ -28,6 +28,7 @@ from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.approval import ApprovalOut, ApproveRequest, RejectRequest
 from app.schemas.common import Response
 from app.schemas.contract import ContractCreate, ContractOut, ContractUpdate
+from app.schemas.ledger_contract import LedgerEligibleContractOut
 from app.schemas.workflow import WorkflowStartRequest
 from app.services.contract_evidence import deterministic_findings, retrieve_evidence
 from app.services.contract_review import render_review_markdown
@@ -71,6 +72,18 @@ def _contract_permission_guard(permission_code: str):
 
 
 _view_guard = _contract_permission_guard("investment.legal.contracts.view")
+
+
+def _eligible_contract_guard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    if _has_contract_permission(db, current_user, "investment.legal.contracts.view"):
+        return current_user
+    supply_context = PermissionContext(company_code="supplymanagement")
+    if has_permission(db, current_user, "supply.scenic.review", supply_context):
+        return current_user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
 _create_guard = _contract_permission_guard("investment.legal.contracts.create")
 _update_guard = _contract_permission_guard("investment.legal.contracts.update")
 _submit_guard = _contract_permission_guard("investment.legal.contracts.submit")
@@ -324,12 +337,12 @@ def export_contracts(
     )
 
 
-@router.get("/eligible", response_model=Response[list[ContractOut]], summary="合资格合同")
+@router.get("/eligible", response_model=Response[list[LedgerEligibleContractOut]], summary="合资格合同")
 def list_eligible_contracts(
     scenic_id: str,
     source_kind: InvoiceSourceKind,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_view_guard),
+    current_user: User = Depends(_eligible_contract_guard),
 ):
     rows = eligible_contracts(
         db,
@@ -347,12 +360,15 @@ def list_eligible_contracts(
     preferred_contract_id = preference.last_contract_id if preference else None
     return Response.ok(
         [
-            _to_out(
-                db,
-                contract,
-                current_user,
-                names.get(contract.created_by, ""),
-            ).model_copy(update={"is_preferred": contract.id == preferred_contract_id})
+            LedgerEligibleContractOut(
+                id=contract.id,
+                contract_no=contract.contract_no,
+                title=contract.title,
+                scenic_id=contract.scenic_id,
+                customer_name=contract.customer_name or "",
+                business_scopes=contract.business_scopes or [],
+                is_preferred=contract.id == preferred_contract_id,
+            )
             for contract in rows
         ]
     )
