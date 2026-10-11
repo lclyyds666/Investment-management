@@ -20,6 +20,8 @@ from app.models.ai_assistant import AiConversation, AiDeletionAudit, AiMessage, 
 from app.models.audit import AuditLog  # noqa: F401 确保 create_all 建表
 from app.models.channel import Channel, ChannelData
 from app.models.contract import Contract  # noqa: F401
+from app.models.cash_execution import CashExecutionTask, InvoiceFundAllocation  # noqa: F401
+from app.models.fund import FundTransaction  # noqa: F401
 from app.models.customer import Customer
 from app.models.hotel_ledger import HotelLedger  # noqa: F401 确保 create_all 建表
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail  # noqa: F401

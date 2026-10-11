@@ -23,3 +23,17 @@ class FundTransaction(Base):
     settled_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     remark: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id"), nullable=True)
+    execution_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_cash_execution_task.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    contract_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_contract.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    approval_form_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_approval_form.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("biz_invoice.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    scenic_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    bank_reference: Mapped[str] = mapped_column(String(128), default="", nullable=False)
