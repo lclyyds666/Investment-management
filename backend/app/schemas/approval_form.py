@@ -3,7 +3,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.enums import (
     CONTRACT_STATUS_LABELS,
@@ -42,7 +49,11 @@ class ApprovalFormBase(BaseModel):
 
 
 class ApprovalFormCreate(ApprovalFormBase):
-    contract_id: int
+    @model_validator(mode="after")
+    def require_business_contract(self):
+        if self.form_type in {ContractType.PAYMENT, ContractType.BUSINESS} and self.contract_id is None:
+            raise ValueError("请选择已审批合同")
+        return self
 
 
 class ApprovalFormUpdate(BaseModel):
