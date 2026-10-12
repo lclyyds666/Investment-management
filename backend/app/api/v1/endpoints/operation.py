@@ -2,9 +2,11 @@
 
 权限：STAFF / LEADER 可查看看板；录入数据仅 LEADER。
 """
+from datetime import date
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,7 +16,9 @@ from app.db.session import get_db
 from app.models.contract import Contract
 from app.models.invoice import Invoice
 from app.models.operation import OperationData
+from app.models.hotel_ledger import HotelLedger
 from app.models.project import ProjectMetrics
+from app.models.ticket_ledger import TicketLedger
 from app.schemas.common import Response
 from app.schemas.financial import FinancialDashboard
 from app.schemas.operation import (
@@ -25,9 +29,12 @@ from app.schemas.operation import (
     OperationDataOut,
     TrendPoint,
 )
+from app.schemas.operation_analysis import DataQualityIssueOut, OperationAnalysisOut
 from app.services.ai_agent import diagnose as ai_diagnose_service
 from app.services import financial as financial_svc
 from app.services.assignment_permissions import PermissionContext
+from app.services.operation_analysis import AnalysisFilters, analyze, validated_date_range
+from app.services.operation_series import build_confirmed_daily_series
 
 router = APIRouter()
 
@@ -35,6 +42,40 @@ _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANA
 _dashboard_guard = require_permission("supply.dashboard.view", _supply_context)
 _operation_guard = require_permission("supply.operation.view", _supply_context)
 _operation_create_guard = require_permission("supply.operation.create", _supply_context)
+
+
+@router.get(
+    "/analysis",
+    response_model=Response[OperationAnalysisOut],
+    summary="Confirmed ledger operation analysis",
+    dependencies=[Depends(_operation_guard)],
+)
+def operation_analysis(
+    start_date: date,
+    end_date: date,
+    scenic_id: list[str] = Query(default=[]),
+    business_type: list[Literal["ticket", "hotel"]] = Query(default=[]),
+    platform: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    try:
+        date_range = validated_date_range(start_date, end_date, max_days=366)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    tickets = db.scalars(select(TicketLedger).where(TicketLedger.confirmed.is_(True))).all()
+    hotels = db.scalars(select(HotelLedger).where(HotelLedger.confirmed.is_(True))).all()
+    points, issues = build_confirmed_daily_series(tickets, hotels)
+    result = analyze(
+        points,
+        date_range,
+        AnalysisFilters(
+            scenic_ids=scenic_id,
+            business_types=business_type,
+            platforms=platform,
+        ),
+    )
+    result.quality_issues = [DataQualityIssueOut.model_validate(issue.__dict__) for issue in issues]
+    return Response.ok(result)
 
 
 @router.get(
