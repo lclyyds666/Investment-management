@@ -57,4 +57,21 @@ describe('fund alert store', () => {
       { fund_id: 8, stage: 'due_soon' }
     ])
   })
+
+  it('ignores a previous user response that resolves after logout reset', async () => {
+    let resolveRequest
+    fundApi.getTodayFundAlerts.mockReturnValue(new Promise((resolve) => {
+      resolveRequest = resolve
+    }))
+    const store = useFundAlertStore()
+    const pending = store.loadForLogin()
+
+    store.reset()
+    resolveRequest({ items: [{ id: 99, stage: 'overdue' }] })
+    await pending
+
+    expect(store.items).toEqual([])
+    expect(store.visible).toBe(false)
+    expect(store.loading).toBe(false)
+  })
 })

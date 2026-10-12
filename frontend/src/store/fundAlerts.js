@@ -8,19 +8,23 @@ export const useFundAlertStore = defineStore('fundAlerts', () => {
   const loading = ref(false)
   let loadedForSession = false
   let inFlight = null
+  let sessionVersion = 0
 
   function loadForLogin() {
     if (loadedForSession) return Promise.resolve()
     if (inFlight) return inFlight
+    const requestVersion = sessionVersion
     loading.value = true
     inFlight = getTodayFundAlerts()
       .then((result) => {
+        if (requestVersion !== sessionVersion) return
         loadedForSession = true
         items.value = result?.items || []
         visible.value = items.value.length > 0
       })
       .catch(() => undefined)
       .finally(() => {
+        if (requestVersion !== sessionVersion) return
         loading.value = false
         inFlight = null
       })
@@ -33,6 +37,7 @@ export const useFundAlertStore = defineStore('fundAlerts', () => {
   }
 
   function reset() {
+    sessionVersion += 1
     loadedForSession = false
     inFlight = null
     items.value = []
