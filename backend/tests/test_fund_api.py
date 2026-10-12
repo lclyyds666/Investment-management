@@ -55,6 +55,8 @@ class FundApiTest(unittest.TestCase):
         paths = {route.path for route in self.app.routes}
         self.assertIn("/api/v1/funds", paths)
         self.assertIn("/api/v1/funds/summary", paths)
+        self.assertIn("/api/v1/funds/alerts/today", paths)
+        self.assertIn("/api/v1/funds/alerts/today/acknowledge", paths)
         self.assertIn("/api/v1/funds/{fund_id}/settle", paths)
 
     def test_view_permission_is_required(self):

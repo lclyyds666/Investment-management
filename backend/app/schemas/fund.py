@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -86,3 +87,28 @@ class FundSummary(BaseModel):
     due_within_30_amount: Decimal = Decimal("0")
     due_within_30_count: int = 0
     overdue_count: int = 0
+
+
+class FundAlertItem(BaseModel):
+    id: int
+    category: str
+    counterparty: str = ""
+    summary: str = ""
+    amount: Decimal
+    maturity_date: date
+    days_remaining: int
+    stage: Literal["due_soon", "overdue"]
+
+
+class FundAlertToday(BaseModel):
+    alert_date: date
+    items: list[FundAlertItem] = Field(default_factory=list)
+
+
+class FundAlertReceiptItem(BaseModel):
+    fund_id: int = Field(gt=0)
+    stage: Literal["due_soon", "overdue"]
+
+
+class FundAlertAcknowledgeIn(BaseModel):
+    items: list[FundAlertReceiptItem] = Field(default_factory=list, max_length=200)

@@ -14,6 +14,8 @@ from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.fund import (
     DUE_CATEGORIES,
+    FundAlertAcknowledgeIn,
+    FundAlertToday,
     FundSettleIn,
     FundSummary,
     FundTransactionCreate,
@@ -23,7 +25,12 @@ from app.schemas.fund import (
 from app.schemas.cash_execution import CashExecutionIn, CashExecutionTaskOut
 from app.services.assignment_permissions import PermissionContext
 from app.services.cash_execution import CashExecutionError, execute_task
-from app.services.fund import maturity_state, summarize_funds
+from app.services.fund import (
+    acknowledge_alert_receipts,
+    list_today_alerts,
+    maturity_state,
+    summarize_funds,
+)
 
 
 router = APIRouter()
@@ -117,6 +124,38 @@ def fund_summary(
 ):
     rows = db.scalars(select(FundTransaction)).all()
     return Response.ok(summarize_funds(rows, date.today()))
+
+
+@router.get(
+    "/alerts/today",
+    response_model=Response[FundAlertToday],
+    summary="Today's unshown fund maturity alerts",
+)
+def today_fund_alerts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_view_guard),
+):
+    return Response.ok(list_today_alerts(db, current_user.id, date.today()))
+
+
+@router.post(
+    "/alerts/today/acknowledge",
+    response_model=Response[dict],
+    summary="Acknowledge displayed fund maturity alerts",
+)
+def acknowledge_fund_alerts(
+    payload: FundAlertAcknowledgeIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_view_guard),
+):
+    acknowledged = acknowledge_alert_receipts(
+        db,
+        user_id=current_user.id,
+        items=payload.items,
+        today=date.today(),
+    )
+    db.commit()
+    return Response.ok({"acknowledged": acknowledged})
 
 
 @router.get(
