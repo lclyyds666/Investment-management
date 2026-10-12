@@ -31,6 +31,8 @@ from app.schemas.approval_form import ApprovalFormOut
 from app.schemas.common import Response
 from app.schemas.invoice import (
     InvoiceAttachmentOut,
+    InvoiceAllocationCreate,
+    InvoiceAllocationOut,
     InvoiceDetailList,
     InvoiceDetailOut,
     InvoiceDetailUpdate,
@@ -56,6 +58,14 @@ from app.services.invoice_generation import (
     source_invoice_has_approval_form,
     source_invoice_is_locked,
 )
+from app.services.invoice_reconciliation import (
+    ReconciliationError,
+    allocate,
+    delete_allocation,
+    invoice_reconciliation_state,
+    invoice_unallocated_amount,
+    list_allocations,
+)
 from app.services.invoice_approval_print import (
     build_invoice_approval_docx,
     build_invoice_detail_xlsx,
@@ -74,6 +84,7 @@ router = APIRouter()
 _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
 _view_guard = require_permission("supply.invoice.view", _supply_context)
 _manage_guard = require_permission("supply.invoice.manage", _supply_context)
+_finance_update_guard = require_permission("supply.finance.update", _supply_context)
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -122,10 +133,38 @@ def _source_locked_http(error: InvoiceSourceLocked) -> HTTPException:
 
 def _invoice_out(db: Session, invoice: Invoice) -> InvoiceOut:
     output = InvoiceOut.model_validate(invoice)
+    output.reconciliation_state = invoice_reconciliation_state(db, invoice)
+    output.unallocated_amount = invoice_unallocated_amount(db, invoice)
     if invoice.generated_by_source:
         output.has_approval_form = source_invoice_has_approval_form(db, invoice.id)
         output.source_locked = source_invoice_is_locked(db, invoice)
     return output
+
+
+def _allocation_out(allocation) -> InvoiceAllocationOut:
+    fund = allocation.fund_transaction
+    return InvoiceAllocationOut(
+        id=allocation.id,
+        invoice_id=allocation.invoice_id,
+        fund_transaction_id=allocation.fund_transaction_id,
+        amount=allocation.amount,
+        allocated_by=allocation.allocated_by,
+        allocated_at=allocation.created_at,
+        fund_direction=fund.direction,
+        fund_amount=fund.amount,
+        fund_occurred_on=fund.occurred_on,
+        fund_counterparty=fund.counterparty,
+        fund_summary=fund.summary,
+        fund_bank_reference=fund.bank_reference,
+    )
+
+
+def _reconciliation_http(error: ReconciliationError) -> HTTPException:
+    not_found = error.code in {"source_not_found", "allocation_not_found"}
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND if not_found else status.HTTP_409_CONFLICT,
+        detail={"code": error.code},
+    )
 
 
 def _invoice_form(db: Session, invoice_id: int) -> ApprovalForm | None:
@@ -261,6 +300,63 @@ def invoice_stats(db: Session = Depends(get_db), _: User = Depends(_view_guard))
         issued_amount=issued_amount,
         pending_amount=pending_amount,
     ))
+
+
+@router.get(
+    "/{invoice_id}/allocations",
+    response_model=Response[list[InvoiceAllocationOut]],
+    summary="发票收付款核销明细",
+)
+def get_invoice_allocations(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_view_guard),
+):
+    _invoice_or_404(db, invoice_id)
+    return Response.ok([_allocation_out(row) for row in list_allocations(db, invoice_id)])
+
+
+@router.post(
+    "/{invoice_id}/allocations",
+    response_model=Response[InvoiceAllocationOut],
+    summary="新增发票收付款核销",
+)
+def create_invoice_allocation(
+    invoice_id: int,
+    payload: InvoiceAllocationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_finance_update_guard),
+):
+    try:
+        allocation = allocate(
+            db, invoice_id, payload.fund_transaction_id, payload.amount, current_user.id
+        )
+    except ReconciliationError as error:
+        raise _reconciliation_http(error) from error
+    db.commit()
+    allocation = next(
+        row for row in list_allocations(db, invoice_id) if row.id == allocation.id
+    )
+    return Response.ok(_allocation_out(allocation), message="核销已登记")
+
+
+@router.delete(
+    "/{invoice_id}/allocations/{allocation_id}",
+    response_model=Response[dict],
+    summary="撤销发票收付款核销",
+)
+def remove_invoice_allocation(
+    invoice_id: int,
+    allocation_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(_finance_update_guard),
+):
+    try:
+        delete_allocation(db, invoice_id, allocation_id)
+    except ReconciliationError as error:
+        raise _reconciliation_http(error) from error
+    db.commit()
+    return Response.ok({"id": allocation_id}, message="核销已撤销")
 
 
 @router.get("/{invoice_id}/stats", response_model=Response[InvoiceRecordStats])

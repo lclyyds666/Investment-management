@@ -9,7 +9,7 @@ from app.api.deps import require_permission
 from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.fund import FundTransaction
-from app.models.cash_execution import CashExecutionTask
+from app.models.cash_execution import CashExecutionTask, InvoiceFundAllocation
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.fund import (
@@ -45,6 +45,8 @@ def list_funds(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     direction: str | None = None,
+    contract_id: int | None = None,
+    unallocated_only: bool = False,
     category: str | None = None,
     settlement_status: str | None = None,
     maturity_status: str | None = None,
@@ -57,6 +59,20 @@ def list_funds(
     statement = select(FundTransaction)
     if direction:
         statement = statement.where(FundTransaction.direction == direction)
+    if contract_id is not None:
+        statement = statement.where(FundTransaction.contract_id == contract_id)
+    if unallocated_only:
+        allocated = (
+            select(
+                InvoiceFundAllocation.fund_transaction_id.label("fund_id"),
+                func.sum(InvoiceFundAllocation.amount).label("allocated_amount"),
+            )
+            .group_by(InvoiceFundAllocation.fund_transaction_id)
+            .subquery()
+        )
+        statement = statement.outerjoin(
+            allocated, allocated.c.fund_id == FundTransaction.id
+        ).where(func.coalesce(allocated.c.allocated_amount, 0) < FundTransaction.amount)
     if category:
         statement = statement.where(FundTransaction.category == category)
     if settlement_status:

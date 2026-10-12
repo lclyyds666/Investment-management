@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.enums import (
     INVOICE_STATUS_LABELS,
@@ -142,6 +142,28 @@ class InvoiceAttachmentOut(BaseModel):
     uploaded_at: Optional[datetime] = None
 
 
+class InvoiceAllocationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fund_transaction_id: int
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+
+
+class InvoiceAllocationOut(BaseModel):
+    id: int
+    invoice_id: int
+    fund_transaction_id: int
+    amount: Decimal
+    allocated_by: int
+    allocated_at: Optional[datetime] = None
+    fund_direction: str
+    fund_amount: Decimal
+    fund_occurred_on: date
+    fund_counterparty: str = ""
+    fund_summary: str = ""
+    fund_bank_reference: str = ""
+
+
 class InvoiceOut(InvoiceBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -152,6 +174,8 @@ class InvoiceOut(InvoiceBase):
     source_synced_at: Optional[datetime] = None
     source_locked: bool = False
     has_approval_form: bool = False
+    reconciliation_state: str = "unallocated"
+    unallocated_amount: Decimal = Decimal("0.00")
 
     @computed_field
     @property
