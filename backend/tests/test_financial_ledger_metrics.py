@@ -81,6 +81,15 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
         self.assertEqual(result["capital_occupation_days"], 15.4)
         self.assertEqual(result["available_years"], [2026])
         self.assertEqual(result["scenic_ids"], ["quancheng-ouleb", "zunyi-zoo"])
+        self.assertEqual(
+            {(item["scenic_id"], item["business_type"]) for item in result["scenic_completion"]},
+            {
+                ("quancheng-ouleb", "hotel"),
+                ("quancheng-ouleb", "ticket"),
+                ("zunyi-zoo", "ticket"),
+            },
+        )
+        self.assertEqual(result["total_gross_income"], Decimal("650"))
         self.assertNotIn("profit_rate", result)
         self.assertNotIn("available_funds", result)
         self.assertNotIn("projects", result)
