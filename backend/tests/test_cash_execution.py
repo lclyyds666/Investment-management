@@ -1,5 +1,7 @@
 import unittest
+from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -11,7 +13,12 @@ from app.models.approval_form import ApprovalForm
 from app.models.cash_execution import CashExecutionTask
 from app.models.fund import FundTransaction
 from app.models.invoice import Invoice, InvoiceAttachment
-from app.services.cash_execution import ensure_payment_task, ensure_receipt_task
+from app.services.cash_execution import (
+    CashExecutionError,
+    ensure_payment_task,
+    ensure_receipt_task,
+    execute_task,
+)
 
 
 class CashExecutionServiceTest(unittest.TestCase):
@@ -58,6 +65,56 @@ class CashExecutionServiceTest(unittest.TestCase):
             )
             db.flush()
             self.assertIsNotNone(ensure_receipt_task(db, invoice))
+
+    def test_execute_task_supports_partial_then_complete(self):
+        with Session(self.engine) as db:
+            form = ApprovalForm(
+                form_type=ContractType.PAYMENT,
+                status=ContractStatus.APPROVED,
+                amount=Decimal("100.00"),
+                scenic_id="demo",
+                created_by=1,
+            )
+            db.add(form)
+            db.flush()
+            task = ensure_payment_task(db, form)
+            payload = lambda amount: SimpleNamespace(
+                amount=Decimal(amount),
+                occurred_on=date(2026, 10, 11),
+                counterparty="Supplier",
+                bank_reference="BANK-1",
+                summary="Payment",
+                remark="",
+            )
+            first = execute_task(db, task.id, payload("40.00"), actor_id=1)
+            self.assertEqual(task.status, "partial")
+            second = execute_task(db, task.id, payload("60.00"), actor_id=1)
+            self.assertEqual(task.status, "completed")
+            self.assertEqual(first.direction, "usage")
+            self.assertEqual(second.execution_task_id, task.id)
+
+    def test_execute_task_rejects_amount_above_remaining(self):
+        with Session(self.engine) as db:
+            form = ApprovalForm(
+                form_type=ContractType.PAYMENT,
+                status=ContractStatus.APPROVED,
+                amount=Decimal("100.00"),
+                scenic_id="demo",
+                created_by=1,
+            )
+            db.add(form)
+            db.flush()
+            task = ensure_payment_task(db, form)
+            payload = SimpleNamespace(
+                amount=Decimal("100.01"),
+                occurred_on=date(2026, 10, 11),
+                counterparty="Supplier",
+                bank_reference="BANK-2",
+                summary="Payment",
+                remark="",
+            )
+            with self.assertRaises(CashExecutionError):
+                execute_task(db, task.id, payload, actor_id=1)
 
 
 if __name__ == "__main__":

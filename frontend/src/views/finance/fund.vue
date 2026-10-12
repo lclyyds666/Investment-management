@@ -72,7 +72,12 @@
       </div>
     </div>
 
-    <el-card shadow="never" class="ledger-card">
+    <div class="finance-tabs">
+      <el-button :type="activeTab === 'ledger' ? 'primary' : 'default'" @click="activeTab = 'ledger'">资金流水</el-button>
+      <el-button :type="activeTab === 'execution' ? 'primary' : 'default'" @click="activeTab = 'execution'">待资金执行</el-button>
+    </div>
+
+    <el-card v-if="activeTab === 'ledger'" shadow="never" class="ledger-card">
       <template #header>
         <div class="ledger-header">
           <div>
@@ -142,6 +147,32 @@
       />
     </el-card>
 
+    <el-card v-else shadow="never" class="ledger-card">
+      <template #header><div class="ledger-header"><strong>待资金执行</strong><el-button :icon="Refresh" :loading="executionLoading" @click="loadExecutionTasks">刷新</el-button></div></template>
+      <el-table v-loading="executionLoading" :data="executionTasks" stripe empty-text="暂无待执行任务">
+        <el-table-column prop="id" label="任务" width="75" />
+        <el-table-column prop="scenic_id" label="景区" width="120" />
+        <el-table-column label="方向" width="90"><template #default="{ row }">{{ row.direction === 'outflow' ? '支出' : '收入' }}</template></el-table-column>
+        <el-table-column label="计划金额" width="130"><template #default="{ row }">{{ formatAmount(row.planned_amount) }}</template></el-table-column>
+        <el-table-column label="已执行" width="130"><template #default="{ row }">{{ formatAmount(row.executed_amount) }}</template></el-table-column>
+        <el-table-column label="未执行" width="130"><template #default="{ row }">{{ formatAmount(Number(row.planned_amount) - Number(row.executed_amount)) }}</template></el-table-column>
+        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="操作" width="110"><template #default="{ row }"><el-button link type="primary" :disabled="row.status === 'completed' || row.status === 'cancelled'" @click="openExecution(row)">执行</el-button></template></el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-dialog v-model="executionDialogVisible" title="财务执行" width="560px">
+      <el-form label-width="110px">
+        <el-form-item label="实际日期"><el-date-picker v-model="executionForm.occurred_on" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        <el-form-item label="执行金额（万元）"><el-input-number v-model="executionForm.amount" :min="0.000001" :precision="6" /></el-form-item>
+        <el-form-item label="对方单位"><el-input v-model="executionForm.counterparty" /></el-form-item>
+        <el-form-item label="银行流水号"><el-input v-model="executionForm.bank_reference" /></el-form-item>
+        <el-form-item label="摘要"><el-input v-model="executionForm.summary" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="executionForm.remark" type="textarea" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="executionDialogVisible = false">取消</el-button><el-button type="primary" @click="submitExecution">确认执行</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑资金流水' : '新增资金流水'" width="680px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="104px">
         <div class="form-grid">
@@ -192,7 +223,9 @@ import {
   createFund,
   deleteFund,
   getFundSummary,
+  listCashExecutionTasks,
   listFunds,
+  executeCashTask,
   settleFund,
   updateFund
 } from '@/api/fund'
@@ -221,6 +254,12 @@ const portalStore = usePortalStore()
 const canWrite = computed(() => canUsePermission(portalStore, 'supply.finance.update'))
 const loading = ref(false)
 const summaryLoading = ref(false)
+const activeTab = ref('ledger')
+const executionLoading = ref(false)
+const executionTasks = ref([])
+const executionDialogVisible = ref(false)
+const executionTask = ref(null)
+const executionForm = reactive({ amount: null, occurred_on: todayString(), counterparty: '', bank_reference: '', summary: '', remark: '' })
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref(null)
@@ -268,6 +307,33 @@ function emptyForm() {
 }
 
 const form = reactive(emptyForm())
+
+async function loadExecutionTasks() {
+  executionLoading.value = true
+  try {
+    executionTasks.value = await listCashExecutionTasks({ direction: filters.direction || '' })
+  } finally {
+    executionLoading.value = false
+  }
+}
+
+function openExecution(task) {
+  executionTask.value = task
+  Object.assign(executionForm, { amount: null, occurred_on: todayString(), counterparty: '', bank_reference: '', summary: '', remark: '' })
+  executionDialogVisible.value = true
+}
+
+async function submitExecution() {
+  if (!executionTask.value || !executionForm.amount) return
+  await executeCashTask(executionTask.value.id, { ...executionForm, amount: wanToYuan(executionForm.amount) })
+  executionDialogVisible.value = false
+  await Promise.all([loadExecutionTasks(), loadLedger(), loadSummary()])
+}
+
+function taskSource(row) {
+  if (!row.execution_task_id) return '历史未关联'
+  return row.approval_form_id ? '付款审批 #' + row.approval_form_id : '销项发票 #' + row.invoice_id
+}
 const formCategoryOptions = computed(() => CATEGORY_OPTIONS[form.direction] || [])
 const filterCategoryOptions = computed(() => {
   if (filters.direction) return CATEGORY_OPTIONS[filters.direction] || []
@@ -490,7 +556,7 @@ async function onDelete(row) {
   await Promise.all([loadLedger(), loadSummary()])
 }
 
-onMounted(() => Promise.all([loadLedger(), loadSummary()]))
+onMounted(() => Promise.all([loadLedger(), loadSummary(), loadExecutionTasks()]))
 </script>
 
 <style scoped lang="scss">

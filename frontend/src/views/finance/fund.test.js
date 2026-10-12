@@ -7,7 +7,9 @@ const fundApi = vi.hoisted(() => ({
   createFund: vi.fn(),
   updateFund: vi.fn(),
   deleteFund: vi.fn(),
-  settleFund: vi.fn()
+  settleFund: vi.fn(),
+  listCashExecutionTasks: vi.fn(),
+  executeCashTask: vi.fn()
 }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
@@ -61,6 +63,8 @@ describe('fund management view', () => {
     fundApi.updateFund.mockResolvedValue({ id: 1 })
     fundApi.deleteFund.mockResolvedValue({ id: 1 })
     fundApi.settleFund.mockResolvedValue({ id: 1 })
+    fundApi.listCashExecutionTasks.mockResolvedValue([])
+    fundApi.executeCashTask.mockResolvedValue({ id: 1 })
     messageBox.confirm.mockResolvedValue()
   })
 

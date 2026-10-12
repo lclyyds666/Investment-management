@@ -11,6 +11,11 @@ from app.core.enums import ContractStatus, ContractType, InvoiceApprovalStatus, 
 from app.models.approval_form import ApprovalForm
 from app.models.cash_execution import CashExecutionTask, CashTaskStatus
 from app.models.invoice import Invoice
+from app.models.fund import FundTransaction
+
+
+class CashExecutionError(ValueError):
+    pass
 
 
 def _money(value) -> Decimal:
@@ -69,3 +74,45 @@ def ensure_receipt_task(db: Session, invoice: Invoice) -> CashExecutionTask | No
         status=CashTaskStatus.PENDING.value,
     )
     return _insert_or_reload(db, task, statement)
+
+
+def execute_task(db: Session, task_id: int, payload, actor_id: int) -> FundTransaction:
+    task = db.scalar(
+        select(CashExecutionTask)
+        .where(CashExecutionTask.id == task_id)
+        .with_for_update()
+    )
+    if not task or task.status in {
+        CashTaskStatus.COMPLETED.value,
+        CashTaskStatus.CANCELLED.value,
+    }:
+        raise CashExecutionError("task_not_executable")
+    amount = _money(payload.amount)
+    remaining = _money(task.planned_amount) - _money(task.executed_amount)
+    if amount <= 0 or amount > remaining:
+        raise CashExecutionError("amount_exceeds_remaining")
+    fund = FundTransaction(
+        direction="usage" if task.direction == "outflow" else "increase",
+        category="business_payment" if task.direction == "outflow" else "customer_payment",
+        amount=amount,
+        occurred_on=payload.occurred_on,
+        counterparty=payload.counterparty,
+        summary=payload.summary,
+        remark=payload.remark,
+        bank_reference=payload.bank_reference,
+        execution_task_id=task.id,
+        contract_id=task.contract_id,
+        approval_form_id=task.approval_form_id,
+        invoice_id=task.invoice_id,
+        scenic_id=task.scenic_id,
+        created_by=actor_id,
+    )
+    task.executed_amount = _money(task.executed_amount) + amount
+    task.status = (
+        CashTaskStatus.COMPLETED.value
+        if task.executed_amount == task.planned_amount
+        else CashTaskStatus.PARTIAL.value
+    )
+    db.add(fund)
+    db.flush()
+    return fund

@@ -9,6 +9,7 @@ from app.api.deps import require_permission
 from app.core.enums import CompanyCode
 from app.db.session import get_db
 from app.models.fund import FundTransaction
+from app.models.cash_execution import CashExecutionTask
 from app.models.user import User
 from app.schemas.common import Response
 from app.schemas.fund import (
@@ -19,7 +20,9 @@ from app.schemas.fund import (
     FundTransactionOut,
     FundTransactionUpdate,
 )
+from app.schemas.cash_execution import CashExecutionIn, CashExecutionTaskOut
 from app.services.assignment_permissions import PermissionContext
+from app.services.cash_execution import CashExecutionError, execute_task
 from app.services.fund import maturity_state, summarize_funds
 
 
@@ -98,6 +101,47 @@ def fund_summary(
 ):
     rows = db.scalars(select(FundTransaction)).all()
     return Response.ok(summarize_funds(rows, date.today()))
+
+
+@router.get(
+    "/execution-tasks",
+    response_model=Response[list[CashExecutionTaskOut]],
+    summary="待资金执行任务",
+)
+def list_execution_tasks(
+    status: str | None = None,
+    direction: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(_view_guard),
+):
+    statement = select(CashExecutionTask).order_by(CashExecutionTask.id.desc())
+    if status:
+        statement = statement.where(CashExecutionTask.status == status)
+    if direction:
+        statement = statement.where(CashExecutionTask.direction == direction)
+    return Response.ok(db.scalars(statement).all())
+
+
+@router.post(
+    "/execution-tasks/{task_id}/execute",
+    response_model=Response[FundTransactionOut],
+    summary="执行资金任务",
+)
+def execute_cash_task(
+    task_id: int,
+    payload: CashExecutionIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_update_guard),
+):
+    try:
+        row = execute_task(db, task_id, payload, current_user.id)
+    except CashExecutionError as error:
+        code = str(error)
+        status_code = 404 if code == "task_not_executable" else 400
+        raise HTTPException(status_code=status_code, detail=code) from error
+    db.commit()
+    db.refresh(row)
+    return Response.ok(_out(row), message="资金执行已登记")
 
 
 @router.post("", response_model=Response[FundTransactionOut], summary="新增资金流水")

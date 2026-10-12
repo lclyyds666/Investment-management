@@ -23,3 +23,11 @@ export function deleteFund(id) {
 export function settleFund(id, settledOn) {
   return request.post(`/funds/${id}/settle`, { settled_on: settledOn || null })
 }
+
+export function listCashExecutionTasks(params = {}) {
+  return request.get('/funds/execution-tasks', { params })
+}
+
+export function executeCashTask(id, payload) {
+  return request.post(`/funds/execution-tasks/${id}/execute`, payload)
+}

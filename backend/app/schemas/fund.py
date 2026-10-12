@@ -32,6 +32,7 @@ class FundTransactionInput(BaseModel):
     summary: str = Field(default="", max_length=300)
     maturity_date: date | None = None
     remark: str = ""
+    bank_reference: str = Field(default="", max_length=128)
 
     @model_validator(mode="after")
     def validate_transaction(self):
@@ -71,6 +72,11 @@ class FundTransactionOut(FundTransactionInput):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     maturity_status: str = "normal"
+    execution_task_id: int | None = None
+    contract_id: int | None = None
+    approval_form_id: int | None = None
+    invoice_id: int | None = None
+    scenic_id: str | None = None
 
 
 class FundSummary(BaseModel):
