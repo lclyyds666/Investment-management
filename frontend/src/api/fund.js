@@ -8,6 +8,14 @@ export function getFundSummary() {
   return request.get('/funds/summary')
 }
 
+export function getTodayFundAlerts() {
+  return request.get('/funds/alerts/today')
+}
+
+export function acknowledgeTodayFundAlerts(items) {
+  return request.post('/funds/alerts/today/acknowledge', { items })
+}
+
 export function createFund(payload) {
   return request.post('/funds', payload)
 }

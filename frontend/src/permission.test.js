@@ -8,6 +8,8 @@ import { useUserStore } from '@/store/user'
 import { portalGuard } from './permission'
 
 vi.mock('element-plus', () => ({ ElMessage: { error: vi.fn() } }))
+const fundAlerts = vi.hoisted(() => ({ loadForLogin: vi.fn().mockResolvedValue() }))
+vi.mock('@/store/fundAlerts', () => ({ useFundAlertStore: () => fundAlerts }))
 
 const PLATFORM_TITLE = '山东出版投资有限公司工作平台'
 
@@ -44,6 +46,19 @@ describe('portal permission guard', () => {
     setActivePinia(createPinia())
     localStorage.clear()
     vi.clearAllMocks()
+    fundAlerts.loadForLogin.mockResolvedValue()
+  })
+
+  it('starts fund alerts without blocking authorized navigation', async () => {
+    authenticatedContext({ permissions: [{ code: 'supply.finance.view' }] })
+    await expect(portalGuard(route('/'))).resolves.toBe(true)
+    expect(fundAlerts.loadForLogin).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not request fund alerts without finance view permission', async () => {
+    authenticatedContext()
+    await expect(portalGuard(route('/'))).resolves.toBe(true)
+    expect(fundAlerts.loadForLogin).not.toHaveBeenCalled()
   })
 
   it('uses the unified platform name in browser titles', async () => {

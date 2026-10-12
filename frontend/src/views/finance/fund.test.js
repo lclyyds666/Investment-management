@@ -20,10 +20,12 @@ const authorization = vi.hoisted(() => ({
 }))
 const messages = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 const messageBox = vi.hoisted(() => ({ confirm: vi.fn() }))
+const route = vi.hoisted(() => ({ query: {} }))
 
 vi.mock('@/api/fund', () => fundApi)
 vi.mock('@/store/portal', () => ({ usePortalStore: () => portal }))
 vi.mock('@/utils/businessAuthorization', () => authorization)
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('element-plus', async (importOriginal) => ({
   ...await importOriginal(),
   ElMessage: messages,
@@ -50,6 +52,7 @@ describe('fund management view', () => {
     vi.clearAllMocks()
     portal.isSuperuser = false
     portal.permissionCodes = new Set(['supply.finance.update'])
+    route.query = {}
     fundApi.getFundSummary.mockResolvedValue({
       available_funds: 850000,
       total_increase: 1200000,
@@ -66,6 +69,27 @@ describe('fund management view', () => {
     fundApi.listCashExecutionTasks.mockResolvedValue([])
     fundApi.executeCashTask.mockResolvedValue({ id: 1 })
     messageBox.confirm.mockResolvedValue()
+  })
+
+  it('uses a valid maturity deep link on the initial ledger request only once', async () => {
+    route.query = { maturity_status: 'overdue' }
+    mountView()
+    await flushPromises()
+
+    expect(fundApi.listFunds).toHaveBeenCalledTimes(1)
+    expect(fundApi.listFunds).toHaveBeenCalledWith(expect.objectContaining({
+      maturity_status: 'overdue',
+      page: 1
+    }))
+  })
+
+  it('ignores an unsupported maturity deep link', async () => {
+    route.query = { maturity_status: 'unexpected' }
+    mountView()
+    await flushPromises()
+
+    expect(fundApi.listFunds).toHaveBeenCalledTimes(1)
+    expect(fundApi.listFunds.mock.calls[0][0]).not.toHaveProperty('maturity_status')
   })
 
   it('renders summary in ten-thousand yuan', async () => {

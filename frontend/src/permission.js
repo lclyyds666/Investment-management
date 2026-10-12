@@ -2,6 +2,7 @@ import { ElMessage } from 'element-plus'
 import router from './router'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
+import { useFundAlertStore } from '@/store/fundAlerts'
 import { COMPANY_CODES, RESOURCE_CODES } from '@/constants/business'
 
 const TITLE = import.meta.env.VITE_APP_TITLE || '山东出版投资有限公司工作平台'
@@ -18,6 +19,7 @@ export const portalGuard = async (to) => {
 
   const userStore = useUserStore()
   const portalStore = usePortalStore()
+  const fundAlertStore = useFundAlertStore()
 
   if (to.meta?.public) {
     if (to.path === '/login' && userStore.isLogin) return { path: '/' }
@@ -65,6 +67,10 @@ export const portalGuard = async (to) => {
   if (to.meta?.resource && !portalStore.hasResource(to.meta.resource)) {
     ElMessage.error('权限不足，无法访问该页面')
     return { path: companyFallback(to.meta?.company) }
+  }
+
+  if (portalStore.hasPermission('supply.finance.view')) {
+    void fundAlertStore.loadForLogin()
   }
 
   return true

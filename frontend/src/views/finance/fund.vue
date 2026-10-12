@@ -219,7 +219,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { CircleCheck, Delete, Edit, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -254,6 +255,11 @@ const CATEGORY_OPTIONS = Object.freeze({
 const DUE_CATEGORIES = new Set(['bank_credit', 'company_loan'])
 
 const portalStore = usePortalStore()
+const route = useRoute()
+const maturityStatuses = new Set(['due_soon', 'overdue', 'normal', 'settled'])
+const routeMaturityStatus = () => maturityStatuses.has(String(route.query.maturity_status || ''))
+  ? String(route.query.maturity_status)
+  : ''
 const canWrite = computed(() => canUsePermission(portalStore, 'supply.finance.update'))
 const loading = ref(false)
 const summaryLoading = ref(false)
@@ -282,12 +288,23 @@ const filters = reactive({
   direction: '',
   category: '',
   settlement_status: '',
-  maturity_status: '',
+  maturity_status: routeMaturityStatus(),
   dateRange: [],
   keyword: '',
   page: 1,
   page_size: 20
 })
+
+watch(
+  () => route.query.maturity_status,
+  async () => {
+    const nextStatus = routeMaturityStatus()
+    if (nextStatus === filters.maturity_status) return
+    filters.maturity_status = nextStatus
+    filters.page = 1
+    await loadLedger()
+  }
+)
 
 function todayString() {
   const today = new Date()

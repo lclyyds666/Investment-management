@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { login as loginApi, getMe } from '@/api/auth'
 import { usePortalStore } from '@/store/portal'
+import { useFundAlertStore } from '@/store/fundAlerts'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('token') || '')
@@ -46,6 +47,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    useFundAlertStore().reset()
     usePortalStore().clearPortalContext()
     token.value = ''
     role.value = ''
