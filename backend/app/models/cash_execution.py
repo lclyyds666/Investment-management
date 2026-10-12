@@ -63,3 +63,7 @@ class InvoiceFundAllocation(Base):
 
     fund_transaction = relationship("FundTransaction", back_populates="allocations")
     invoice = relationship("Invoice", back_populates="fund_allocations")
+
+
+from app.models.fund import FundTransaction  # noqa: E402,F401
+from app.models.invoice import Invoice  # noqa: E402,F401
