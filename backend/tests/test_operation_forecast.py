@@ -81,6 +81,29 @@ class OperationForecastTests(unittest.TestCase):
         self.assertIn("same_scenic_business_fallback", line.reasons)
         self.assertIsNotNone(line.forecast)
 
+    def test_fallback_share_does_not_use_future_points(self):
+        points = period_points(date(2026, 6, 30), ["25"], platform="p1")
+        points += period_points(date(2026, 6, 30), ["75", "60", "45"], platform="p2")
+        baseline = forecast(points, request()).lines[0].baseline
+        points.append(point(date(2026, 7, 2), "900", platform="p1"))
+        line = forecast(points, request()).lines[0]
+
+        self.assertEqual(line.baseline, baseline)
+
+    def test_unfiltered_request_only_returns_observed_dimension_combinations(self):
+        points = period_points(date(2026, 6, 30), ["10", "9", "8"], platform="p1", scenic="s1")
+        points += [
+            point(date(2026, 6, 30) - timedelta(days=index), total, platform="p2", scenic="s2", business="hotel")
+            for index, total in enumerate(["20", "18", "16"])
+        ]
+        unfiltered = request(scenic_ids=[], business_types=[], platforms=[])
+
+        keys = {
+            (line.scenic_id, line.business_type, line.platform)
+            for line in forecast(points, unfiltered).lines
+        }
+        self.assertEqual(keys, {("s1", "ticket", "p1"), ("s2", "hotel", "p2")})
+
     def test_unknown_platform_and_missing_business_return_insufficient_data(self):
         points = period_points(date(2026, 6, 30), ["10", "9", "8"], platform="known")
         unknown = forecast(points, request(platforms=["never"])).lines[0]

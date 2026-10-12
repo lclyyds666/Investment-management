@@ -125,14 +125,15 @@ def _baseline(totals: dict[date, Decimal], request: ForecastRequest):
     return baseline.quantize(MONEY, rounding=ROUND_HALF_UP), components, periods
 
 
-def _platform_share(series, key: ForecastKey) -> Decimal | None:
-    platform_days = [point.day for point in series if _matches(point, key)]
+def _platform_share(series, key: ForecastKey, before: date) -> Decimal | None:
+    platform_days = [point.day for point in series if point.day < before and _matches(point, key)]
     if not platform_days:
         return None
     latest = max(platform_days)
     latest_points = [
         point for point in series
         if point.day == latest
+        and point.day < before
         and point.scenic_id == key.scenic_id
         and point.business_type == key.business_type
     ]
@@ -184,10 +185,22 @@ def _confidence(periods: list[Decimal | None], fallback_used: bool) -> str:
 
 
 def _requested_keys(series, request: ForecastRequest) -> list[ForecastKey]:
-    scenic_ids = request.scenic_ids or sorted({point.scenic_id for point in series})
-    business_types = request.business_types or sorted({point.business_type for point in series})
-    platforms = request.platforms or sorted({point.platform for point in series})
-    return [ForecastKey(*values) for values in product(scenic_ids, business_types, platforms)]
+    if request.scenic_ids and request.business_types and request.platforms:
+        return [
+            ForecastKey(*values)
+            for values in product(request.scenic_ids, request.business_types, request.platforms)
+        ]
+    return sorted(
+        {
+            ForecastKey(point.scenic_id, point.business_type, point.platform)
+            for point in series
+            if point.day < request.start_date
+            and (not request.scenic_ids or point.scenic_id in request.scenic_ids)
+            and (not request.business_types or point.business_type in request.business_types)
+            and (not request.platforms or point.platform in request.platforms)
+        },
+        key=lambda key: (key.scenic_id, key.business_type, key.platform),
+    )
 
 
 def _insufficient_line(key: ForecastKey) -> ForecastLine:
@@ -212,7 +225,7 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
     share = Decimal("1")
     totals = own_totals
     if fallback_used:
-        share = _platform_share(series, key)
+        share = _platform_share(series, key, request.start_date)
         peer_totals = _daily_totals(series, key, include_all_platforms=True)
         if share is None or not peer_totals:
             return _insufficient_line(key)
