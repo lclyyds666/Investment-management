@@ -1,8 +1,8 @@
 """财务经营指标 schema。"""
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LedgerProfitPoint(BaseModel):
@@ -21,6 +21,14 @@ class LedgerProfitPoint(BaseModel):
     occupation_amount: Decimal = Decimal("0")
 
 
+class ScenicCompletionDetail(BaseModel):
+    scenic_id: str
+    business_type: Literal["ticket", "hotel"]
+    cumulative_writeoff: Decimal = Decimal("0")
+    pending_writeoff: Decimal = Decimal("0")
+    completion_rate: Decimal | None = None
+
+
 class FinancialDashboard(BaseModel):
     """经营页 / 大屏共用的财务聚合视图。"""
 
@@ -29,6 +37,7 @@ class FinancialDashboard(BaseModel):
     total_realized_scale: Decimal = Decimal("0")   # 已实现业务规模 = Σ销售额(jinying_amount)
     total_gross_income: Decimal = Decimal("0")     # 已实现业务毛利润 = Σ服务费
     capital_occupation_days: Optional[float] = None # 净投入金额加权平均资金占用天数
-    ledger_profit: List[LedgerProfitPoint] = []
-    available_years: List[int] = []
-    scenic_ids: List[str] = []
+    ledger_profit: List[LedgerProfitPoint] = Field(default_factory=list)
+    available_years: List[int] = Field(default_factory=list)
+    scenic_ids: List[str] = Field(default_factory=list)
+    scenic_completion: List[ScenicCompletionDetail] = Field(default_factory=list)

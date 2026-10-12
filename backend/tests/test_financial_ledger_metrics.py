@@ -158,6 +158,7 @@ class FinancialLedgerMetricsTest(unittest.TestCase):
                 "ledger_profit",
                 "available_years",
                 "scenic_ids",
+                "scenic_completion",
             },
         )
 
