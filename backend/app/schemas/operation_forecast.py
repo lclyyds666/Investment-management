@@ -32,3 +32,44 @@ class ForecastFactorRowError(BaseModel):
 class ForecastFactorParseResult(BaseModel):
     items: list[ForecastFactor] = Field(default_factory=list)
     errors: list[ForecastFactorRowError] = Field(default_factory=list)
+
+
+class ForecastRequest(BaseModel):
+    start_date: date
+    end_date: date
+    scenic_ids: list[str] = Field(default_factory=list)
+    business_types: list[Literal["ticket", "hotel"]] = Field(default_factory=list)
+    platforms: list[str] = Field(default_factory=list)
+    factors: list[ForecastFactor] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.end_date < self.start_date:
+            raise ValueError("结束日期不能早于开始日期")
+        return self
+
+
+class ForecastComponent(BaseModel):
+    value: Decimal
+    weight: Decimal
+
+
+class ForecastLine(BaseModel):
+    scenic_id: str
+    business_type: Literal["ticket", "hotel"]
+    platform: str
+    baseline: Decimal | None = None
+    factor_adjustment: Decimal = Decimal("0.00")
+    forecast: Decimal | None = None
+    interval_low: Decimal | None = None
+    interval_high: Decimal | None = None
+    confidence: Literal["high", "medium", "low"] = "low"
+    components: dict[str, ForecastComponent] = Field(default_factory=dict)
+    max_daily_factor: Decimal = Decimal("0.00")
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ForecastOut(BaseModel):
+    start_date: date
+    end_date: date
+    lines: list[ForecastLine] = Field(default_factory=list)

@@ -1,0 +1,262 @@
+"""Pure, explainable forecasts over confirmed operation daily points."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from itertools import product
+from statistics import pstdev
+
+from app.schemas.operation_forecast import (
+    ForecastComponent,
+    ForecastLine,
+    ForecastOut,
+    ForecastRequest,
+)
+
+BASE_WEIGHTS = {
+    "same_period": Decimal("0.40"),
+    "recent": Decimal("0.40"),
+    "trend": Decimal("0.20"),
+}
+MONEY = Decimal("0.01")
+RATE = Decimal("0.01")
+
+
+@dataclass(frozen=True)
+class ForecastKey:
+    scenic_id: str
+    business_type: str
+    platform: str
+
+
+def _last_year(value: date) -> date:
+    try:
+        return value.replace(year=value.year - 1)
+    except ValueError:
+        return value.replace(year=value.year - 1, day=28)
+
+
+def _matches(point, key: ForecastKey, include_all_platforms: bool = False) -> bool:
+    return (
+        point.scenic_id == key.scenic_id
+        and point.business_type == key.business_type
+        and (include_all_platforms or point.platform == key.platform)
+    )
+
+
+def _daily_totals(series, key: ForecastKey, include_all_platforms: bool = False) -> dict[date, Decimal]:
+    totals: dict[date, Decimal] = {}
+    for point in series:
+        if _matches(point, key, include_all_platforms):
+            totals[point.day] = totals.get(point.day, Decimal("0")) + point.settlement_amount
+    return totals
+
+
+def _period_total(totals: dict[date, Decimal], start: date, days: int) -> Decimal | None:
+    dates = [start + timedelta(days=offset) for offset in range(days)]
+    if not all(day in totals for day in dates):
+        return None
+    return sum((totals[day] for day in dates), Decimal("0"))
+
+
+def _recent_periods(totals: dict[date, Decimal], target_start: date, days: int, count: int) -> list[Decimal | None]:
+    return [
+        _period_total(totals, target_start - timedelta(days=days * index), days)
+        for index in range(1, count + 1)
+    ]
+
+
+def normalized_components(values: dict[str, Decimal | None]) -> dict[str, ForecastComponent]:
+    available = {name: value for name, value in values.items() if value is not None}
+    weight_total = sum((BASE_WEIGHTS[name] for name in available), Decimal("0"))
+    if not weight_total:
+        return {}
+    return {
+        name: ForecastComponent(
+            value=value,
+            weight=(BASE_WEIGHTS[name] / weight_total).quantize(Decimal("0.0001")),
+        )
+        for name, value in available.items()
+    }
+
+
+def _weighted_recent(periods: list[Decimal | None]) -> Decimal | None:
+    if len(periods) < 3 or any(value is None for value in periods[:3]):
+        return None
+    values = periods[:3]
+    return sum((value * weight for value, weight in zip(values, (3, 2, 1))), Decimal("0")) / Decimal("6")
+
+
+def _bounded_trend(periods: list[Decimal | None], recent: Decimal | None) -> Decimal | None:
+    if recent is None:
+        return None
+    complete = [value for value in reversed(periods[:6]) if value is not None]
+    if len(complete) < 3:
+        return None
+    count = Decimal(len(complete))
+    x_mean = Decimal(len(complete) - 1) / Decimal("2")
+    y_mean = sum(complete, Decimal("0")) / count
+    numerator = sum(
+        (Decimal(index) - x_mean) * (value - y_mean)
+        for index, value in enumerate(complete)
+    )
+    denominator = sum((Decimal(index) - x_mean) ** 2 for index in range(len(complete)))
+    projected = y_mean + (numerator / denominator) * Decimal(len(complete))
+    return min(max(projected, recent * Decimal("0.50")), recent * Decimal("2.00"))
+
+
+def _baseline(totals: dict[date, Decimal], request: ForecastRequest):
+    days = (request.end_date - request.start_date).days + 1
+    same_start = _last_year(request.start_date)
+    same_period = _period_total(totals, same_start, days)
+    periods = _recent_periods(totals, request.start_date, days, 12)
+    recent = _weighted_recent(periods)
+    trend = _bounded_trend(periods, recent)
+    components = normalized_components({
+        "same_period": same_period,
+        "recent": recent,
+        "trend": trend,
+    })
+    baseline = sum(
+        (component.value * component.weight for component in components.values()),
+        Decimal("0"),
+    )
+    return baseline.quantize(MONEY, rounding=ROUND_HALF_UP), components, periods
+
+
+def _platform_share(series, key: ForecastKey) -> Decimal | None:
+    platform_days = [point.day for point in series if _matches(point, key)]
+    if not platform_days:
+        return None
+    latest = max(platform_days)
+    latest_points = [
+        point for point in series
+        if point.day == latest
+        and point.scenic_id == key.scenic_id
+        and point.business_type == key.business_type
+    ]
+    total = sum((point.settlement_amount for point in latest_points), Decimal("0"))
+    platform_total = sum(
+        (point.settlement_amount for point in latest_points if point.platform == key.platform),
+        Decimal("0"),
+    )
+    return platform_total / total if total else None
+
+
+def _factor_rate(day: date, key: ForecastKey, factors) -> Decimal:
+    rate = sum(
+        (
+            factor.impact_rate
+            for factor in factors
+            if factor.start_date <= day <= factor.end_date
+            and (not factor.scenic_id or factor.scenic_id == key.scenic_id)
+            and (not factor.business_type or factor.business_type == key.business_type)
+            and (not factor.platform or factor.platform == key.platform)
+        ),
+        Decimal("0"),
+    )
+    return min(max(rate, Decimal("-0.80")), Decimal("2.00"))
+
+
+def _split_money(total: Decimal, days: int) -> list[Decimal]:
+    unit = (total / Decimal(days)).quantize(MONEY, rounding=ROUND_HALF_UP)
+    values = [unit] * days
+    values[-1] += total - sum(values, Decimal("0"))
+    return values
+
+
+def _sigma(periods: list[Decimal | None], baseline: Decimal) -> Decimal:
+    complete = [value for value in periods if value is not None]
+    if len(complete) < 2:
+        return Decimal("0")
+    return Decimal(str(pstdev([float(value - baseline) for value in complete])))
+
+
+def _confidence(periods: list[Decimal | None], fallback_used: bool) -> str:
+    period_count = sum(value is not None for value in periods)
+    coverage = Decimal(period_count) / Decimal(len(periods))
+    if fallback_used or period_count < 3:
+        return "low"
+    if period_count >= 12 and coverage >= Decimal("0.90"):
+        return "high"
+    return "medium"
+
+
+def _requested_keys(series, request: ForecastRequest) -> list[ForecastKey]:
+    scenic_ids = request.scenic_ids or sorted({point.scenic_id for point in series})
+    business_types = request.business_types or sorted({point.business_type for point in series})
+    platforms = request.platforms or sorted({point.platform for point in series})
+    return [ForecastKey(*values) for values in product(scenic_ids, business_types, platforms)]
+
+
+def _insufficient_line(key: ForecastKey) -> ForecastLine:
+    return ForecastLine(
+        scenic_id=key.scenic_id,
+        business_type=key.business_type,
+        platform=key.platform,
+        reasons=["insufficient_data"],
+    )
+
+
+def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> ForecastLine:
+    own_totals = _daily_totals(series, key)
+    own_recent = _recent_periods(
+        own_totals,
+        request.start_date,
+        (request.end_date - request.start_date).days + 1,
+        12,
+    )
+    fallback_used = sum(value is not None for value in own_recent) < 3
+    reasons = []
+    share = Decimal("1")
+    totals = own_totals
+    if fallback_used:
+        share = _platform_share(series, key)
+        peer_totals = _daily_totals(series, key, include_all_platforms=True)
+        if share is None or not peer_totals:
+            return _insufficient_line(key)
+        totals = {day: value * share for day, value in peer_totals.items()}
+        reasons.append("same_scenic_business_fallback")
+
+    baseline, components, periods = _baseline(totals, request)
+    if not components:
+        return _insufficient_line(key)
+
+    days = (request.end_date - request.start_date).days + 1
+    daily_baseline = _split_money(baseline, days)
+    rates = [
+        _factor_rate(request.start_date + timedelta(days=index), key, request.factors)
+        for index in range(days)
+    ]
+    forecast_value = sum(
+        (
+            max(value * (Decimal("1") + rate), Decimal("0")).quantize(MONEY, rounding=ROUND_HALF_UP)
+            for value, rate in zip(daily_baseline, rates)
+        ),
+        Decimal("0"),
+    ).quantize(MONEY)
+    sigma = _sigma(periods, baseline)
+    spread = sigma * Decimal("1.96")
+    return ForecastLine(
+        scenic_id=key.scenic_id,
+        business_type=key.business_type,
+        platform=key.platform,
+        baseline=baseline,
+        factor_adjustment=(forecast_value - baseline).quantize(MONEY),
+        forecast=forecast_value,
+        interval_low=max(forecast_value - spread, Decimal("0")).quantize(MONEY),
+        interval_high=(forecast_value + spread).quantize(MONEY),
+        confidence=_confidence(periods, fallback_used),
+        components=components,
+        max_daily_factor=max(rates, default=Decimal("0")).quantize(RATE),
+        reasons=reasons,
+    )
+
+
+def forecast(series, request: ForecastRequest) -> ForecastOut:
+    return ForecastOut(
+        start_date=request.start_date,
+        end_date=request.end_date,
+        lines=[_forecast_line(series, request, key) for key in _requested_keys(series, request)],
+    )
