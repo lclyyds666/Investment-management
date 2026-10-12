@@ -47,7 +47,7 @@
           @province-click="onProvince"
         />
 
-        <aside class="metrics-dock" :key="`metrics-${flipKey}`">
+        <aside class="metrics-dock" :class="{ 'metrics-dock--region': mode === 'region' }" :key="`metrics-${flipKey}`">
           <div class="dock-head">
             <div>
               <span class="dock-eyebrow">核心经营指标</span>
@@ -75,6 +75,28 @@
               </div>
             </article>
           </div>
+
+          <section v-if="mode === 'region'" class="completion-panel" aria-label="景区完成度">
+            <div class="completion-title">
+              <span>景区完成度</span>
+              <small>按业务类型</small>
+            </div>
+            <div v-if="selectedCompletionDetails.length" class="completion-list">
+              <article
+                v-for="item in selectedCompletionDetails"
+                :key="`${item.scenic_id}-${item.business_type}`"
+                class="completion-row"
+                data-test="completion-row"
+              >
+                <div class="completion-identity">
+                  <strong>{{ item.scenic.name }}</strong>
+                  <span>{{ item.business_type === 'ticket' ? '门票' : '酒店' }}</span>
+                </div>
+                <b>{{ formatCompletionRate(item.completion_rate) }}</b>
+              </article>
+            </div>
+            <el-empty v-else :image-size="40" description="该省暂无台账完成度数据" />
+          </section>
 
           <p class="dock-note">
             {{ mode === 'region' ? '当前省份数据由所属景区门票与酒店台账实时汇总' : '全国数据与经营数据中心保持同源' }}
@@ -136,7 +158,8 @@ function tickClock() {
 const fin = ref({
   total_realized_scale: 0,
   total_gross_income: 0,
-  ledger_profit: []
+  ledger_profit: [],
+  scenic_completion: []
 })
 const mode = ref('national')
 const region = ref('')
@@ -178,6 +201,22 @@ const selectedProvince = computed(() => (
   || { revenue: 0, profit: 0 }
 ))
 const regionLabel = computed(() => (mode.value === 'region' ? region.value : '全国'))
+const selectedCompletionDetails = computed(() => {
+  if (mode.value !== 'region') return []
+  return (fin.value.scenic_completion || [])
+    .map((item) => ({ ...item, scenic: getScenicById(item.scenic_id) }))
+    .filter((item) => item.scenic?.province === region.value)
+    .sort((left, right) => (
+      left.scenic.name.localeCompare(right.scenic.name, 'zh-CN')
+      || (({ ticket: 0, hotel: 1 }[left.business_type] ?? 9)
+        - ({ ticket: 0, hotel: 1 }[right.business_type] ?? 9))
+    ))
+})
+
+function formatCompletionRate(value) {
+  if (value == null || Number.isNaN(Number(value))) return '—'
+  return `${Number(value).toFixed(2)}%`
+}
 
 function onProvince(name) {
   region.value = name
@@ -208,7 +247,12 @@ async function loadFinancial() {
   try {
     fin.value = await getFinancial()
   } catch {
-    fin.value = { total_realized_scale: 0, total_gross_income: 0, ledger_profit: [] }
+    fin.value = {
+      total_realized_scale: 0,
+      total_gross_income: 0,
+      ledger_profit: [],
+      scenic_completion: []
+    }
   }
 }
 
@@ -317,6 +361,12 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(16px);
   animation: dockIn .55s ease both;
 }
+.metrics-dock--region {
+  display: flex;
+  flex-direction: column;
+  height: min(520px, calc(100% - 52px));
+  overflow: hidden;
+}
 .dock-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .dock-head > div { display: flex; flex-direction: column; gap: 5px; }
 .dock-eyebrow { color: var(--screen-text-muted); font-size: 11px; letter-spacing: .16em; }
@@ -359,6 +409,38 @@ onBeforeUnmount(() => {
 .metric-label { color: var(--screen-text-muted); font-size: 12px; letter-spacing: .05em; }
 .metric-value { margin-top: 5px; font-family: var(--font-data); font-size: clamp(22px, 2vw, 31px); font-weight: 800; line-height: 1.05; text-shadow: 0 0 16px currentColor; white-space: nowrap; }
 .metric-unit { margin-top: 5px; color: var(--screen-text-muted); font-size: 9px; letter-spacing: .1em; }
+.completion-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--screen-border);
+}
+.completion-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.completion-title span { color: var(--screen-text); font-family: var(--font-display); font-size: 13px; font-weight: 750; letter-spacing: .08em; }
+.completion-title small { color: var(--screen-text-muted); font-size: 9px; letter-spacing: .08em; }
+.completion-list { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--screen-border) transparent; }
+.completion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--screen-border) 70%, transparent);
+}
+.completion-identity { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.completion-identity strong { overflow: hidden; color: var(--screen-text); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.completion-identity span {
+  flex: none;
+  padding: 2px 6px;
+  color: var(--screen-secondary);
+  border: 1px solid color-mix(in srgb, var(--screen-secondary) 42%, transparent);
+  border-radius: var(--el-border-radius-round);
+  font-size: 9px;
+}
+.completion-row b { flex: none; color: var(--screen-accent, var(--screen-secondary)); font-family: var(--font-data); font-size: 14px; letter-spacing: .02em; }
 .dock-note { margin: 14px 2px 0; color: var(--screen-text-muted); font-size: 11px; line-height: 1.6; }
 
 .map-guide {
@@ -390,6 +472,7 @@ onBeforeUnmount(() => {
   .head-side { grid-row: 2; }
   .map-stage, .ds-embed .map-stage, .ds-full .map-stage { height: 820px; }
   .metrics-dock { top: auto; right: 18px; bottom: 18px; left: 18px; width: auto; }
+  .metrics-dock--region { height: 480px; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .map-guide { bottom: 270px; }
 }
