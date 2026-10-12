@@ -109,6 +109,9 @@
         <el-table-column prop="summary" label="用途 / 摘要" min-width="190" show-overflow-tooltip>
           <template #default="{ row }">{{ row.summary || '—' }}</template>
         </el-table-column>
+        <el-table-column label="来源" min-width="140">
+          <template #default="{ row }">{{ taskSource(row) }}</template>
+        </el-table-column>
         <el-table-column label="到期日" width="115">
           <template #default="{ row }">{{ row.maturity_date || '—' }}</template>
         </el-table-column>
