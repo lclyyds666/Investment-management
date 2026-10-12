@@ -6,6 +6,9 @@ const invoiceApi = vi.hoisted(() => ({
   invoiceStats: vi.fn(),
   invoiceRecordStats: vi.fn(),
   updateInvoice: vi.fn(),
+  listInvoiceAllocations: vi.fn(),
+  createInvoiceAllocation: vi.fn(),
+  deleteInvoiceAllocation: vi.fn(),
   listInvoiceAttachments: vi.fn(),
   uploadInvoiceAttachments: vi.fn(),
   listInvoiceDetails: vi.fn(),
@@ -15,6 +18,7 @@ const invoiceApi = vi.hoisted(() => ({
 }))
 const contractApi = vi.hoisted(() => ({ listContracts: vi.fn(), listEligibleContracts: vi.fn() }))
 const customerApi = vi.hoisted(() => ({ listCustomers: vi.fn(), getCustomer: vi.fn() }))
+const fundApi = vi.hoisted(() => ({ listFunds: vi.fn() }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
   hasPermission: vi.fn(code => code === 'supply.invoice.view' || code === 'supply.invoice.manage' || code === 'supply.invoice.approve')
@@ -23,6 +27,7 @@ const portal = vi.hoisted(() => ({
 vi.mock('@/api/invoice', () => invoiceApi)
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/customer', () => customerApi)
+vi.mock('@/api/fund', () => fundApi)
 vi.mock('@/store/portal', () => ({ usePortalStore: () => portal }))
 vi.mock('@/utils/file', () => ({ downloadBlob: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({
@@ -78,6 +83,9 @@ describe('invoice management redesign', () => {
     invoiceApi.uploadInvoiceAttachments.mockResolvedValue([])
     invoiceApi.listInvoiceDetails.mockResolvedValue({ items: [], detail_total: 0, difference: 0 })
     invoiceApi.updateInvoice.mockResolvedValue({})
+    invoiceApi.listInvoiceAllocations.mockResolvedValue([])
+    invoiceApi.createInvoiceAllocation.mockResolvedValue({})
+    invoiceApi.deleteInvoiceAllocation.mockResolvedValue({})
     invoiceApi.updateInvoiceDetail.mockResolvedValue({ items: [], detail_total: 0, difference: 0 })
     invoiceApi.createInvoiceApprovalForm.mockResolvedValue({})
     invoiceApi.downloadInvoiceDocument.mockResolvedValue(new Blob(['ok']))
@@ -85,6 +93,7 @@ describe('invoice management redesign', () => {
     contractApi.listEligibleContracts.mockResolvedValue([{ id: 7, contract_no: 'HT-001', title: '测试合同' }])
     customerApi.listCustomers.mockResolvedValue([])
     customerApi.getCustomer.mockResolvedValue(null)
+    fundApi.listFunds.mockResolvedValue({ items: [], total: 0 })
   })
 
   it('exposes input/output tabs and never exposes create or delete actions', () => {
@@ -234,5 +243,45 @@ describe('invoice management redesign', () => {
 
   it('labels the fixed detail total column as 价税合计', () => {
     expect(mountView().text()).toContain('价税合计')
+  })
+
+  it('opens reconciliation with matching contract direction and remaining funds', async () => {
+    invoiceApi.listInvoiceAllocations.mockResolvedValue([{ id: 3, amount: 20 }])
+    fundApi.listFunds.mockResolvedValue({ items: [{ id: 9, amount: 100 }], total: 1 })
+    const wrapper = mountView()
+    await wrapper.vm.openReconciliation({
+      id: 6, direction: 'input', contract_id: 7, amount: 100,
+      reconciliation_state: 'partial', unallocated_amount: 80
+    })
+    expect(invoiceApi.listInvoiceAllocations).toHaveBeenCalledWith(6)
+    expect(fundApi.listFunds).toHaveBeenCalledWith({
+      contract_id: 7, direction: 'usage', unallocated_only: true, page_size: 200
+    })
+    expect(wrapper.vm.reconciliation.allocations).toHaveLength(1)
+    expect(wrapper.vm.reconciliation.candidates).toHaveLength(1)
+    expect(wrapper.vm.reconciliationVisible).toBe(true)
+  })
+
+  it('adds and removes allocations then reloads reconciliation and invoice rows', async () => {
+    const wrapper = mountView()
+    await wrapper.vm.openReconciliation({ id: 7, direction: 'output', contract_id: 8, amount: 100 })
+    wrapper.vm.allocationForm.fund_transaction_id = 12
+    wrapper.vm.allocationForm.amount = 40
+    await wrapper.vm.addAllocation()
+    expect(invoiceApi.createInvoiceAllocation).toHaveBeenCalledWith(7, {
+      fund_transaction_id: 12, amount: 40
+    })
+    await wrapper.vm.removeAllocation({ id: 5 })
+    expect(invoiceApi.deleteInvoiceAllocation).toHaveBeenCalledWith(7, 5)
+    expect(invoiceApi.listInvoiceAllocations).toHaveBeenCalledTimes(3)
+    expect(invoiceApi.listInvoices).toHaveBeenCalled()
+  })
+
+  it('labels input as payment and output as receipt reconciliation', () => {
+    const wrapper = mountView()
+    expect(wrapper.vm.reconciliationStatusText({ direction: 'input', reconciliation_state: 'allocated' })).toBe('已付款')
+    expect(wrapper.vm.reconciliationStatusText({ direction: 'input', reconciliation_state: 'partial' })).toBe('未补票')
+    expect(wrapper.vm.reconciliationStatusText({ direction: 'output', reconciliation_state: 'allocated' })).toBe('已回款')
+    expect(wrapper.vm.reconciliationStatusText({ direction: 'output', reconciliation_state: 'partial' })).toBe('待回款')
   })
 })

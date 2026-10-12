@@ -27,8 +27,12 @@
       <template #status="{ row }">
         <el-tag v-if="row" :type="INVOICE_STATUS_META[row.status]?.type">{{ row.status_label || INVOICE_STATUS_META[row.status]?.text || row.status }}</el-tag>
       </template>
+      <template #reconciliation="{ row }">
+        <el-tag v-if="row" :type="row.reconciliation_state === 'allocated' ? 'success' : 'warning'">{{ reconciliationStatusText(row) }}</el-tag>
+      </template>
       <template #actions="{ row }">
         <template v-if="row">
+          <el-button v-if="canManage" size="small" type="warning" link @click="openReconciliation(row)">收付款核销</el-button>
           <el-button v-if="canManage" size="small" type="primary" link :icon="Edit" @click="openEdit(row)">编辑</el-button>
           <el-button v-if="canManage" size="small" type="success" link :icon="Upload" @click="chooseFiles(row)">上传发票</el-button>
           <template v-if="row.direction === 'output'">
@@ -105,6 +109,33 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="reconciliationVisible" title="收付款核销" width="780px">
+      <el-descriptions v-if="currentInvoice" :column="3" border>
+        <el-descriptions-item label="发票金额">{{ money(currentInvoice.amount) }}</el-descriptions-item>
+        <el-descriptions-item label="资金状态">{{ reconciliationStatusText(currentInvoice) }}</el-descriptions-item>
+        <el-descriptions-item label="未核销金额">{{ money(currentInvoice.unallocated_amount) }}</el-descriptions-item>
+      </el-descriptions>
+      <el-form :model="allocationForm" inline class="allocation-form">
+        <el-form-item label="资金流水">
+          <el-select v-model="allocationForm.fund_transaction_id" filterable placeholder="选择可核销流水" style="width: 360px">
+            <el-option v-for="fund in reconciliation.candidates" :key="fund.id" :value="fund.id" :label="fundOptionLabel(fund)" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="核销金额">
+          <el-input-number v-model="allocationForm.amount" :min="0.01" :precision="2" />
+        </el-form-item>
+        <el-button type="primary" :disabled="!allocationForm.fund_transaction_id || !allocationForm.amount" @click="addAllocation">添加核销</el-button>
+      </el-form>
+      <el-table :data="reconciliation.allocations" border stripe>
+        <el-table-column prop="fund_occurred_on" label="流水日期" width="110" />
+        <el-table-column prop="fund_counterparty" label="对方单位" min-width="140" />
+        <el-table-column prop="fund_summary" label="摘要" min-width="150" />
+        <el-table-column label="核销金额" width="120"><template #default="scope">{{ money(scope.row.amount) }}</template></el-table-column>
+        <el-table-column label="操作" width="90"><template #default="scope"><el-button link type="danger" @click="removeAllocation(scope.row)">撤销</el-button></template></el-table-column>
+      </el-table>
+      <template #footer><el-button @click="reconciliationVisible = false">关闭</el-button></template>
+    </el-dialog>
+
     <input ref="fileInput" type="file" multiple hidden @change="onNativeFiles" />
   </div>
 </template>
@@ -121,8 +152,10 @@ import { downloadBlob } from '@/utils/file'
 import {
   listInvoices, invoiceStats, updateInvoice,
   listInvoiceAttachments, uploadInvoiceAttachments, listInvoiceDetails,
-  updateInvoiceDetail, createInvoiceApprovalForm, submitInvoiceApproval, downloadInvoiceDocument
+  updateInvoiceDetail, createInvoiceApprovalForm, submitInvoiceApproval, downloadInvoiceDocument,
+  listInvoiceAllocations, createInvoiceAllocation, deleteInvoiceAllocation
 } from '@/api/invoice'
+import { listFunds } from '@/api/fund'
 import { listContracts, listEligibleContracts } from '@/api/contract'
 import { getCustomer, listCustomers } from '@/api/customer'
 import ProTable from '@/components/ProTable.vue'
@@ -149,7 +182,9 @@ const columns = [
   { prop: 'source_kind', label: '来源业务', width: 110, formatter: row => sourceKindText(row.source_kind) },
   { prop: 'period_key', label: '台账期次', minWidth: 180, showOverflowTooltip: true },
   { label: '状态', width: 110, align: 'center', slot: 'status' },
-  { label: '操作', minWidth: 300, align: 'center', fixed: 'right', slot: 'actions' }
+  { label: '资金状态', width: 110, align: 'center', slot: 'reconciliation' },
+  { label: '未核销金额', width: 130, align: 'right', formatter: row => money(row.unallocated_amount) },
+  { label: '操作', minWidth: 380, align: 'center', fixed: 'right', slot: 'actions' }
 ]
 
 const fetchRows = () => listInvoices({ direction: activeDirection.value })
@@ -161,6 +196,47 @@ function money(value) { return Number(value || 0).toLocaleString('zh-CN', { mini
 function statusText(status) { return INVOICE_STATUS_META[status]?.text || status || '未知' }
 function scenicName(scenicId) { return getScenicById(scenicId)?.name || scenicId || '-' }
 function sourceKindText(sourceKind) { return ({ ticket: '门票', hotel: '酒店' })[sourceKind] || sourceKind || '-' }
+function reconciliationStatusText(invoice) {
+  if (invoice?.direction === 'input') return invoice.reconciliation_state === 'allocated' ? '已付款' : '未补票'
+  return invoice?.reconciliation_state === 'allocated' ? '已回款' : '待回款'
+}
+const reconciliationVisible = ref(false)
+const currentInvoice = ref(null)
+const reconciliation = reactive({ allocations: [], candidates: [] })
+const allocationForm = reactive({ fund_transaction_id: null, amount: null })
+function fundOptionLabel(fund) {
+  return `${fund.occurred_on || ''} ${fund.counterparty || fund.summary || ''} ¥${money(fund.amount)}`
+}
+async function openReconciliation(invoice) {
+  currentInvoice.value = invoice
+  const [allocations, candidates] = await Promise.all([
+    listInvoiceAllocations(invoice.id),
+    listFunds({
+      contract_id: invoice.contract_id,
+      direction: invoice.direction === 'input' ? 'usage' : 'increase',
+      unallocated_only: true,
+      page_size: 200
+    })
+  ])
+  reconciliation.allocations = Array.isArray(allocations) ? allocations : (allocations?.items || [])
+  reconciliation.candidates = Array.isArray(candidates) ? candidates : (candidates?.items || [])
+  allocationForm.fund_transaction_id = null
+  allocationForm.amount = Number(invoice.unallocated_amount || invoice.amount || 0)
+  reconciliationVisible.value = true
+}
+async function addAllocation() {
+  await createInvoiceAllocation(currentInvoice.value.id, {
+    fund_transaction_id: allocationForm.fund_transaction_id,
+    amount: allocationForm.amount
+  })
+  await openReconciliation(currentInvoice.value)
+  reload()
+}
+async function removeAllocation(allocation) {
+  await deleteInvoiceAllocation(currentInvoice.value.id, allocation.id)
+  await openReconciliation(currentInvoice.value)
+  reload()
+}
 const editVisible = ref(false)
 const saving = ref(false)
 const editingId = ref(null)
@@ -397,5 +473,6 @@ async function printApproval(row) {
 .stat-value.blue { color: var(--el-color-primary); }
 .readonly-status { color: var(--el-text-color-secondary); }
 .detail-summary { margin-top: 14px; text-align: right; color: var(--el-text-color-secondary); }
+.allocation-form { margin: 18px 0 12px; }
 @media (max-width: 768px) { .stat-row .el-col { margin-bottom: 12px; } }
 </style>

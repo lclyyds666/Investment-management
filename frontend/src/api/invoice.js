@@ -18,6 +18,18 @@ export function updateInvoice(id, data) {
   return request.put(`/invoices/${id}`, data)
 }
 
+export function listInvoiceAllocations(id) {
+  return request.get(`/invoices/${id}/allocations`)
+}
+
+export function createInvoiceAllocation(id, data) {
+  return request.post(`/invoices/${id}/allocations`, data)
+}
+
+export function deleteInvoiceAllocation(id, allocationId) {
+  return request.delete(`/invoices/${id}/allocations/${allocationId}`)
+}
+
 export function deleteInvoice(id) {
   return request.delete(`/invoices/${id}`)
 }
