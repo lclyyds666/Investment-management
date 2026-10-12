@@ -6,7 +6,11 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from io import BytesIO
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -30,11 +34,17 @@ from app.schemas.operation import (
     TrendPoint,
 )
 from app.schemas.operation_analysis import DataQualityIssueOut, OperationAnalysisOut
+from app.schemas.operation_forecast import ForecastFactorParseResult
 from app.services.ai_agent import diagnose as ai_diagnose_service
 from app.services import financial as financial_svc
 from app.services.assignment_permissions import PermissionContext
 from app.services.operation_analysis import AnalysisFilters, analyze, validated_date_range
 from app.services.operation_series import build_confirmed_daily_series
+from app.services.forecast_factor_excel import (
+    MAX_FACTOR_FILE_SIZE,
+    build_factor_template,
+    parse_factor_workbook,
+)
 
 router = APIRouter()
 
@@ -42,6 +52,41 @@ _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANA
 _dashboard_guard = require_permission("supply.dashboard.view", _supply_context)
 _operation_guard = require_permission("supply.operation.view", _supply_context)
 _operation_create_guard = require_permission("supply.operation.create", _supply_context)
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get(
+    "/forecast-factors/template",
+    summary="下载预测影响因素 Excel 模板",
+    dependencies=[Depends(_operation_guard)],
+)
+def forecast_factor_template():
+    filename = quote("经营预测影响因素模板.xlsx")
+    return StreamingResponse(
+        BytesIO(build_factor_template()),
+        media_type=_XLSX_MIME,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.post(
+    "/forecast-factors/parse",
+    response_model=Response[ForecastFactorParseResult],
+    summary="解析预测影响因素 Excel",
+    dependencies=[Depends(_operation_guard)],
+)
+async def parse_forecast_factor_file(
+    file: UploadFile = File(..., description="预测影响因素 Excel(.xlsx)，≤5MB"),
+):
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="仅支持 .xlsx 文件")
+    content = await file.read(MAX_FACTOR_FILE_SIZE + 1)
+    if len(content) > MAX_FACTOR_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="文件不能超过 5MB")
+    try:
+        return Response.ok(parse_factor_workbook(content))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get(

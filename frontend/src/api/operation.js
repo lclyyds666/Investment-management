@@ -24,3 +24,18 @@ export function getFinancial() {
 export function getProjectsGeo(hub = '山东省') {
   return request.get('/operation/projects/geo', { params: { hub } })
 }
+
+/** 下载经营预测影响因素 Excel 模板 */
+export function downloadForecastFactorTemplate() {
+  return request.get('/operation/forecast-factors/template', { responseType: 'blob' })
+}
+
+/** 上传并解析经营预测影响因素 Excel */
+export function parseForecastFactors(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/operation/forecast-factors/parse', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  })
+}
