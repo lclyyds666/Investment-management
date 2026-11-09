@@ -6,10 +6,11 @@ import { ElMessage } from 'element-plus'
 import { usePortalStore } from '@/store/portal'
 import { useUserStore } from '@/store/user'
 import { portalGuard } from './permission'
+import { useFundAlertStore } from '@/store/fundAlerts'
+import * as fundApi from '@/api/fund'
 
 vi.mock('element-plus', () => ({ ElMessage: { error: vi.fn() } }))
-const fundAlerts = vi.hoisted(() => ({ loadForLogin: vi.fn().mockResolvedValue() }))
-vi.mock('@/store/fundAlerts', () => ({ useFundAlertStore: () => fundAlerts }))
+vi.mock('@/api/fund')
 
 const PLATFORM_TITLE = '山东出版投资有限公司工作平台'
 
@@ -46,19 +47,49 @@ describe('portal permission guard', () => {
     setActivePinia(createPinia())
     localStorage.clear()
     vi.clearAllMocks()
-    fundAlerts.loadForLogin.mockResolvedValue()
+    fundApi.getTodayFundAlerts.mockResolvedValue({ items: [] })
   })
 
   it('starts fund alerts without blocking authorized navigation', async () => {
-    authenticatedContext({ permissions: [{ code: 'supply.finance.view' }] })
+    const { portalStore } = authenticatedContext({ permissions: [{ code: 'supply.finance.view' }] })
+    const loadPortal = vi.spyOn(portalStore, 'loadPortalContext')
+    const loadAlerts = vi.spyOn(useFundAlertStore(), 'loadForLogin')
     await expect(portalGuard(route('/'))).resolves.toBe(true)
-    expect(fundAlerts.loadForLogin).toHaveBeenCalledTimes(1)
+    expect(loadAlerts).toHaveBeenCalledTimes(1)
+    expect(loadPortal.mock.invocationCallOrder[0]).toBeLessThan(loadAlerts.mock.invocationCallOrder[0])
+  })
+
+  it('does not wait for a pending alert request', async () => {
+    authenticatedContext({ permissions: [{ code: 'supply.finance.view' }] })
+    fundApi.getTodayFundAlerts.mockReturnValueOnce(new Promise(() => {}))
+    await expect(portalGuard(route('/'))).resolves.toBe(true)
+  })
+
+  it('contains rejected alert loads without logging out', async () => {
+    const { userStore } = authenticatedContext({ permissions: [{ code: 'supply.finance.view' }] })
+    const logout = vi.spyOn(userStore, 'logout')
+    vi.spyOn(useFundAlertStore(), 'loadForLogin').mockRejectedValueOnce(new Error('offline'))
+    await expect(portalGuard(route('/'))).resolves.toBe(true)
+    expect(logout).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates alert requests across navigation in the same session', async () => {
+    authenticatedContext({ permissions: [{ code: 'supply.finance.view' }] })
+    await portalGuard(route('/'))
+    await portalGuard(route('/supplymanagement/dashboard'))
+    expect(fundApi.getTodayFundAlerts).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads alerts for a superuser with an empty permission array', async () => {
+    authenticatedContext({ isSuperuser: true })
+    await expect(portalGuard(route('/'))).resolves.toBe(true)
+    expect(fundApi.getTodayFundAlerts).toHaveBeenCalledTimes(1)
   })
 
   it('does not request fund alerts without finance view permission', async () => {
     authenticatedContext()
     await expect(portalGuard(route('/'))).resolves.toBe(true)
-    expect(fundAlerts.loadForLogin).not.toHaveBeenCalled()
+    expect(fundApi.getTodayFundAlerts).not.toHaveBeenCalled()
   })
 
   it('uses the unified platform name in browser titles', async () => {

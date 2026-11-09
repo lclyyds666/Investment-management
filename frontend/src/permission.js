@@ -14,12 +14,16 @@ const companyFallback = (company) => company === COMPANY_CODES.INVESTMENT
   ? INVESTMENT_CASES_PATH
   : SUPPLY_DASHBOARD_PATH
 
+export function triggerFundAlerts(portalStore) {
+  if (!portalStore.hasPermission('supply.finance.view')) return
+  void useFundAlertStore().loadForLogin().catch(() => undefined)
+}
+
 export const portalGuard = async (to) => {
   document.title = to.meta?.title ? `${to.meta.title} - ${TITLE}` : TITLE
 
   const userStore = useUserStore()
   const portalStore = usePortalStore()
-  const fundAlertStore = useFundAlertStore()
 
   if (to.meta?.public) {
     if (to.path === '/login' && userStore.isLogin) return { path: '/' }
@@ -69,9 +73,7 @@ export const portalGuard = async (to) => {
     return { path: companyFallback(to.meta?.company) }
   }
 
-  if (portalStore.hasPermission('supply.finance.view')) {
-    void fundAlertStore.loadForLogin()
-  }
+  triggerFundAlerts(portalStore)
 
   return true
 }
