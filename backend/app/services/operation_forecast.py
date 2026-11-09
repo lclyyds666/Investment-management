@@ -1,7 +1,7 @@
 """Pure, explainable forecasts over confirmed operation daily points."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from itertools import product
@@ -267,9 +267,26 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
     )
 
 
-def forecast(series, request: ForecastRequest) -> ForecastOut:
+def forecast(series, request: ForecastRequest, *, all_metrics: bool = False) -> ForecastOut:
+    # Reuse the established scalar estimator independently for each measure.
+    series = list(series)
+    lines = []
+    metrics = ("settlement_amount", "writeoff_amount", "order_count") if all_metrics else ("settlement_amount",)
+    for metric in metrics:
+        metric_series = [replace(point, settlement_amount=Decimal(getattr(point, metric))) for point in series]
+        for key in _requested_keys(metric_series, request):
+            line = _forecast_line(metric_series, request, key)
+            line.metric = metric
+            if metric == "order_count":
+                for field in ("baseline", "forecast", "interval_low", "interval_high"):
+                    value = getattr(line, field)
+                    if value is not None:
+                        setattr(line, field, value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                if line.forecast is not None:
+                    line.factor_adjustment = line.forecast - line.baseline
+            lines.append(line)
     return ForecastOut(
         start_date=request.start_date,
         end_date=request.end_date,
-        lines=[_forecast_line(series, request, key) for key in _requested_keys(series, request)],
+        lines=lines,
     )

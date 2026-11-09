@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
+from app.schemas.operation_analysis import DataQualityIssueOut
 
 
 class ForecastFactor(BaseModel):
@@ -46,6 +47,8 @@ class ForecastRequest(BaseModel):
     def validate_dates(self):
         if self.end_date < self.start_date:
             raise ValueError("结束日期不能早于开始日期")
+        if (self.end_date - self.start_date).days + 1 > 90:
+            raise ValueError("预测范围不能超过90天")
         return self
 
 
@@ -55,6 +58,7 @@ class ForecastComponent(BaseModel):
 
 
 class ForecastLine(BaseModel):
+    metric: Literal["settlement_amount", "writeoff_amount", "order_count"] = "settlement_amount"
     scenic_id: str
     business_type: Literal["ticket", "hotel"]
     platform: str
@@ -73,3 +77,5 @@ class ForecastOut(BaseModel):
     start_date: date
     end_date: date
     lines: list[ForecastLine] = Field(default_factory=list)
+    quality_issues: list[DataQualityIssueOut] = Field(default_factory=list)
+    insights: dict = Field(default_factory=dict)

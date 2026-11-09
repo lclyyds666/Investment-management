@@ -61,3 +61,29 @@ class AiToolSecurityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OperationInsightsTests(unittest.TestCase):
+    def test_sanitizer_excludes_identifiers_and_free_text(self):
+        from app.schemas.operation_forecast import ForecastOut, ForecastLine
+        from app.services.operation_insights import sanitize_aggregate_result
+        from datetime import date
+        result = ForecastOut(start_date=date(2026, 9, 1), end_date=date(2026, 9, 1), lines=[
+            ForecastLine(scenic_id="private-client", business_type="ticket", platform="secret", reasons=["private text"], forecast=100)
+        ])
+        sanitized = str(sanitize_aggregate_result(result))
+        self.assertNotIn("private", sanitized)
+        self.assertNotIn("secret", sanitized)
+        self.assertIn("100", sanitized)
+
+    def test_llm_failure_and_malformed_output_fall_back(self):
+        from datetime import date
+        from app.schemas.operation_forecast import ForecastOut
+        from app.services.operation_insights import render_operation_insights
+        result = ForecastOut(start_date=date(2026, 9, 1), end_date=date(2026, 9, 1))
+        with patch("app.services.operation_insights.settings", SimpleNamespace(AI_ENABLED=True, DEEPSEEK_API_KEY="test", DEEPSEEK_MODEL="test")), patch("openai.OpenAI") as client:
+            client.return_value.chat.completions.create.side_effect = RuntimeError("offline")
+            self.assertEqual(render_operation_insights(result)["engine"], "rules")
+            client.return_value.chat.completions.create.side_effect = None
+            client.return_value.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"summary": "ok", "recommendations": 42}'))])
+            self.assertEqual(render_operation_insights(result)["engine"], "rules")

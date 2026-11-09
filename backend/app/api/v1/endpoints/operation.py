@@ -34,7 +34,10 @@ from app.schemas.operation import (
     TrendPoint,
 )
 from app.schemas.operation_analysis import DataQualityIssueOut, OperationAnalysisOut
-from app.schemas.operation_forecast import ForecastFactorParseResult
+from app.schemas.operation_forecast import ForecastFactorParseResult, ForecastRequest, ForecastOut
+from app.services.operation_forecast import forecast
+from app.services.operation_insights import render_operation_insights
+from openpyxl import Workbook
 from app.services.ai_agent import diagnose as ai_diagnose_service
 from app.services import financial as financial_svc
 from app.services.assignment_permissions import PermissionContext
@@ -52,7 +55,68 @@ _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANA
 _dashboard_guard = require_permission("supply.dashboard.view", _supply_context)
 _operation_guard = require_permission("supply.operation.view", _supply_context)
 _operation_create_guard = require_permission("supply.operation.create", _supply_context)
+_operation_export_guard = require_permission("supply.operation.export", _supply_context)
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def calculate_forecast_response(db, payload):
+    tickets = db.scalars(select(TicketLedger).where(TicketLedger.confirmed.is_(True))).all()
+    hotels = db.scalars(select(HotelLedger).where(HotelLedger.confirmed.is_(True))).all()
+    points, issues = build_confirmed_daily_series(tickets, hotels)
+    result = forecast(points, payload, all_metrics=True)
+    result.quality_issues = [DataQualityIssueOut.model_validate(issue.__dict__) for issue in issues]
+    result.insights = render_operation_insights(result)
+    return result
+
+
+def build_forecast_workbook(result, request):
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "预测汇总"
+    summary.append(["开始日期", "结束日期", "指标", "预测值", "数据不足分层数"])
+    for metric in ("settlement_amount", "writeoff_amount", "order_count"):
+        lines = [line for line in result.lines if line.metric == metric]
+        summary.append([str(result.start_date), str(result.end_date), metric,
+                        sum((line.forecast for line in lines if line.forecast is not None), Decimal(0)),
+                        sum(line.forecast is None for line in lines)])
+    details = workbook.create_sheet("分层明细")
+    fields = ["scenic_id", "business_type", "platform", "metric", "baseline", "factor_adjustment", "forecast", "interval_low", "interval_high", "confidence", "reasons", "components"]
+    details.append(fields)
+    for line in result.lines:
+        values = line.model_dump(mode="json")
+        details.append([str(values[field]) if isinstance(values[field], (dict, list)) else values[field] for field in fields])
+    factors = workbook.create_sheet("影响因素")
+    from app.schemas.operation_forecast import ForecastFactor
+    fields = list(ForecastFactor.model_fields)
+    factors.append(fields)
+    for factor in request.factors:
+        values = factor.model_dump(mode="json")
+        factors.append([values[field] for field in fields])
+    quality = workbook.create_sheet("数据质量")
+    quality.append(["row_id", "business_type", "code"])
+    for issue in result.quality_issues:
+        quality.append([issue.row_id, issue.business_type, issue.code])
+    # User-controlled labels must remain literal strings, never Excel formulas.
+    for sheet in workbook:
+        for row in sheet:
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+@router.post("/forecast", response_model=Response[ForecastOut], dependencies=[Depends(_operation_create_guard)])
+def operation_forecast(payload: ForecastRequest, db: Session = Depends(get_db)):
+    return Response.ok(calculate_forecast_response(db, payload))
+
+
+@router.post("/forecast/export", dependencies=[Depends(_operation_export_guard)])
+def export_operation_forecast(payload: ForecastRequest, db: Session = Depends(get_db)):
+    result = calculate_forecast_response(db, payload)
+    return StreamingResponse(BytesIO(build_forecast_workbook(result, payload)), media_type=_XLSX_MIME,
+                             headers={"Content-Disposition": "attachment; filename=operation-forecast.xlsx"})
 
 
 @router.get(
