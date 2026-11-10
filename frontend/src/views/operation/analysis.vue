@@ -62,9 +62,7 @@
         v-model="platforms"
         multiple
         filterable
-        allow-create
-        default-first-option
-        placeholder="输入平台并回车"
+        placeholder="全部已观测平台"
         aria-label="平台"
         ><el-option v-for="p in platformOptions" :key="p" :label="p" :value="p"
       /></el-select>
@@ -225,6 +223,11 @@
           <p class="muted">
             历史按预测周期等长分段汇总；最后一段为整个预测周期总量，阴影为预测区间，不代表逐日预测。
           </p>
+          <el-alert
+            v-if="historyError"
+            :title="historyError"
+            type="warning"
+            :closable="false" />
           <BaseChart :option="forecastChart"
         /></el-card>
         <el-card shadow="never"
@@ -310,10 +313,12 @@ const canExport = computed(() =>
 )
 const canEditFactors = canForecast
 const iso = (d) => d.toISOString().slice(0, 10)
+const localDate = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const today = new Date()
 const initialDates = [
-  iso(new Date(today.getFullYear(), today.getMonth(), 1, 12)),
-  iso(today),
+  localDate(new Date(today.getFullYear(), today.getMonth(), 1)),
+  localDate(today),
 ]
 const tabFilters = ref({
   analysis: {
@@ -339,20 +344,33 @@ const fieldForTab = (key) =>
 const dateRange = fieldForTab('dateRange')
 const scenicIds = fieldForTab('scenicIds')
 const businessTypes = fieldForTab('businessTypes')
-const platforms = fieldForTab('platforms')
+const platforms = computed({
+  get: () => tabFilters.value[activeTab.value].platforms,
+  set: (values) => {
+    tabFilters.value[activeTab.value].platforms = values.filter((value) =>
+      platformOptions.value.includes(value),
+    )
+  },
+})
 const factors = ref([])
 const forecastPeriodMode = ref('custom')
 const forecastMonth = ref('')
 function selectForecastMonth(month) {
-  if (!month) return
+  forecastMonth.value = month || ''
+  tabFilters.value.forecast.dateRange = month ? monthDates(month) : []
+}
+function monthDates(month) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month || ''))
+    throw new Error('请选择有效的预测月份')
   const [year, monthNumber] = month.split('-').map(Number)
   const lastDay = new Date(year, monthNumber, 0).getDate()
-  tabFilters.value.forecast.dateRange = [`${month}-01`, `${month}-${lastDay}`]
+  return [`${month}-01`, `${month}-${lastDay}`]
 }
 const activeTab = ref('analysis'),
   analysis = ref(null),
   forecastResult = ref(null),
   history = ref(null)
+const historyError = ref('')
 const loading = ref(false),
   forecastLoading = ref(false),
   exporting = ref(false),
@@ -404,8 +422,8 @@ const qualityIssues = computed(
     (activeTab.value === 'analysis' ? analysis.value : forecastResult.value)
       ?.quality_issues || [],
 )
-function dates(maxDays = 366) {
-  const [start, end] = dateRange.value || []
+function dates(maxDays = 366, period = dateRange.value) {
+  const [start, end] = period || []
   if (!start || !end || end < start)
     throw new Error('请选择有效的开始和结束日期')
   if ((Date.parse(end) - Date.parse(start)) / 86400000 + 1 > maxDays)
@@ -422,7 +440,12 @@ function query(period) {
 }
 function payload() {
   return {
-    ...dates(90),
+    ...dates(
+      90,
+      forecastPeriodMode.value === 'month'
+        ? monthDates(forecastMonth.value)
+        : tabFilters.value.forecast.dateRange,
+    ),
     scenic_ids: [...scenicIds.value],
     business_types: [...businessTypes.value],
     platforms: [...platforms.value],
@@ -452,6 +475,7 @@ async function generateForecast() {
   if (!canForecast.value) return
   forecastLoading.value = true
   error.value = ''
+  historyError.value = ''
   try {
     const p = payload(),
       days = (Date.parse(p.end_date) - Date.parse(p.start_date)) / 86400000 + 1
@@ -459,12 +483,15 @@ async function generateForecast() {
       start_date: iso(new Date(Date.parse(p.start_date) - days * 4 * 86400000)),
       end_date: iso(new Date(Date.parse(p.start_date) - 86400000)),
     }
-    const [result, past] = await Promise.all([
+    const [result, past] = await Promise.allSettled([
       createOperationForecast(p),
       getOperationAnalysis(query(historyPeriod)),
     ])
-    forecastResult.value = result
-    history.value = past
+    if (result.status === 'rejected') throw result.reason
+    forecastResult.value = result.value
+    history.value = past.status === 'fulfilled' ? past.value : null
+    if (past.status === 'rejected')
+      historyError.value = `历史数据加载失败：${failure(past.reason)}。预测结果仍可查看和导出。`
     forecastPayload = p
   } catch (e) {
     error.value = failure(e)
@@ -536,7 +563,7 @@ const forecastChart = computed(() => {
       (Date.parse(result.end_date) - Date.parse(result.start_date)) / 86400000 +
       1,
     base = Date.parse(result.start_date) - span * 4 * 86400000
-  const values = [0, 0, 0, 0],
+  const values = history.value ? [0, 0, 0, 0] : [null, null, null, null],
     labels = values.map(
       (_, i) =>
         `${iso(new Date(base + i * span * 86400000))} ~ ${iso(new Date(base + ((i + 1) * span - 1) * 86400000))}`,

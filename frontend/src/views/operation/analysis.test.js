@@ -73,7 +73,79 @@ describe('operation analysis and forecast workspace', () => {
       ],
     })
   })
-  afterEach(() => wrapper?.unmount())
+  afterEach(() => {
+    wrapper?.unmount()
+    vi.useRealTimers()
+  })
+  it('uses local calendar dates before 08:00 at a month boundary', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 1, 1, 30))
+    await mount()
+    expect(wrapper.vm.dateRange).toEqual(['2026-11-01', '2026-11-01'])
+    expect(getOperationAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({
+        start_date: '2026-11-01',
+        end_date: '2026-11-01',
+      }),
+    )
+  })
+  it('rejects unknown platform selector values in both tabs', async () => {
+    await mount()
+    const selector = wrapper.findAllComponents({ name: 'ElSelect' })[2]
+    expect(selector.props('allowCreate')).toBe(false)
+    selector.vm.$emit('update:modelValue', ['携程', 'invented'])
+    await wrapper.vm.loadAnalysis()
+    expect(getOperationAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ platform: ['携程'] }),
+    )
+    wrapper.vm.activeTab = 'forecast'
+    await flushPromises()
+    wrapper.findAllComponents({ name: 'ElSelect' })[2].vm.$emit('update:modelValue', ['invented'])
+    wrapper.vm.dateRange = ['2026-02-01', '2026-02-02']
+    await wrapper.vm.generateForecast()
+    expect(createOperationForecast).toHaveBeenCalledWith(
+      expect.objectContaining({ platforms: [] }),
+    )
+  })
+  it('submits the visible month after custom edits and rejects cleared months', async () => {
+    await mount()
+    wrapper.vm.activeTab = 'forecast'
+    wrapper.vm.forecastPeriodMode = 'month'
+    wrapper.vm.selectForecastMonth('2026-02')
+    wrapper.vm.forecastPeriodMode = 'custom'
+    wrapper.vm.dateRange = ['2026-03-01', '2026-03-02']
+    wrapper.vm.forecastPeriodMode = 'month'
+    await wrapper.vm.generateForecast()
+    expect(createOperationForecast).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        start_date: '2026-02-01',
+        end_date: '2026-02-28',
+      }),
+    )
+    createOperationForecast.mockClear()
+    wrapper.vm.selectForecastMonth(null)
+    await wrapper.vm.generateForecast()
+    expect(createOperationForecast).not.toHaveBeenCalled()
+    expect(wrapper.vm.error).toContain('预测月份')
+  })
+  it('keeps a successful forecast and snapshot when only historical data fails', async () => {
+    await mount()
+    wrapper.vm.activeTab = 'forecast'
+    wrapper.vm.dateRange = ['2026-02-01', '2026-02-02']
+    getOperationAnalysis.mockRejectedValueOnce(new Error('历史不可用'))
+    await wrapper.vm.generateForecast()
+    expect(wrapper.vm.forecastResult.lines).toHaveLength(2)
+    expect(wrapper.vm.error).toBe('')
+    expect(wrapper.vm.historyError).toContain('历史不可用')
+    expect(wrapper.vm.forecastChart.series[0].data).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+    ])
+    expect(wrapper.vm.forecastChart.series[1].data.at(-1)).toBe(3)
+  })
   it('preserves independent tab filters, selects full months and accumulates only observed platforms', async () => {
     await mount()
     wrapper.vm.dateRange = ['2026-01-01', '2026-01-07']
