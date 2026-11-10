@@ -53,6 +53,7 @@ def list_funds(
     page_size: int = Query(default=20, ge=1, le=200),
     direction: str | None = None,
     contract_id: int | None = None,
+    fund_id: int | None = None,
     unallocated_only: bool = False,
     category: str | None = None,
     settlement_status: str | None = None,
@@ -64,6 +65,8 @@ def list_funds(
     _: User = Depends(_view_guard),
 ):
     statement = select(FundTransaction)
+    if fund_id is not None:
+        statement = statement.where(FundTransaction.id == fund_id)
     if direction:
         statement = statement.where(FundTransaction.direction == direction)
     if contract_id is not None:

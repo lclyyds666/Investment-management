@@ -263,6 +263,7 @@ def _workflow_error(error: WorkflowValidationError) -> HTTPException:
 def list_invoices(
     direction: InvoiceDirection | None = None,
     scenic_id: str | None = None,
+    contract_id: int | None = None,
     source_kind: InvoiceSourceKind | None = None,
     period_key: str | None = None,
     invoice_status: InvoiceStatus | None = Query(default=None, alias="status"),
@@ -274,6 +275,7 @@ def list_invoices(
     filters = (
         (Invoice.direction, direction),
         (Invoice.scenic_id, scenic_id),
+        (Invoice.contract_id, contract_id),
         (Invoice.source_kind, source_kind),
         (Invoice.period_key, period_key),
         (Invoice.status, invoice_status),

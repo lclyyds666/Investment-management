@@ -46,6 +46,10 @@ vi.mock('@/store/approvalBadge', () => ({
   })
 }))
 
+vi.mock('@/store/workItems', () => ({
+  useWorkItemsStore: () => ({ count: 0, startPolling: vi.fn(), reset: vi.fn() })
+}))
+
 describe('supply layout navigation', () => {
   let wrapper
 

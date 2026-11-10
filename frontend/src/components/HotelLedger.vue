@@ -298,7 +298,7 @@ import { getScenicById } from '@/constants/scenic'
 import { usePortalStore } from '@/store/portal'
 import { canUsePermission } from '@/utils/businessAuthorization'
 
-const props = defineProps({ scenicId: { type: String, required: true } })
+const props = defineProps({ scenicId: { type: String, required: true }, periodKey: { type: String, default: '' } })
 
 const portalStore = usePortalStore()
 // 景区ID = 景区名（与客户档案「客户ID」内容一致，作为关联键）
@@ -399,6 +399,8 @@ const displayRows = computed(() => {
   const groups = new Map()
   for (const r of savedRows.value) {
     const key = r.source_file || r.detail_name || r.check_date_text || r.period_text || '未分组'
+    const sourceKey = r.source_file || r.detail_name || r.period_text || r.check_date_text || 'NA'
+    if (props.periodKey && sourceKey !== props.periodKey) continue
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(r)
   }
@@ -442,7 +444,7 @@ const displayRows = computed(() => {
     out.push(...b.rows, t)
   }
   // 总合计（所有期汇总）：核销/结算/服务费/间夜逐行累加；待核销取末期滚动余额；回款按每期一次累加
-  if (savedRows.value.length) {
+  if (savedRows.value.length && !props.periodKey) {
     const g = {
       isGrandTotal: true, isTotal: true, platform: '总合计', check_date_text: '',
       hexiao_amount: 0, jinying_amount: 0, service_fee: 0, room_nights: 0,

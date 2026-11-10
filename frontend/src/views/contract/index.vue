@@ -449,7 +449,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Edit, Delete, Refresh, View, UploadFilled, Tickets, Download, MagicStick, Collection, CopyDocument } from '@element-plus/icons-vue'
 import { usePortalStore } from '@/store/portal'
@@ -500,6 +501,8 @@ function canReturn(row) {
 
 const loading = ref(false)
 const list = ref([])
+const route = useRoute()
+watch(() => route.query.contract_id, id => { if (id) openDetail({ id: Number(id) }) })
 const keyword = ref('')
 const filteredList = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -515,6 +518,7 @@ async function load() {
   loading.value = true
   try {
     list.value = await listContracts()
+    if (route.query.contract_id) openDetail({ id: Number(route.query.contract_id) })
   } finally {
     loading.value = false
   }

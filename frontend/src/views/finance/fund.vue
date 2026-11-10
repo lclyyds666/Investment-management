@@ -263,7 +263,7 @@ const routeMaturityStatus = () => maturityStatuses.has(String(route.query.maturi
 const canWrite = computed(() => canUsePermission(portalStore, 'supply.finance.update'))
 const loading = ref(false)
 const summaryLoading = ref(false)
-const activeTab = ref('ledger')
+const activeTab = ref(route.query.tab === 'execution' ? 'execution' : 'ledger')
 const executionLoading = ref(false)
 const executionTasks = ref([])
 const executionDialogVisible = ref(false)
@@ -331,7 +331,8 @@ const form = reactive(emptyForm())
 async function loadExecutionTasks() {
   executionLoading.value = true
   try {
-    executionTasks.value = await listCashExecutionTasks({ direction: filters.direction || '' })
+    const tasks = await listCashExecutionTasks({ direction: filters.direction || '' })
+    executionTasks.value = route.query.task_id ? tasks.filter(task => String(task.id) === String(route.query.task_id)) : tasks
   } finally {
     executionLoading.value = false
   }
@@ -403,7 +404,9 @@ function cleanFilterParams() {
     end_date: filters.dateRange?.[1],
     keyword: filters.keyword?.trim(),
     page: filters.page,
-    page_size: filters.page_size
+    page_size: filters.page_size,
+    fund_id: route.query.fund_id,
+    unallocated_only: route.query.unallocated_only === 'true'
   }
   return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== '' && value != null))
 }
@@ -576,6 +579,11 @@ async function onDelete(row) {
   await Promise.all([loadLedger(), loadSummary()])
 }
 
+watch(() => [route.query.task_id, route.query.fund_id, route.query.tab, route.query.unallocated_only], () => {
+  activeTab.value = route.query.tab === 'execution' ? 'execution' : 'ledger'
+  filters.page = 1
+  void Promise.all([loadLedger(), loadExecutionTasks()]).catch(() => undefined)
+})
 onMounted(() => Promise.all([loadLedger(), loadSummary(), loadExecutionTasks()]))
 </script>
 

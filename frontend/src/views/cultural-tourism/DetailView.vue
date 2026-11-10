@@ -87,7 +87,7 @@
 
           <el-tabs v-model="ledgerTab" class="ledger-tabs">
             <el-tab-pane v-if="ticketEnabled" label="景区门票核销台账" name="ticket">
-              <TicketLedger :scenic-id="scenicId" />
+              <TicketLedger :scenic-id="scenicId" :period-key="String(route.query.period_key || '')" />
               <!-- 原始核销明细预览（对照/校验用）：仅展示已保存的对账明细源文件，点击查看/下载 -->
               <el-collapse class="raw-collapse">
                 <el-collapse-item name="raw">
@@ -101,7 +101,7 @@
             </el-tab-pane>
 
             <el-tab-pane v-if="hotelEnabled" label="景区酒店核销台账" name="scenic">
-              <HotelLedger :scenic-id="scenicId" />
+              <HotelLedger :scenic-id="scenicId" :period-key="String(route.query.period_key || '')" />
               <!-- 原始核销明细预览（对照/校验用）：仅列源文件，可查看/下载 -->
               <el-collapse class="raw-collapse">
                 <el-collapse-item name="raw-hotel">
@@ -145,6 +145,11 @@ const ledgerActive = ref([])
 
 const route = useRoute()
 const router = useRouter()
+watch(() => route.query.source_kind, kind => {
+  if (!kind) return
+  ledgerTab.value = kind === 'hotel' ? 'scenic' : 'ticket'
+  ledgerActive.value = ['ledger']
+}, { immediate: true })
 
 // 通过动态路由参数识别当前景区（数据作用域键）
 const scenicId = computed(() => String(route.params.scenicId || ''))

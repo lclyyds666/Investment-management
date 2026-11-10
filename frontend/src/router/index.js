@@ -272,6 +272,12 @@ const routes = [
         }
       },
       {
+        path: 'work-items',
+        name: 'WorkItems',
+        component: () => import('@/views/work-items/index.vue'),
+        meta: { title: '待处理事项', icon: 'Bell', group: '智慧财务', groupIcon: 'Wallet', company: supplyCompany }
+      },
+      {
         path: 'finance/fund',
         name: 'FinanceFund',
         component: () => import('@/views/finance/fund.vue'),

@@ -312,7 +312,8 @@ import { usePortalStore } from '@/store/portal'
 import { canUsePermission } from '@/utils/businessAuthorization'
 
 const props = defineProps({
-  scenicId: { type: String, required: true }
+  scenicId: { type: String, required: true },
+  periodKey: { type: String, default: '' }
 })
 
 const portalStore = usePortalStore()
@@ -730,6 +731,7 @@ const displayRows = computed(() => {
   const groups = new Map()
   for (const r of savedRows.value) {
     const key = r.source_file || r.detail_name || r.period_text || r.check_date_text || 'NA'
+    if (props.periodKey && key !== props.periodKey) continue
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(r)
   }
@@ -767,7 +769,7 @@ const displayRows = computed(() => {
     out.push(...b.rows, t)
   }
   // 总合计（所有期汇总）：核销/结算/服务费逐行累加；待核销取末期滚动余额；回款各行累加
-  if (savedRows.value.length) {
+  if (savedRows.value.length && !props.periodKey) {
     const g = {
       isGrandTotal: true, isTotal: true, platform: '总合计', ticket_product: '', check_date_text: '',
       hexiao_amount: 0, jinying_amount: 0, service_fee: 0, pending_writeoff: 0,

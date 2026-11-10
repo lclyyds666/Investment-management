@@ -57,21 +57,27 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApprovalBadgeStore } from '@/store/approvalBadge'
 import { usePortalStore } from '@/store/portal'
 import GlobalHeader from '@/components/GlobalHeader.vue'
+import { useUserStore } from '@/store/user'
+import { useWorkItemsStore } from '@/store/workItems'
 
 const route = useRoute()
 const router = useRouter()
 const portalStore = usePortalStore()
 const badgeStore = useApprovalBadgeStore()
+const workItemsStore = useWorkItemsStore()
+const userStore = useUserStore()
+watch(() => userStore.token, token => workItemsStore.startPolling(token), { immediate: true })
 
 const activeMenu = computed(() => route.path)
 
 // 导航角标：按当前角色的待我审批数量。
 function menuBadge(path) {
+  if (path === '/supplymanagement/work-items') return workItemsStore.count
   if (path === '/supplymanagement/contract') return badgeStore.contract
   if (path === '/supplymanagement/approval') return badgeStore.business
   return 0
@@ -91,6 +97,7 @@ onMounted(() => {
   window.addEventListener('resize', syncViewport)
 })
 onUnmounted(() => {
+  workItemsStore.reset()
   badgeStore.stopPolling()
   window.removeEventListener('resize', syncViewport)
 })

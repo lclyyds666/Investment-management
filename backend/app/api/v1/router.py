@@ -3,10 +3,11 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     ai_assistant, approval, approval_stats, audit, auth, channel, contract, customer, health, hotel_ledger,
-    fund, invoice, knowledge, legal_risk, operation, organization, portal, scenic, ticket_ledger, user, workflow,
+    fund, invoice, knowledge, legal_risk, operation, organization, portal, scenic, ticket_ledger, user, workflow, work_items,
 )
 
 api_router = APIRouter()
+api_router.include_router(work_items.router, prefix='/work-items', tags=['待处理事项'])
 api_router.include_router(health.router, tags=["系统"])
 api_router.include_router(auth.router, tags=["认证"])
 api_router.include_router(ai_assistant.router, prefix="/ai-assistant", tags=["AI 助手"])

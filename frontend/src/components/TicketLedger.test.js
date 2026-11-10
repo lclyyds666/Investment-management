@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { shallowMount } from '@vue/test-utils'
+import { flushPromises, shallowMount } from '@vue/test-utils'
 
 const ticketApi = vi.hoisted(() => ({
   parseTicketFile: vi.fn(), getTicketLedger: vi.fn(), saveTicketLedger: vi.fn(),
@@ -46,6 +46,16 @@ describe('TicketLedger platform editor', () => {
     expect(wrapper.findAll('.platform-option').map((option) => option.text())).toEqual([
       '抖音', '美团', '携程', '同程', '票付通'
     ])
+  })
+
+  it('filters the work item period without changing other saved periods', async () => {
+    const wrapper = mountLedger()
+    await flushPromises()
+    wrapper.vm.savedRows = [{ id: 1, source_file: 'one.xlsx' }, { id: 2, source_file: 'two.xlsx' }]
+    await wrapper.setProps({ periodKey: 'two.xlsx' })
+    expect(wrapper.vm.displayRows.filter(row => row.id).map(row => row.id)).toEqual([2])
+    expect(wrapper.vm.savedRows).toHaveLength(2)
+    wrapper.unmount()
   })
 
   it('defaults confirmation to the remembered ticket contract and submits it', async () => {

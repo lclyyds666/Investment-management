@@ -13,6 +13,7 @@ const scenicApi = vi.hoisted(() => ({
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/workflow', () => workflowApi)
 vi.mock('@/api/scenic', () => scenicApi)
+vi.mock('@/api/workItems', () => ({ getContractClosureSummary: vi.fn().mockResolvedValue({ actual_payment: '70.00' }) }))
 vi.mock('@/utils/rmb', () => ({ digitToRMB: () => '' }))
 vi.mock('@/utils/file', () => ({ previewBlob: vi.fn(), downloadBlob: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: { success: vi.fn(), error: vi.fn() } }))

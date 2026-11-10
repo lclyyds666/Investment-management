@@ -141,7 +141,8 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Edit, Refresh, Upload } from '@element-plus/icons-vue'
 import { usePortalStore } from '@/store/portal'
@@ -163,7 +164,8 @@ import ProTable from '@/components/ProTable.vue'
 const portalStore = usePortalStore()
 const canView = computed(() => canUsePermission(portalStore, 'supply.invoice.view'))
 const canManage = computed(() => canUsePermission(portalStore, 'supply.invoice.manage'))
-const activeDirection = ref('input')
+const route = useRoute()
+const activeDirection = ref(route.query.direction === 'output' ? 'output' : 'input')
 const tableRef = ref()
 const stats = ref({ pending: 0, issued: 0, issued_amount: 0 })
 const contracts = ref([])
@@ -187,8 +189,16 @@ const columns = [
   { label: '操作', minWidth: 380, align: 'center', fixed: 'right', slot: 'actions' }
 ]
 
-const fetchRows = () => listInvoices({ direction: activeDirection.value })
+const fetchRows = async () => {
+  const rows = await listInvoices({ direction: activeDirection.value, include_legacy: true,
+    contract_id: route.query.contract_id, scenic_id: route.query.scenic_id })
+  return route.query.invoice_id ? rows.filter(row => String(row.id) === String(route.query.invoice_id)) : rows
+}
 const reload = () => tableRef.value?.reload?.()
+watch(() => route.query, () => {
+  activeDirection.value = route.query.direction === 'output' ? 'output' : 'input'
+  reload()
+})
 async function loadStats() {
   try { stats.value = await invoiceStats() } catch { /* request interceptor handles message */ }
 }

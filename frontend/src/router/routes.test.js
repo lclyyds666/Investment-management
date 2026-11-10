@@ -42,6 +42,12 @@ const legacyRoutes = [
 ]
 
 describe('unified portal routes', () => {
+  it('groups centralized work items in the existing finance navigation', () => {
+    const route = router.resolve('/supplymanagement/work-items')
+    expect(route.name).toBe('WorkItems')
+    expect(route.meta.group).toBe('智慧财务')
+    expect(route.meta.company).toBe(router.resolve('/supplymanagement/finance/fund').meta.company)
+  })
   it('groups data center and analysis with the same operation resource', () => {
     const routes = ['/supplymanagement/operation', '/supplymanagement/operation/analysis'].map(path=>router.resolve(path))
     expect(routes.map(route=>route.meta.title)).toEqual(['数据中心','分析预测'])

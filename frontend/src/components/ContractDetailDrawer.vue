@@ -21,6 +21,11 @@
       </div>
 
       <!-- 基础字段 -->
+      <el-descriptions v-if="closureSummary" title="业务闭环汇总（元）" :column="2" border class="mb">
+        <el-descriptions-item v-for="[key, label] in closureFields" :key="key" :label="label">
+          {{ closureSummary[key] == null ? '无查看权限' : Number(closureSummary[key]).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+        </el-descriptions-item>
+      </el-descriptions>
       <el-descriptions :column="2" border class="mb">
         <el-descriptions-item label="合同编号">{{ contract.contract_no }}</el-descriptions-item>
         <el-descriptions-item label="合同类型">{{ contract.contract_type_label || '—' }}</el-descriptions-item>
@@ -108,6 +113,7 @@ import { Printer, Guide, Document, View, Download } from '@element-plus/icons-vu
 import { getContract, listApprovals, fetchContractAttachmentBlob, fetchLegalDocBlob } from '@/api/contract'
 import { getWorkflowTimeline } from '@/api/workflow'
 import { getScenicOptions } from '@/api/scenic'
+import { getContractClosureSummary } from '@/api/workItems'
 import { STATUS_META } from '@/constants/business'
 import { digitToRMB } from '@/utils/rmb'
 import { previewBlob, downloadBlob } from '@/utils/file'
@@ -122,6 +128,8 @@ defineExpose({ reload: load })
 
 const detailLoading = ref(false)
 const contract = ref(null)
+const closureSummary = ref(null)
+const closureFields = [['approved_payment', '已审批付款'], ['pending_payment', '待执行付款'], ['actual_payment', '实际付款'], ['output_invoiced', '销项发票'], ['actual_receipt', '已回款'], ['missing_input_invoice', '未补进项发票']]
 const approvals = ref([])
 const workflowTasks = ref([])
 const timelineLoading = ref(false)
@@ -188,6 +196,7 @@ async function load() {
   const generation = ++loadGeneration
   detailLoading.value = true
   contract.value = null
+  closureSummary.value = null
   approvals.value = []
   workflowTasks.value = []
   timelineLoading.value = false
@@ -196,6 +205,7 @@ async function load() {
     const loadedContract = await getContract(targetId)
     if (generation !== loadGeneration || !isSameTarget(props.contractId, targetId)) return
     contract.value = loadedContract
+    void loadClosureSummary(generation, targetId)
   } finally {
     if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) {
       detailLoading.value = false
@@ -204,6 +214,13 @@ async function load() {
   if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) {
     await loadTimeline(generation, targetId)
   }
+}
+
+async function loadClosureSummary(generation, targetId) {
+  try {
+    const summary = await getContractClosureSummary(targetId)
+    if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) closureSummary.value = summary
+  } catch { /* Contract details remain available if the summary fails. */ }
 }
 
 async function loadTimeline(generation = loadGeneration, targetId = props.contractId) {

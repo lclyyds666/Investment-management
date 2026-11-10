@@ -407,6 +407,17 @@ def get_contract(
     return Response.ok(_to_out(db, contract, current_user, names.get(contract.created_by, "")))
 
 
+@router.get('/{contract_id}/closure-summary')
+def contract_closure_summary(
+    contract_id: int, db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.work_items import build_contract_closure_summary
+    contract = _get_contract_or_404(db, contract_id)
+    _ensure_contract_visible(db, contract, current_user)
+    return Response.ok(build_contract_closure_summary(db, contract_id, current_user))
+
+
 @router.get(
     "/{contract_id}/approvals",
     response_model=Response[list[ApprovalOut]],
