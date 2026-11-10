@@ -234,11 +234,19 @@ const routes = [
         name: 'Operation',
         component: () => import('@/views/operation/index.vue'),
         meta: {
-          title: '经营数据中心',
+          title: '数据中心',
           icon: 'TrendCharts',
+          group: '经营数据',
+          groupIcon: 'DataAnalysis',
           company: supplyCompany,
           resource: RESOURCE_CODES.SUPPLY_OPERATION
         }
+      },
+      {
+        path: 'operation/analysis',
+        name: 'OperationAnalysis',
+        component: () => import('@/views/operation/analysis.vue'),
+        meta: { title: '分析预测', icon: 'DataAnalysis', group: '经营数据', groupIcon: 'DataAnalysis', company: supplyCompany, resource: RESOURCE_CODES.SUPPLY_OPERATION }
       },
       {
         path: 'cultural-tourism',

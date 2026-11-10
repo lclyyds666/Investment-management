@@ -1,5 +1,6 @@
 <template>
   <section class="forecast-factor-editor">
+    <p v-if="requestError" role="alert">{{ requestError }}</p>
     <div class="factor-toolbar">
       <button type="button" data-testid="add-factor" @click="addFactor">添加因素</button>
       <button type="button" data-testid="download-template" @click="downloadTemplate">下载模板</button>
@@ -61,6 +62,7 @@ import { downloadForecastFactorTemplate, parseForecastFactors } from '@/api/oper
 
 const factors = defineModel({ type: Array, default: () => [] })
 const importErrors = ref([])
+const requestError = ref('')
 const factorTypes = ['天气', '节假日', '活动', '资讯']
 
 function addFactor() {
@@ -83,13 +85,19 @@ function removeFactor(index) {
 async function importFactors(event) {
   const file = event.target.files?.[0]
   if (!file) return
-  const result = await parseForecastFactors(file)
-  factors.value = [...factors.value, ...(result.items || [])]
-  importErrors.value = result.errors || []
-  event.target.value = ''
+  requestError.value = ''
+  try {
+    const result = await parseForecastFactors(file)
+    factors.value = [...factors.value, ...(result.items || [])]
+    importErrors.value = result.errors || []
+  } catch (error) {
+    requestError.value = error.message || '导入失败，请检查文件并重试'
+  } finally { event.target.value = '' }
 }
 
 async function downloadTemplate() {
+  requestError.value = ''
+  try {
   const blob = await downloadForecastFactorTemplate()
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -97,6 +105,7 @@ async function downloadTemplate() {
   link.download = '经营预测影响因素模板.xlsx'
   link.click()
   URL.revokeObjectURL(url)
+  } catch (error) { requestError.value = error.message || '模板下载失败，请重试' }
 }
 </script>
 

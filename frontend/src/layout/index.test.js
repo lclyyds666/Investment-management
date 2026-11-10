@@ -4,6 +4,8 @@ import SupplyLayout from './index.vue'
 
 const pathByName = {
   Dashboard: '/supplymanagement/dashboard',
+  Operation: '/supplymanagement/operation',
+  OperationAnalysis: '/supplymanagement/operation/analysis',
   Profile: '/supplymanagement/profile'
 }
 
@@ -15,6 +17,8 @@ vi.mock('vue-router', () => ({
         path: '/supplymanagement',
         children: [
           { name: 'Dashboard', meta: { title: '战略总览', icon: 'HomeFilled' } },
+          { name: 'Operation', meta: { title: '数据中心', icon: 'TrendCharts', group: '经营数据', groupIcon: 'DataAnalysis' } },
+          { name: 'OperationAnalysis', meta: { title: '分析预测', icon: 'DataAnalysis', group: '经营数据', groupIcon: 'DataAnalysis' } },
           { name: 'Profile', meta: { title: '个人设置', icon: 'User' } }
         ]
       }]
@@ -77,8 +81,14 @@ describe('supply layout navigation', () => {
     const indices = wrapper.findAll('[data-menu-index]').map((item) => item.attributes('data-menu-index'))
     expect(indices).toEqual([
       '/supplymanagement/dashboard',
+      '/supplymanagement/operation',
+      '/supplymanagement/operation/analysis',
       '/supplymanagement/profile'
     ])
+    expect(wrapper.findAll('section')).toHaveLength(1)
+    expect(wrapper.find('section').text()).toContain('经营数据')
+    expect(wrapper.find('section').text()).toContain('数据中心')
+    expect(wrapper.find('section').text()).toContain('分析预测')
   })
 
   it('collapses the supply sidebar on narrow viewports', () => {

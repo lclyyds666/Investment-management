@@ -42,6 +42,15 @@ const legacyRoutes = [
 ]
 
 describe('unified portal routes', () => {
+  it('groups data center and analysis with the same operation resource', () => {
+    const routes = ['/supplymanagement/operation', '/supplymanagement/operation/analysis'].map(path=>router.resolve(path))
+    expect(routes.map(route=>route.meta.title)).toEqual(['数据中心','分析预测'])
+    expect(routes.map(route=>route.meta.group)).toEqual(['经营数据','经营数据'])
+    expect(routes[1].name).toBe('OperationAnalysis')
+    expect(routes[1].meta.resource).toBe('supply.operation')
+    const legacy = legacySupplyRedirects.find(route=>route.path==='/operation')
+    expect(legacy.redirect({params:{},query:{year:'2026'},hash:'#ledger'})).toMatchObject({name:'Operation',query:{year:'2026'},hash:'#ledger'})
+  })
   it('names the portal home at the root URL', () => {
     expect(router.resolve('/').name).toBe('PortalHome')
   })

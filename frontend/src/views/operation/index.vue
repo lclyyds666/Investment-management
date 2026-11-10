@@ -3,7 +3,7 @@
     <header class="page-intro">
       <div>
         <p class="page-eyebrow">TRAVEL LEDGER INSIGHTS</p>
-        <h1 class="page-title">经营数据中心</h1>
+        <h1 class="page-title">数据中心</h1>
         <p class="page-subtitle">所有指标均由文旅门票与酒店台账实时汇总，金额、月份和景区维度保持同源。</p>
       </div>
     </header>

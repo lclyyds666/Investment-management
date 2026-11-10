@@ -1,5 +1,20 @@
 import request from './request'
 
+export function getOperationAnalysis(params) {
+  return request.get('/operation/analysis', {
+    params,
+    paramsSerializer: { indexes: null }
+  })
+}
+
+export function createOperationForecast(payload) {
+  return request.post('/operation/forecast', payload, { timeout: 120000 })
+}
+
+export function exportOperationForecast(payload) {
+  return request.post('/operation/forecast/export', payload, { responseType: 'blob', timeout: 120000 })
+}
+
 /** 经营数据看板聚合 */
 export function getDashboard(year = 2026) {
   return request.get('/operation/dashboard', { params: { year } })

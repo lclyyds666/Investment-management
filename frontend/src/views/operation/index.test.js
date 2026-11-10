@@ -33,7 +33,7 @@ vi.mock('@/api/operation', () => ({
   })
 }))
 
-describe('经营数据中心', () => {
+describe('数据中心', () => {
   let wrapper
 
   afterEach(() => wrapper?.unmount())
