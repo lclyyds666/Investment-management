@@ -66,6 +66,19 @@ class FundAlertServiceTest(unittest.TestCase):
         self.db.commit()
         self.assertEqual(list_today_alerts(self.db, self.user.id, self.today).items[0].stage, "overdue")
 
+    def test_fixed_date_five_record_acceptance_dataset(self):
+        self.db.add_all([
+            self._fund(self.today + timedelta(days=31), id=101),
+            self._fund(self.today, id=102),
+            self._fund(self.today - timedelta(days=1), id=103),
+            self._fund(self.today, id=104, settlement_status="settled"),
+        ])
+        self.db.commit()
+        alerts = list_today_alerts(self.db, self.user.id, self.today)
+        self.assertEqual({item.id: item.stage for item in alerts.items}, {
+            100: "due_soon", 102: "due_soon", 103: "overdue",
+        })
+
     def test_acknowledge_revalidates_missing_settled_and_mismatched_items(self):
         items = [FundAlertReceiptItem(fund_id=self.row.id, stage="overdue"), FundAlertReceiptItem(fund_id=999999, stage="due_soon")]
         self.assertEqual(acknowledge_alert_receipts(self.db, self.user.id, items, self.today), 0)
