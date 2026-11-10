@@ -19,6 +19,8 @@ const invoiceApi = vi.hoisted(() => ({
 const contractApi = vi.hoisted(() => ({ listContracts: vi.fn(), listEligibleContracts: vi.fn() }))
 const customerApi = vi.hoisted(() => ({ listCustomers: vi.fn(), getCustomer: vi.fn() }))
 const fundApi = vi.hoisted(() => ({ listFunds: vi.fn() }))
+const route = vi.hoisted(() => ({ query: {} }))
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
   hasPermission: vi.fn(code => code === 'supply.invoice.view' || code === 'supply.invoice.manage' || code === 'supply.invoice.approve')
@@ -76,6 +78,7 @@ function mountView() {
 describe('invoice management redesign', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    route.query = {}
     invoiceApi.listInvoices.mockResolvedValue([])
     invoiceApi.invoiceStats.mockResolvedValue({ pending: 0, issued: 0, issued_amount: 0 })
     invoiceApi.invoiceRecordStats.mockResolvedValue({ attachment_count: 0, detail_count: 1, detail_total: 100, difference: 0 })
@@ -94,6 +97,19 @@ describe('invoice management redesign', () => {
     customerApi.listCustomers.mockResolvedValue([])
     customerApi.getCustomer.mockResolvedValue(null)
     fundApi.listFunds.mockResolvedValue({ items: [], total: 0 })
+  })
+
+  it('opens a nullable-direction legacy work item without an input API filter', async () => {
+    route.query = { invoice_id: '9' }
+    invoiceApi.listInvoices.mockImplementation(async ({ direction }) => direction ? [] : [
+      { id: 8, direction: 'input' }, { id: 9, direction: null, invoice_title: 'legacy' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    const rows = await wrapper.vm.fetchRows()
+    expect(invoiceApi.listInvoices).toHaveBeenLastCalledWith(expect.objectContaining({ direction: undefined, include_legacy: true }))
+    expect(rows).toEqual([{ id: 9, direction: null, invoice_title: 'legacy' }])
+    wrapper.unmount()
   })
 
   it('exposes input/output tabs and never exposes create or delete actions', () => {

@@ -156,7 +156,7 @@ def build_work_items(db, current_user):
             remaining = max(row.amount - by_invoice[row.id], ZERO)
             if remaining:
                 add('invoice_unallocated', row, remaining, INVOICE_PATH,
-                    {'invoice_id': str(row.id), 'direction': row.direction.value if row.direction else 'input'},
+                    {'invoice_id': str(row.id), **({'direction': row.direction.value} if row.direction else {})},
                     status='未核销')
     if contract_permission:
         for contract in visible.values():

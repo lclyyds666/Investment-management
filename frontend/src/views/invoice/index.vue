@@ -190,7 +190,8 @@ const columns = [
 ]
 
 const fetchRows = async () => {
-  const rows = await listInvoices({ direction: activeDirection.value, include_legacy: true,
+  const direction = route.query.invoice_id && !route.query.direction ? undefined : activeDirection.value
+  const rows = await listInvoices({ direction, include_legacy: true,
     contract_id: route.query.contract_id, scenic_id: route.query.scenic_id })
   return route.query.invoice_id ? rows.filter(row => String(row.id) === String(route.query.invoice_id)) : rows
 }

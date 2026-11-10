@@ -21,6 +21,9 @@
       </div>
 
       <!-- 基础字段 -->
+      <el-alert v-if="closureError" title="业务闭环汇总加载失败，请重试" type="error" :closable="false" class="mb">
+        <el-button :loading="closureLoading" @click="loadClosureSummary()">重新加载汇总</el-button>
+      </el-alert>
       <el-descriptions v-if="closureSummary" title="业务闭环汇总（元）" :column="2" border class="mb">
         <el-descriptions-item v-for="[key, label] in closureFields" :key="key" :label="label">
           {{ closureSummary[key] == null ? '无查看权限' : Number(closureSummary[key]).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
@@ -129,6 +132,8 @@ defineExpose({ reload: load })
 const detailLoading = ref(false)
 const contract = ref(null)
 const closureSummary = ref(null)
+const closureError = ref(false)
+const closureLoading = ref(false)
 const closureFields = [['approved_payment', '已审批付款'], ['pending_payment', '待执行付款'], ['actual_payment', '实际付款'], ['output_invoiced', '销项发票'], ['actual_receipt', '已回款'], ['missing_input_invoice', '未补进项发票']]
 const approvals = ref([])
 const workflowTasks = ref([])
@@ -197,6 +202,8 @@ async function load() {
   detailLoading.value = true
   contract.value = null
   closureSummary.value = null
+  closureError.value = false
+  closureLoading.value = false
   approvals.value = []
   workflowTasks.value = []
   timelineLoading.value = false
@@ -216,11 +223,18 @@ async function load() {
   }
 }
 
-async function loadClosureSummary(generation, targetId) {
+async function loadClosureSummary(generation = loadGeneration, targetId = props.contractId) {
+  if (generation !== loadGeneration || !isSameTarget(props.contractId, targetId)) return
+  closureLoading.value = true
+  closureError.value = false
   try {
     const summary = await getContractClosureSummary(targetId)
     if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) closureSummary.value = summary
-  } catch { /* Contract details remain available if the summary fails. */ }
+  } catch {
+    if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) closureError.value = true
+  } finally {
+    if (generation === loadGeneration && isSameTarget(props.contractId, targetId)) closureLoading.value = false
+  }
 }
 
 async function loadTimeline(generation = loadGeneration, targetId = props.contractId) {

@@ -210,3 +210,14 @@ class WorkItemsApiTest(unittest.TestCase):
         response = self.client.get('/api/v1/invoices', params={'contract_id': 1, 'include_legacy': True})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual([row['invoice_title'] for row in response.json()['data']], ['one'])
+
+    def test_nullable_direction_invoice_destination_preserves_legacy_record(self):
+        invoice = Invoice(invoice_title='legacy', amount=10, direction=None)
+        self.db.add(invoice)
+        self.db.commit()
+        response = self.client.get('/api/v1/work-items')
+        item = next(row for row in response.json()['data'] if row['id'] == f'invoice_unallocated:{invoice.id}')
+        self.assertNotIn('direction', item['target_query'])
+        response = self.client.get('/api/v1/invoices', params={**item['target_query'], 'include_legacy': True})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn(invoice.id, [row['id'] for row in response.json()['data']])

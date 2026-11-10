@@ -5,6 +5,7 @@ const contractApi = vi.hoisted(() => ({
   getContract: vi.fn(), listApprovals: vi.fn(), fetchContractAttachmentBlob: vi.fn(), fetchLegalDocBlob: vi.fn()
 }))
 const workflowApi = vi.hoisted(() => ({ getWorkflowTimeline: vi.fn() }))
+const summaryApi = vi.hoisted(() => ({ getContractClosureSummary: vi.fn().mockResolvedValue({ actual_payment: '70.00' }) }))
 const scenicApi = vi.hoisted(() => ({
   getScenicOptions: vi.fn(() => Promise.resolve([
     { scenic_id: 'guanquelou', scenic_name: '鹳雀楼' }
@@ -13,7 +14,7 @@ const scenicApi = vi.hoisted(() => ({
 vi.mock('@/api/contract', () => contractApi)
 vi.mock('@/api/workflow', () => workflowApi)
 vi.mock('@/api/scenic', () => scenicApi)
-vi.mock('@/api/workItems', () => ({ getContractClosureSummary: vi.fn().mockResolvedValue({ actual_payment: '70.00' }) }))
+vi.mock('@/api/workItems', () => summaryApi)
 vi.mock('@/utils/rmb', () => ({ digitToRMB: () => '' }))
 vi.mock('@/utils/file', () => ({ previewBlob: vi.fn(), downloadBlob: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({ ...await importOriginal(), ElMessage: { success: vi.fn(), error: vi.fn() } }))
@@ -39,6 +40,33 @@ function mountDrawer(contractId) {
 
 describe('ContractDetailDrawer timeline error', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  it('offers summary retry independently of successful details and timeline', async () => {
+    contractApi.getContract.mockResolvedValue({ id: 71, workflow_instance_id: 710, workflow_version: 2, status: 'approved', amount: 100 })
+    workflowApi.getWorkflowTimeline.mockResolvedValue([{ id: 'timeline-71' }])
+    summaryApi.getContractClosureSummary.mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ actual_payment: '42.00' })
+    const wrapper = shallowMount(ContractDetailDrawer, {
+      props: { modelValue: true, contractId: 71 },
+      global: { stubs: {
+        ElDrawer: { template: '<div><slot /></div>' },
+        ElAlert: { props: ['title'], template: '<section role="alert">{{ title }}<slot /></section>' },
+        ElButton: { template: '<button><slot /></button>' }
+      } }
+    })
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').text()).toContain('业务闭环汇总加载失败')
+    expect(wrapper.vm.contract.id).toBe(71)
+    expect(wrapper.vm.workflowTasks).toEqual([{ id: 'timeline-71' }])
+    await wrapper.find('[role="alert"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.vm.closureSummary.actual_payment).toBe('42.00')
+    expect(contractApi.getContract).toHaveBeenCalledTimes(1)
+    expect(workflowApi.getWorkflowTimeline).toHaveBeenCalledTimes(1)
+    expect(summaryApi.getContractClosureSummary).toHaveBeenLastCalledWith(71)
+    wrapper.unmount()
+  })
 
   it('keeps contract details visible and offers timeline retry', async () => {
     contractApi.getContract.mockResolvedValue({ id: 7, workflow_instance_id: 70, workflow_version: 2, status: 'pending', amount: 0 })
