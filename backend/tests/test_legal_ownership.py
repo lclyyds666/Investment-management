@@ -277,7 +277,8 @@ def test_legal_risk_router_exposes_initiator_options_endpoint():
 @pytest.mark.parametrize(
     ("path", "payload"),
     (
-        ("/api/v1/contracts", {"contract_no": "ADMIN-NO-ORG", "title": "无归属合同"}),
+        ("/api/v1/contracts", {"contract_no": "ADMIN-NO-ORG", "title": "无归属合同",
+                               "scenic_id": "guanquelou", "business_scopes": ["ticket"]}),
         ("/api/v1/legal-risk/cases", {"case_name": "无归属案件"}),
     ),
 )
@@ -326,6 +327,8 @@ def test_superuser_contract_create_marks_new_route_without_assignment(
             "/api/v1/contracts",
             json={
                 "contract_no": "ADMIN-PROXY-ROUTE",
+                "scenic_id": "guanquelou",
+                "business_scopes": ["ticket"],
                 "title": "管理员代建合同",
                 "organization_code": "supplymanagement",
             },

@@ -9,7 +9,9 @@ const fundApi = vi.hoisted(() => ({
   deleteFund: vi.fn(),
   settleFund: vi.fn(),
   listCashExecutionTasks: vi.fn(),
-  executeCashTask: vi.fn()
+  executeCashTask: vi.fn(),
+  associateLegacyFund: vi.fn(),
+  listLegacyFundContracts: vi.fn()
 }))
 const portal = vi.hoisted(() => ({
   isSuperuser: false,
@@ -68,7 +70,37 @@ describe('fund management view', () => {
     fundApi.settleFund.mockResolvedValue({ id: 1 })
     fundApi.listCashExecutionTasks.mockResolvedValue([])
     fundApi.executeCashTask.mockResolvedValue({ id: 1 })
+    fundApi.associateLegacyFund.mockResolvedValue({ id: 1 })
+    fundApi.listLegacyFundContracts.mockResolvedValue([{ id: 3, scenic_id: 's', contract_no: 'C', title: 'Contract' }])
     messageBox.confirm.mockResolvedValue()
+  })
+
+  it('offers manual non-business categories and explicit historic association without rewriting money', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openCreate()
+    expect(wrapper.vm.form.category).toBe('own_funds')
+    expect(wrapper.vm.formCategoryOptions.some(item => item.value === 'customer_payment')).toBe(false)
+    const row = { id: 7, category: 'business_payment', direction: 'usage', scenic_id: 's', amount: '100', occurred_on: '2020-01-01' }
+    await wrapper.vm.openAssociation(row)
+    Object.assign(wrapper.vm.associationForm, { contract_id: 3, approval_form_id: 9 })
+    await wrapper.vm.submitAssociation()
+    expect(fundApi.associateLegacyFund).toHaveBeenCalledWith(7, { contract_id: 3, approval_form_id: 9 })
+    expect(row.amount).toBe('100')
+    expect(row.occurred_on).toBe('2020-01-01')
+    expect(wrapper.vm.taskSource({ ...row, contract_id: 3 })).toContain('合同 #3')
+  })
+
+  it('preserves execution bank evidence for descriptive corrections', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    wrapper.vm.openEdit({ id: 1, execution_task_id: 2, direction: 'usage', category: 'business_payment',
+      amount: '100', occurred_on: '2026-01-01', bank_reference: 'BANK', counterparty: 'Supplier' })
+    expect(wrapper.vm.editingExecution).toBe(true)
+    wrapper.vm.form.summary = 'corrected'
+    wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
+    await wrapper.vm.submitForm()
+    expect(fundApi.updateFund).toHaveBeenCalledWith(1, expect.objectContaining({ bank_reference: 'BANK', amount: 100, summary: 'corrected' }))
   })
 
   it('uses a valid maturity deep link on the initial ledger request only once', async () => {
@@ -147,6 +179,7 @@ describe('fund management view', () => {
       maturity_status: 'due_soon',
       dateRange: ['2026-08-01', '2026-08-28'],
       keyword: '供应商',
+      unallocated_only: false,
       page: 3
     })
 
@@ -160,6 +193,7 @@ describe('fund management view', () => {
       start_date: '2026-08-01',
       end_date: '2026-08-28',
       keyword: '供应商',
+      unallocated_only: false,
       page: 1,
       page_size: 20
     })
@@ -219,7 +253,8 @@ describe('fund management view', () => {
       counterparty: '测试公司',
       summary: '周转借款',
       maturity_date: '2026-12-31',
-      remark: '测试'
+      remark: '测试',
+      bank_reference: ''
     })
   })
 

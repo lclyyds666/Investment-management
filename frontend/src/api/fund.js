@@ -39,3 +39,11 @@ export function listCashExecutionTasks(params = {}) {
 export function executeCashTask(id, payload) {
   return request.post(`/funds/execution-tasks/${id}/execute`, payload)
 }
+
+export function associateLegacyFund(id, payload) {
+  return request.post(`/funds/${id}/legacy-association`, payload)
+}
+
+export function listLegacyFundContracts() {
+  return request.get('/funds/legacy-contracts')
+}

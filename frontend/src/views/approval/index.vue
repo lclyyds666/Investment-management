@@ -51,7 +51,7 @@
           <template #default="{ row }">{{ row.business_type || '—' }}</template>
         </el-table-column>
         <el-table-column prop="contract_no" label="合同编号" width="150" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.contract_no || '—' }}</template>
+          <template #default="{ row }">{{ row.contract_no || '—' }}<el-tag v-if="!row.contract_id" type="warning" size="small">待补合同关联</el-tag></template>
         </el-table-column>
         <el-table-column label="付款金额(元)" width="140" align="right">
           <template #default="{ row }">

@@ -71,9 +71,11 @@ def allocate(
 ) -> InvoiceFundAllocation:
     invoice = db.scalar(
         select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+        .execution_options(populate_existing=True)
     )
     fund = db.scalar(
         select(FundTransaction).where(FundTransaction.id == fund_id).with_for_update()
+        .execution_options(populate_existing=True)
     )
     if invoice is None or fund is None:
         raise ReconciliationError("source_not_found")
@@ -83,8 +85,13 @@ def allocate(
     if invoice.contract_id and fund.contract_id and invoice.contract_id != fund.contract_id:
         raise ReconciliationError("contract_mismatch")
     value = money(amount)
-    invoice_remaining = money(invoice.amount) - allocated_to_invoice(db, invoice.id)
-    fund_remaining = money(fund.amount) - allocated_from_fund(db, fund.id)
+    # Current locking reads, not snapshot aggregates, after waiting on parents.
+    invoice_allocated = sum(db.scalars(select(InvoiceFundAllocation.amount).where(
+        InvoiceFundAllocation.invoice_id == invoice.id).with_for_update()), Decimal("0"))
+    fund_allocated = sum(db.scalars(select(InvoiceFundAllocation.amount).where(
+        InvoiceFundAllocation.fund_transaction_id == fund.id).with_for_update()), Decimal("0"))
+    invoice_remaining = money(invoice.amount) - money(invoice_allocated)
+    fund_remaining = money(fund.amount) - money(fund_allocated)
     if value <= 0 or value > invoice_remaining or value > fund_remaining:
         raise ReconciliationError("allocation_exceeds_remaining")
     allocation = InvoiceFundAllocation(

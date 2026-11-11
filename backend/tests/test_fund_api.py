@@ -27,6 +27,13 @@ class FakeSession:
     def get(self, _model, fund_id, **_kwargs):
         return self.row if self.row and self.row.id == fund_id else None
 
+    def scalar(self, statement):
+        fund_id = statement.compile().params.get("id_1")
+        return self.get(FundTransaction, fund_id)
+
+    def scalars(self, statement):
+        return SimpleNamespace(all=lambda: [])
+
     def commit(self):
         return None
 
@@ -102,6 +109,7 @@ class FundApiTest(unittest.TestCase):
 
     def test_update_and_settle_missing_return_404_via_http(self):
         self.db.get.return_value = None
+        self.db.scalar.return_value = None
         payload = {
             "direction": "increase",
             "category": "company_loan",
@@ -199,7 +207,7 @@ class FundApiTest(unittest.TestCase):
         created = create_fund(
             FundTransactionCreate(
                 direction="increase",
-                category="customer_payment",
+                category="own_funds",
                 amount=Decimal("1000"),
                 occurred_on=date(2026, 8, 28),
             ),

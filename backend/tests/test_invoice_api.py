@@ -21,6 +21,8 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
+from app.models.cash_execution import InvoiceFundAllocation
+from app.models.fund import FundTransaction
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.organization import Organization, Position, UserAssignment
 from app.models.user import User
@@ -376,14 +378,13 @@ def test_used_source_invoice_rejects_amount_and_contract_changes(invoice_api, us
 def test_fund_allocation_blocks_amount_and_contract_backfill(invoice_api):
     db, client, _, _, invoice, _, _, _ = invoice_api
     contract = db.scalar(select(Contract).where(Contract.contract_no == "HT-ELIGIBLE"))
-    db.execute(text(
-        "CREATE TABLE biz_invoice_fund_allocation "
-        "(id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL)"
-    ))
-    db.execute(
-        text("INSERT INTO biz_invoice_fund_allocation (invoice_id) VALUES (:invoice_id)"),
-        {"invoice_id": invoice.id},
-    )
+    actor_id = db.scalar(select(User.id))
+    fund = FundTransaction(direction="increase", category="customer_payment",
+                           amount=100, occurred_on=date(2026, 10, 10), created_by=actor_id)
+    db.add(fund)
+    db.flush()
+    db.add(InvoiceFundAllocation(invoice_id=invoice.id, fund_transaction_id=fund.id,
+                                 amount=100, allocated_by=actor_id))
     db.commit()
 
     assert client.put(

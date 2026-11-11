@@ -131,9 +131,10 @@
         </el-table-column>
         <el-table-column v-if="canWrite" label="操作" width="190" fixed="right">
           <template #default="{ row }">
+            <el-button v-if="!row.execution_task_id && ['business_payment', 'customer_payment'].includes(row.category)" link type="primary" @click="openAssociation(row)">历史关联</el-button>
             <el-button link type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="canSettle(row)" link type="success" :icon="CircleCheck" @click="onSettle(row)">结清</el-button>
-            <el-button link type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
+            <el-button v-if="!row.execution_task_id" link type="danger" :icon="Delete" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -164,6 +165,15 @@
       </el-table>
     </el-card>
 
+    <el-dialog v-model="associationVisible" title="历史资金关联" width="520px">
+      <el-alert title="逐笔核实后关联已审批合同；付款可补充同合同、同景区的已审批付款单。金额和发生日期保持原记录。" type="info" :closable="false" />
+      <el-form label-width="120px">
+        <el-form-item label="已审批合同"><el-select v-model="associationForm.contract_id" filterable placeholder="选择有权访问的合同"><el-option v-for="item in associationContracts" :key="item.id" :value="item.id" :label="`${item.contract_no} · ${item.title} · ${item.scenic_id}`" /></el-select></el-form-item>
+        <el-form-item v-if="associationRow?.direction === 'usage'" label="付款审批单 ID"><el-input-number v-model="associationForm.approval_form_id" :min="1" :precision="0" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="associationVisible = false">取消</el-button><el-button type="primary" :loading="associationSaving" @click="submitAssociation">核实并关联</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="executionDialogVisible" title="财务执行" width="560px">
       <el-form label-width="110px">
         <el-form-item label="实际日期"><el-date-picker v-model="executionForm.occurred_on" type="date" value-format="YYYY-MM-DD" /></el-form-item>
@@ -180,27 +190,27 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="104px">
         <div class="form-grid">
           <el-form-item label="资金方向" prop="direction">
-            <el-radio-group v-model="form.direction" :disabled="editingSettled" @change="onFormDirectionChange">
+            <el-radio-group v-model="form.direction" :disabled="editingSettled || editingExecution" @change="onFormDirectionChange">
               <el-radio-button value="increase">资金增加</el-radio-button>
               <el-radio-button value="usage">资金使用</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="资金类型" prop="category">
-            <el-select v-model="form.category" :disabled="editingSettled" placeholder="请选择类型" style="width: 100%">
+            <el-select v-model="form.category" :disabled="editingSettled || editingExecution" placeholder="请选择类型" style="width: 100%">
               <el-option v-for="item in formCategoryOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
           <el-form-item label="金额（万元）" prop="amountWan">
-            <el-input-number v-model="form.amountWan" :min="0.000001" :precision="6" :step="1" controls-position="right" style="width: 100%" />
+            <el-input-number v-model="form.amountWan" :disabled="editingExecution" :min="0.000001" :precision="6" :step="1" controls-position="right" style="width: 100%" />
           </el-form-item>
           <el-form-item label="发生日期" prop="occurred_on">
-            <el-date-picker v-model="form.occurred_on" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            <el-date-picker v-model="form.occurred_on" :disabled="editingExecution" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
           </el-form-item>
           <el-form-item label="到期日期" :required="requiresMaturity">
-            <el-date-picker v-model="form.maturity_date" type="date" value-format="YYYY-MM-DD" clearable style="width: 100%" />
+            <el-date-picker v-model="form.maturity_date" :disabled="editingExecution" type="date" value-format="YYYY-MM-DD" clearable style="width: 100%" />
           </el-form-item>
           <el-form-item label="对方单位" prop="counterparty">
-            <el-input v-model="form.counterparty" maxlength="200" placeholder="银行、公司或客户名称" />
+            <el-input v-model="form.counterparty" :disabled="editingExecution" maxlength="200" placeholder="银行、公司或客户名称" />
           </el-form-item>
         </div>
         <el-form-item label="用途 / 摘要" prop="summary">
@@ -225,6 +235,8 @@ import { CircleCheck, Delete, Edit, Plus, Refresh, Search } from '@element-plus/
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createFund,
+  associateLegacyFund,
+  listLegacyFundContracts,
   deleteFund,
   getFundSummary,
   listCashExecutionTasks,
@@ -273,6 +285,33 @@ const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const editingSettled = ref(false)
+const editingExecution = ref(false)
+const associationVisible = ref(false)
+const associationSaving = ref(false)
+const associationRow = ref(null)
+const associationContracts = ref([])
+const associationForm = reactive({ contract_id: null, approval_form_id: null })
+
+async function openAssociation(row) {
+  if (!canWrite.value || row.execution_task_id) return
+  associationRow.value = row
+  associationContracts.value = (await listLegacyFundContracts()).filter(item => !row.scenic_id || row.scenic_id === item.scenic_id)
+  Object.assign(associationForm, { contract_id: row.contract_id || null, approval_form_id: row.approval_form_id || null })
+  associationVisible.value = true
+}
+
+async function submitAssociation() {
+  if (!canWrite.value || !associationForm.contract_id || associationSaving.value) return
+  associationSaving.value = true
+  try {
+    await associateLegacyFund(associationRow.value.id, { ...associationForm })
+    associationVisible.value = false
+    ElMessage.success('历史资金关联已保存')
+    await loadLedger()
+  } finally {
+    associationSaving.value = false
+  }
+}
 const formRef = ref()
 const lockedClassification = reactive({ direction: '', category: '' })
 const summary = reactive({
@@ -316,13 +355,14 @@ function todayString() {
 function emptyForm() {
   return {
     direction: 'increase',
-    category: 'customer_payment',
+    category: 'own_funds',
     amountWan: null,
     occurred_on: todayString(),
     counterparty: '',
     summary: '',
     maturity_date: null,
-    remark: ''
+    remark: '',
+    bank_reference: ''
   }
 }
 
@@ -352,10 +392,12 @@ async function submitExecution() {
 }
 
 function taskSource(row) {
-  if (!row.execution_task_id) return '历史未关联'
+  if (!row.execution_task_id && !['customer_payment', 'business_payment'].includes(row.category)) return '手工流水'
+  if (!row.execution_task_id) return row.contract_id ? `历史关联：合同 #${row.contract_id}${row.approval_form_id ? ' / 付款审批 #' + row.approval_form_id : ''}` : '历史未关联'
   return row.approval_form_id ? '付款审批 #' + row.approval_form_id : '销项发票 #' + row.invoice_id
 }
-const formCategoryOptions = computed(() => CATEGORY_OPTIONS[form.direction] || [])
+const formCategoryOptions = computed(() => (CATEGORY_OPTIONS[form.direction] || []).filter(item =>
+  !['customer_payment', 'business_payment'].includes(item.value) || (editingId.value && item.value === lockedClassification.category)))
 const filterCategoryOptions = computed(() => {
   if (filters.direction) return CATEGORY_OPTIONS[filters.direction] || []
   const options = [...CATEGORY_OPTIONS.increase, ...CATEGORY_OPTIONS.usage]
@@ -461,7 +503,7 @@ function onFormDirectionChange() {
     form.category = lockedClassification.category
     return
   }
-  const allowed = CATEGORY_OPTIONS[form.direction] || []
+  const allowed = formCategoryOptions.value
   if (!allowed.some((item) => item.value === form.category)) form.category = allowed[0]?.value || ''
   if (!DUE_CATEGORIES.has(form.category)) form.maturity_date = null
 }
@@ -475,6 +517,7 @@ function openCreate() {
   if (!canWrite.value) return
   editingId.value = null
   editingSettled.value = false
+  editingExecution.value = false
   Object.assign(lockedClassification, { direction: '', category: '' })
   Object.assign(form, emptyForm())
   formRef.value?.clearValidate?.()
@@ -484,6 +527,7 @@ function openCreate() {
 function openEdit(row) {
   if (!canWrite.value) return
   editingId.value = row.id
+  editingExecution.value = Boolean(row.execution_task_id)
   editingSettled.value = row.settlement_status === 'settled'
   Object.assign(lockedClassification, { direction: row.direction, category: row.category })
   Object.assign(form, {
@@ -494,7 +538,8 @@ function openEdit(row) {
     counterparty: row.counterparty || '',
     summary: row.summary || '',
     maturity_date: row.maturity_date || null,
-    remark: row.remark || ''
+    remark: row.remark || '',
+    bank_reference: row.bank_reference || ''
   })
   formRef.value?.clearValidate?.()
   dialogVisible.value = true
@@ -509,7 +554,8 @@ function transactionPayload() {
     counterparty: form.counterparty?.trim() || '',
     summary: form.summary?.trim() || '',
     maturity_date: form.maturity_date || null,
-    remark: form.remark?.trim() || ''
+    remark: form.remark?.trim() || '',
+    bank_reference: form.bank_reference || ''
   }
 }
 

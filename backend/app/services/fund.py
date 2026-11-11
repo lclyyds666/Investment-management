@@ -1,4 +1,4 @@
-"""Pure aggregation and maturity-status functions for fund transactions."""
+"""Fund integrity, historical associations and maturity reporting."""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.models.fund import FundTransaction
 from app.models.fund_alert import FundAlertReceipt
+from app.models.cash_execution import InvoiceFundAllocation
+from app.models.approval_form import ApprovalForm
+from app.core.enums import ContractStatus, ContractType
+from app.services.contract_eligibility import ContractEligibilityError, eligible_contract_for_user
 from app.schemas.fund import (
     DUE_CATEGORIES,
     FundAlertItem,
@@ -18,6 +22,78 @@ from app.schemas.fund import (
     FundAlertToday,
     FundSummary,
 )
+
+
+BUSINESS_CATEGORIES = frozenset({"business_payment", "customer_payment"})
+
+
+class FundIntegrityError(ValueError):
+    pass
+
+
+def locked_fund(db: Session, fund_id: int) -> FundTransaction | None:
+    # Match reconciliation's fund row lock; refresh cached objects after waiting.
+    return db.scalar(select(FundTransaction).where(FundTransaction.id == fund_id)
+                     .with_for_update().execution_options(populate_existing=True))
+
+
+def has_allocations(db: Session, fund_id: int) -> bool:
+    # A locking read sees allocations committed while we waited for the fund lock
+    # even under MySQL REPEATABLE READ (a plain aggregate may use an old snapshot).
+    return bool(db.scalars(select(InvoiceFundAllocation.id).where(
+        InvoiceFundAllocation.fund_transaction_id == fund_id
+    ).with_for_update()).all())
+
+
+def validate_fund_edit(db: Session, row: FundTransaction, changes: dict) -> None:
+    if changes.get("category", row.category) in BUSINESS_CATEGORIES and changes.get("category", row.category) != row.category:
+        raise FundIntegrityError("business_cash_requires_execution_task")
+    protected = {"amount", "direction", "category", "contract_id", "scenic_id"}
+    if row.execution_task_id:
+        # Only summary/remark corrections are generic edits; preserve execution
+        # date, counterparty and bank evidence as well as financial/source fields.
+        protected |= {"occurred_on", "counterparty", "bank_reference", "maturity_date",
+                      "execution_task_id", "approval_form_id", "invoice_id"}
+    changed = {key for key, value in changes.items() if getattr(row, key) != value}
+    if row.execution_task_id and changed & protected:
+        raise FundIntegrityError("execution_fund_fields_locked")
+    if changed & protected and has_allocations(db, row.id):
+        raise FundIntegrityError("fund_allocated_unallocate_first")
+
+
+def associate_legacy_fund(db: Session, row: FundTransaction, payload, actor) -> None:
+    if row.execution_task_id:
+        raise FundIntegrityError("execution_fund_fields_locked")
+    if row.category not in BUSINESS_CATEGORIES:
+        raise FundIntegrityError("legacy_business_fund_required")
+    try:
+        contract = eligible_contract_for_user(db, actor, payload.contract_id, for_update=True)
+    except ContractEligibilityError as error:
+        raise FundIntegrityError("approved_scenic_contract_required") from error
+    if not contract.scenic_id or not contract.business_scopes:
+        raise FundIntegrityError("approved_scenic_contract_required")
+    if row.scenic_id and row.scenic_id != contract.scenic_id:
+        raise FundIntegrityError("scenic_mismatch")
+    if row.contract_id not in (None, contract.id):
+        raise FundIntegrityError("legacy_contract_already_linked")
+    expected = "usage" if row.category == "business_payment" else "increase"
+    if row.direction != expected:
+        raise FundIntegrityError("direction_mismatch")
+    if row.approval_form_id not in (None, payload.approval_form_id):
+        raise FundIntegrityError("legacy_approval_already_linked")
+    if payload.approval_form_id:
+        form = db.scalar(select(ApprovalForm).where(ApprovalForm.id == payload.approval_form_id)
+                         .with_for_update().execution_options(populate_existing=True))
+        if (row.direction != "usage" or not form or form.form_type != ContractType.PAYMENT
+                or form.status != ContractStatus.APPROVED or form.contract_id != contract.id
+                or form.scenic_id != contract.scenic_id):
+            raise FundIntegrityError("payment_approval_mismatch")
+    changes = {"contract_id": contract.id, "scenic_id": contract.scenic_id,
+               "approval_form_id": payload.approval_form_id}
+    if has_allocations(db, row.id) and any(getattr(row, key) != value for key, value in changes.items()):
+        raise FundIntegrityError("fund_allocated_unallocate_first")
+    for key, value in changes.items():
+        setattr(row, key, value)
 
 
 def maturity_state(row, today: date) -> str:

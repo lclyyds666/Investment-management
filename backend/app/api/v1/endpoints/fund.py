@@ -21,11 +21,15 @@ from app.schemas.fund import (
     FundTransactionCreate,
     FundTransactionOut,
     FundTransactionUpdate,
+    FundLegacyAssociationIn,
 )
 from app.schemas.cash_execution import CashExecutionIn, CashExecutionTaskOut
 from app.services.assignment_permissions import PermissionContext
 from app.services.cash_execution import CashExecutionError, execute_task
+from app.services.contract_eligibility import eligible_contracts_for_user
 from app.services.fund import (
+    BUSINESS_CATEGORIES, FundIntegrityError, locked_fund, has_allocations,
+    validate_fund_edit, associate_legacy_fund,
     acknowledge_alert_receipts,
     list_today_alerts,
     maturity_state,
@@ -208,6 +212,8 @@ def create_fund(
     db: Session = Depends(get_db),
     current_user: User = Depends(_update_guard),
 ):
+    if payload.category in BUSINESS_CATEGORIES:
+        raise HTTPException(status_code=409, detail="business_cash_requires_execution_task")
     row = FundTransaction(
         **payload.model_dump(),
         settlement_status="open",
@@ -227,9 +233,13 @@ def update_fund(
     db: Session = Depends(get_db),
     _: User = Depends(_update_guard),
 ):
-    row = db.get(FundTransaction, fund_id)
+    row = locked_fund(db, fund_id)
     if not row:
         raise HTTPException(status_code=404, detail="资金流水不存在")
+    try:
+        validate_fund_edit(db, row, payload.model_dump())
+    except FundIntegrityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if row.settlement_status == "settled":
         if payload.direction != row.direction or payload.category != row.category:
             raise HTTPException(status_code=409, detail="已结清资金流水不能修改资金方向或类型")
@@ -248,9 +258,13 @@ def delete_fund(
     db: Session = Depends(get_db),
     _: User = Depends(_update_guard),
 ):
-    row = db.get(FundTransaction, fund_id)
+    row = locked_fund(db, fund_id)
     if not row:
         raise HTTPException(status_code=404, detail="资金流水不存在")
+    if row.execution_task_id:
+        raise HTTPException(status_code=409, detail="execution_fund_fields_locked")
+    if has_allocations(db, row.id):
+        raise HTTPException(status_code=409, detail="fund_allocated_unallocate_first")
     db.delete(row)
     db.commit()
     return Response.ok({"id": fund_id}, message="资金流水已删除")
@@ -278,3 +292,34 @@ def settle_fund(
     db.commit()
     db.refresh(row)
     return Response.ok(_out(row), message="资金已结清")
+
+
+@router.get("/legacy-contracts", response_model=Response[list[dict]])
+def legacy_contract_options(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_update_guard),
+):
+    return Response.ok([
+        {"id": row.id, "contract_no": row.contract_no, "title": row.title, "scenic_id": row.scenic_id}
+        for row in eligible_contracts_for_user(db, current_user)
+        if row.scenic_id and row.business_scopes
+    ])
+
+
+@router.post("/{fund_id}/legacy-association", response_model=Response[FundTransactionOut])
+def link_legacy_fund(
+    fund_id: int,
+    payload: FundLegacyAssociationIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_update_guard),
+):
+    row = locked_fund(db, fund_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="fund_not_found")
+    try:
+        associate_legacy_fund(db, row, payload, current_user)
+    except FundIntegrityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    db.commit()
+    db.refresh(row)
+    return Response.ok(_out(row))

@@ -63,6 +63,12 @@ class FundSettleIn(BaseModel):
     settled_on: date | None = None
 
 
+class FundLegacyAssociationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contract_id: int = Field(gt=0)
+    approval_form_id: int | None = Field(default=None, gt=0)
+
+
 class FundTransactionOut(FundTransactionInput):
     model_config = ConfigDict(from_attributes=True)
 

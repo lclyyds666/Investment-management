@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date
 
 import pytest
 from sqlalchemy import create_engine, event, func, select, text
@@ -10,6 +11,8 @@ from app.core.enums import ContractStatus, ContractType, InvoiceDirection, Invoi
 from app.db.base import Base
 from app.models.approval_form import ApprovalForm
 from app.models.contract import Contract
+from app.models.cash_execution import InvoiceFundAllocation
+from app.models.fund import FundTransaction
 from app.models.hotel_ledger import HotelLedger
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.invoice_preference import ScenicInvoicePreference
@@ -231,14 +234,14 @@ def test_persisted_fund_allocation_locks_source_invoice():
     input_invoice, _ = sync_confirmed_period_invoices(
         db, scenic_id="s", source_kind=InvoiceSourceKind.TICKET, period_key="p"
     )
-    db.execute(text(
-        "CREATE TABLE biz_invoice_fund_allocation "
-        "(id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL)"
-    ))
-    db.execute(
-        text("INSERT INTO biz_invoice_fund_allocation (invoice_id) VALUES (:invoice_id)"),
-        {"invoice_id": input_invoice.id},
-    )
+    actor_id = db.scalar(select(User.id))
+    fund = FundTransaction(direction="usage", category="business_payment",
+                           amount=input_invoice.amount, occurred_on=date(2026, 10, 10),
+                           created_by=actor_id)
+    db.add(fund)
+    db.flush()
+    db.add(InvoiceFundAllocation(invoice_id=input_invoice.id, fund_transaction_id=fund.id,
+                                 amount=input_invoice.amount, allocated_by=actor_id))
     db.flush()
 
     assert source_invoice_is_locked(db, input_invoice) is True

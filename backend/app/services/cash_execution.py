@@ -81,6 +81,7 @@ def execute_task(db: Session, task_id: int, payload, actor_id: int) -> FundTrans
         select(CashExecutionTask)
         .where(CashExecutionTask.id == task_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if not task or task.status in {
         CashTaskStatus.COMPLETED.value,
