@@ -103,6 +103,11 @@
             <el-table-column label="资金占用时长" min-width="140" align="right">
               <template #default="{ row }">{{ formatOccupationDays(row.capital_occupation_days) }}</template>
             </el-table-column>
+            <el-table-column label="业务链路" min-width="140">
+              <template #default="{ row }">
+                <el-button v-if="!row.is_total" link type="primary" @click="openBusinessTrace(row)">查看业务链路</el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
 
@@ -112,6 +117,7 @@
             class="ledger-mobile-row" :class="{ 'is-total': row.is_total }"
           >
             <div class="ledger-mobile-title">{{ row.scenic_name }}</div>
+            <el-button v-if="!row.is_total" link type="primary" @click="openBusinessTrace(row)">查看业务链路</el-button>
             <dl class="ledger-mobile-grid">
               <div><dt>已投入业务规模</dt><dd>{{ formatWanFromYuan(row.existing_scale) }}</dd></div>
               <div><dt>已实现业务规模</dt><dd>{{ formatWanFromYuan(row.total_realized_scale) }}</dd></div>
@@ -122,19 +128,75 @@
         </div>
       </el-card>
     </section>
+    <BusinessTraceDrawer v-model="traceVisible" :trace="trace" :periods="tracePeriods"
+      :selected-period="selectedTracePeriod" :loading="traceLoading" :error="traceError"
+      @select-period="selectTracePeriod" @open-node="openTraceNode" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import BaseChart from '@/components/BaseChart.vue'
-import { getFinancial } from '@/api/operation'
+import BusinessTraceDrawer from '@/components/BusinessTraceDrawer.vue'
+import { useRouter } from 'vue-router'
+import { getFinancial, getBusinessTrace, getBusinessTracePeriods } from '@/api/operation'
 import { getScenicById, scenicSpots } from '@/constants/scenic'
 import { formatWanFromYuan, formatWanValue, yuanToWan } from '@/utils/money'
 import { getScenicColor } from '@/utils/scenicColors'
 import { chartVisualTokens } from '@/utils/visualTokens'
 
 const loading = ref(false)
+const router = useRouter()
+const traceVisible = ref(false)
+const trace = ref(null)
+const tracePeriods = ref([])
+const traceLoading = ref(false)
+const traceError = ref('')
+const selectedTracePeriod = ref(null)
+let traceGeneration = 0
+async function openBusinessTrace(row) {
+  if (row.is_total) return
+  const generation = ++traceGeneration
+  traceVisible.value = true
+  trace.value = null
+  tracePeriods.value = []
+  selectedTracePeriod.value = null
+  traceError.value = ''
+  traceLoading.value = true
+  try {
+    const periods = await getBusinessTracePeriods({ scenic_id: row.scenic_id, year: selectedYear.value || undefined })
+    if (generation === traceGeneration) tracePeriods.value = periods
+  } catch {
+    if (generation === traceGeneration) traceError.value = '期次加载失败，请重新打开业务链路。'
+  } finally {
+    if (generation === traceGeneration) traceLoading.value = false
+  }
+}
+async function selectTracePeriod(index) {
+  const period = tracePeriods.value[index]
+  if (!period) return
+  const generation = ++traceGeneration
+  selectedTracePeriod.value = index
+  trace.value = null
+  traceError.value = ''
+  traceLoading.value = true
+  try {
+    const result = await getBusinessTrace({ scenic_id: period.scenic_id, source_kind: period.source_kind, period_key: period.period_key })
+    if (generation === traceGeneration) trace.value = result
+  } catch {
+    if (generation === traceGeneration) traceError.value = '业务链路加载失败，请重选期次重试。'
+  } finally {
+    if (generation === traceGeneration) traceLoading.value = false
+  }
+}
+function openTraceNode(location) { router.push(location) }
+watch(traceVisible, (visible) => {
+  if (!visible) {
+    traceGeneration += 1
+    traceLoading.value = false
+    trace.value = null
+  }
+})
 const selectedYear = ref('')
 const selectedScenicIds = ref([])
 const selectedMonth = ref('')

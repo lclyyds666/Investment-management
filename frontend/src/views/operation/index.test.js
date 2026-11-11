@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import OperationView from './index.vue'
+import { getBusinessTrace, getBusinessTracePeriods } from '@/api/operation'
+
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 
 vi.mock('@/api/operation', () => ({
+  getBusinessTrace: vi.fn(),
+  getBusinessTracePeriods: vi.fn(),
   getFinancial: vi.fn().mockResolvedValue({
     existing_scale: 1300000,
     total_realized_scale: 1590000,
@@ -37,6 +42,35 @@ describe('数据中心', () => {
   let wrapper
 
   afterEach(() => wrapper?.unmount())
+
+  it('loads canonical periods without guessing then traces the selected source', async () => {
+    getBusinessTracePeriods.mockResolvedValue([{ scenic_id: 'a', source_kind: 'ticket', period_key: 'original.xlsx' }])
+    getBusinessTrace.mockResolvedValue({ scenic_id: 'a', period_key: 'original.xlsx', invoices: [] })
+    await mountView()
+    wrapper.vm.selectedYear = 2026
+    await wrapper.vm.openBusinessTrace({ scenic_id: 'a' })
+    expect(getBusinessTracePeriods).toHaveBeenCalledWith({ scenic_id: 'a', year: 2026 })
+    expect(wrapper.vm.trace).toBe(null)
+    await wrapper.vm.selectTracePeriod(0)
+    expect(getBusinessTrace).toHaveBeenCalledWith({ scenic_id: 'a', source_kind: 'ticket', period_key: 'original.xlsx' })
+    expect(wrapper.vm.trace.period_key).toBe('original.xlsx')
+  })
+
+  it('clears old results on failure and does not expose stale scenic responses', async () => {
+    await mountView()
+    let resolveOld
+    getBusinessTracePeriods.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    const oldRequest = wrapper.vm.openBusinessTrace({ scenic_id: 'old' })
+    getBusinessTracePeriods.mockResolvedValueOnce([])
+    await wrapper.vm.openBusinessTrace({ scenic_id: 'new' })
+    resolveOld([{ scenic_id: 'old', source_kind: 'hotel', period_key: 'wrong' }])
+    await oldRequest
+    expect(wrapper.vm.tracePeriods).toEqual([])
+    getBusinessTracePeriods.mockRejectedValueOnce(new Error('forbidden'))
+    await wrapper.vm.openBusinessTrace({ scenic_id: 'denied' })
+    expect(wrapper.vm.traceError).toContain('期次加载失败')
+    expect(wrapper.vm.trace).toBe(null)
+  })
 
   async function mountView() {
     wrapper = shallowMount(OperationView, {

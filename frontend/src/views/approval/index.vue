@@ -328,7 +328,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onBeforeUnmount, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Plus, ArrowDown, Edit, Delete, Refresh, View, Download, UploadFilled,
@@ -776,6 +777,14 @@ function copyAi() {
   )
 }
 
+const traceRoute = useRoute()
+watch(() => traceRoute?.query?.form_id, async (value) => {
+  const id = Number(value)
+  if (Number.isSafeInteger(id) && id > 0) {
+    try { await openDetail({ id }) }
+    catch { ElMessage.error('审批单加载失败或无权查看') }
+  }
+}, { immediate: true })
 load()
 loadApprovedContracts()
 </script>

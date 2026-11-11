@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
-from app.core.enums import CompanyCode, ContractStatus, InvoiceStatus
+from app.core.enums import CompanyCode, ContractStatus, InvoiceStatus, InvoiceSourceKind
 from app.db.session import get_db
 from app.models.contract import Contract
 from app.models.invoice import Invoice
@@ -43,6 +43,8 @@ from app.services import financial as financial_svc
 from app.services.assignment_permissions import PermissionContext
 from app.services.operation_analysis import AnalysisFilters, analyze, validated_date_range
 from app.services.operation_series import build_confirmed_daily_series
+from app.schemas.business_trace import BusinessTraceOut, TracePeriodOut
+from app.services.business_trace import build_business_trace, list_trace_periods
 from app.services.forecast_factor_excel import (
     MAX_FACTOR_FILE_SIZE,
     build_factor_template,
@@ -57,6 +59,27 @@ _operation_guard = require_permission("supply.operation.view", _supply_context)
 _operation_create_guard = require_permission("supply.operation.create", _supply_context)
 _operation_export_guard = require_permission("supply.operation.export", _supply_context)
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get('/trace-periods', response_model=Response[list[TracePeriodOut]])
+def operation_trace_periods(
+    scenic_id: str = Query(min_length=1, max_length=64),
+    year: int | None = Query(default=None, ge=1, le=9999),
+    db: Session = Depends(get_db),
+    current_user=Depends(_operation_guard),
+):
+    return Response.ok(list_trace_periods(db, scenic_id, current_user, year))
+
+
+@router.get('/trace', response_model=Response[BusinessTraceOut])
+def operation_trace(
+    scenic_id: str = Query(min_length=1, max_length=64),
+    source_kind: InvoiceSourceKind = Query(),
+    period_key: str = Query(min_length=1, max_length=255),
+    db: Session = Depends(get_db),
+    current_user=Depends(_operation_guard),
+):
+    return Response.ok(build_business_trace(db, scenic_id, source_kind, period_key, current_user))
 
 
 def calculate_forecast_response(db, payload):

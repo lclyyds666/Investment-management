@@ -1,5 +1,13 @@
 import request from './request'
 
+export function getBusinessTrace(params) {
+  return request.get('/operation/trace', { params })
+}
+
+export function getBusinessTracePeriods(params) {
+  return request.get('/operation/trace-periods', { params })
+}
+
 export function getOperationAnalysis(params) {
   return request.get('/operation/analysis', {
     params,

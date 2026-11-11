@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { reactive } from 'vue'
+
+const route = reactive({ query: {} })
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 const approvalApi = vi.hoisted(() => ({
   listForms: vi.fn(), createForm: vi.fn(), updateForm: vi.fn(), deleteForm: vi.fn(), submitForm: vi.fn(), uploadFormAttachment: vi.fn(),
@@ -51,6 +55,7 @@ function mountView() {
 
 describe('approval contract selection', () => {
   beforeEach(() => {
+    route.query = {}
     vi.clearAllMocks()
     approvalApi.listForms.mockResolvedValue([])
     approvalApi.createForm.mockResolvedValue({ id: 15 })
@@ -58,6 +63,30 @@ describe('approval contract selection', () => {
       { id: 7, contract_no: 'HT-APPROVED', title: '已审批合同', status: 'approved', scenic_id: 'scenic-1', party_b: '客户甲' },
       { id: 8, contract_no: 'HT-DRAFT', title: '草稿合同', status: 'draft', scenic_id: 'scenic-2', party_b: '客户乙' }
     ])
+  })
+
+  it('consumes trace form_id on entry and subsequent query navigation', async () => {
+    approvalApi.getForm.mockImplementation((id) => Promise.resolve({ id, workflow_instance_id: null }))
+    approvalApi.listActions.mockResolvedValue([])
+    route.query = { form_id: '31' }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(approvalApi.getForm).toHaveBeenCalledWith(31)
+    expect(wrapper.vm.detail.id).toBe(31)
+    route.query = { form_id: '32' }
+    await flushPromises()
+    expect(wrapper.vm.detail.id).toBe(32)
+    wrapper.unmount()
+  })
+
+  it('handles denied trace deep links without retaining a prior detail', async () => {
+    approvalApi.getForm.mockRejectedValueOnce(new Error('forbidden'))
+    route.query = { form_id: '33' }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(messages.error).toHaveBeenCalledWith('审批单加载失败或无权查看')
+    expect(wrapper.vm.detail).toBe(null)
+    wrapper.unmount()
   })
 
   it('loads only approved contracts and derives the selected snapshot preview', async () => {
