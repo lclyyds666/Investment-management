@@ -90,7 +90,7 @@ def _aggregate(points) -> OperationMetricSummary:
         settlement_amount=settlement,
         writeoff_amount=writeoff,
         order_count=orders,
-        capital_occupation=max(settlement - writeoff, Decimal("0.00")),
+        capital_occupation=Decimal("0.00"),
     )
 
 
@@ -183,10 +183,35 @@ def _detect_anomalies(points, period, filters, current, previous, mom_rate):
                         baseline=mean.quantize(MONEY),
                         evidence=score,
                     ))
+    amount_rate, order_rate = mom_rate["settlement_amount"], mom_rate["order_count"]
+    if amount_rate is not None and order_rate is not None and (
+        (amount_rate > 0 and order_rate <= -MOM_ALERT_RATE)
+        or (order_rate > 0 and amount_rate <= -MOM_ALERT_RATE)
+    ):
+        anomalies.append(OperationAnomaly(metric="settlement_amount", severity="warning",
+            rule="amount_order_divergence", current=current.settlement_amount,
+            baseline=previous.settlement_amount, evidence=amount_rate - order_rate,
+            reason="结算金额与订单量方向相反，下降指标达到30%阈值。",
+            suggestion="核对客单价、退款及平台结算周期。"))
+    current_points = _filter_points(points, period, filters)
+    previous_points = _filter_points(points, period.shift(-period.days), filters)
+    if current.settlement_amount > 0 and previous.settlement_amount > 0:
+        for platform in sorted({p.platform for p in current_points + previous_points}):
+            now = sum((p.settlement_amount for p in current_points if p.platform == platform), Decimal(0)) / current.settlement_amount * 100
+            before = sum((p.settlement_amount for p in previous_points if p.platform == platform), Decimal(0)) / previous.settlement_amount * 100
+            if abs(now - before) >= Decimal(30):
+                anomalies.append(OperationAnomaly(metric="settlement_amount", dimension=platform,
+                    severity="warning", rule="platform_concentration", current=now.quantize(RATE),
+                    baseline=before.quantize(RATE), evidence=(now-before).quantize(RATE),
+                    reason="平台结算贡献占比变动达到30个百分点。", suggestion="核对渠道投放、结算完整性及平台依赖风险。"))
+    for anomaly in anomalies:
+        if not anomaly.reason:
+            anomaly.reason = "环比变动达到30%阈值。" if anomaly.rule == "mom_change" else "偏离最近六周期均值达到2个标准差。"
+            anomaly.suggestion = "核对台账覆盖、退款和结算周期后再调整经营安排。"
     return anomalies
 
 
-def analyze(points, date_range: DateRange, filters: AnalysisFilters) -> OperationAnalysisOut:
+def analyze(points, date_range: DateRange, filters: AnalysisFilters, *, financial_rows=None) -> OperationAnalysisOut:
     previous_range = date_range.shift(days=-date_range.days)
     last_year_range = DateRange(_last_year(date_range.start), _last_year(date_range.end))
     current_points = _filter_points(points, date_range, filters)
@@ -194,6 +219,13 @@ def analyze(points, date_range: DateRange, filters: AnalysisFilters) -> Operatio
     current = _aggregate(current_points)
     previous = _aggregate(previous_points)
     last_year = _aggregate(_filter_points(points, last_year_range, filters))
+    quality = []
+    if financial_rows is not None:
+        from app.services.operation_capital import capital_summary
+        for summary, period in ((current, date_range), (previous, previous_range), (last_year, last_year_range)):
+            summary.capital_occupation, summary.capital_occupation_days, issues = capital_summary(*financial_rows, period, filters)
+            if period == date_range:
+                quality.extend(issues)
     comparisons = OperationComparisons(
         settlement=_comparison(current, previous, last_year, "settlement_amount"),
         writeoff=_comparison(current, previous, last_year, "writeoff_amount"),
@@ -206,11 +238,20 @@ def analyze(points, date_range: DateRange, filters: AnalysisFilters) -> Operatio
         "order_count": comparisons.orders.mom_rate,
         "capital_occupation": comparisons.capital_occupation.mom_rate,
     }
-    return OperationAnalysisOut(
+    result = OperationAnalysisOut(
         summary=current,
         trends=_build_trends(points, date_range, filters),
         comparisons=comparisons,
         rankings=_build_rankings(current_points, current),
         contributions=_build_contributions(current_points, previous_points, current.settlement_amount),
         anomalies=_detect_anomalies(points, date_range, filters, current, previous, mom_rates),
+        quality_issues=quality,
     )
+    if financial_rows is not None:
+        for trend in result.trends:
+            trend.capital_occupation, trend.capital_occupation_days, _ = capital_summary(*financial_rows, DateRange(trend.day, trend.day), filters)
+        for ranking in result.rankings:
+            values = dict(scenic_ids=filters.scenic_ids, business_types=filters.business_types, platforms=filters.platforms)
+            values[{"scenic_id": "scenic_ids", "business_type": "business_types", "platform": "platforms"}[ranking.dimension]] = [ranking.value]
+            ranking.summary.capital_occupation, ranking.summary.capital_occupation_days, _ = capital_summary(*financial_rows, date_range, AnalysisFilters(**values))
+    return result

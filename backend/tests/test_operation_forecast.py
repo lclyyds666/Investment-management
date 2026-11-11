@@ -61,7 +61,8 @@ class OperationForecastTests(unittest.TestCase):
         ]
         line = forecast(points, request(factors=factors)).lines[0]
 
-        self.assertEqual(line.confidence, "medium")
+        self.assertEqual(line.confidence, "low")
+        self.assertTrue(any("missing_history_dates" in reason for reason in line.reasons))
         self.assertEqual(line.max_daily_factor, Decimal("-0.80"))
         self.assertGreaterEqual(line.interval_low, Decimal("0"))
         self.assertGreater(line.interval_high, line.forecast)
@@ -71,6 +72,36 @@ class OperationForecastTests(unittest.TestCase):
         line = forecast(points, request()).lines[0]
 
         self.assertEqual(line.confidence, "high")
+
+    def test_calendar_weekdays_are_learned_and_holidays_are_not_invented(self):
+        start = date(2026, 7, 1)
+        points = [point(start - timedelta(days=i), "30" if (start-timedelta(days=i)).weekday() >= 5 else "10") for i in range(-2, 85)]
+        weekday = forecast(points, request()).lines[0]
+        weekend = forecast(points, request(start_date=date(2026, 7, 4), end_date=date(2026, 7, 4))).lines[0]
+        self.assertTrue(weekday.calendar["weekday_applied"])
+        self.assertGreater(Decimal(weekend.calendar["weekday_factor"]), Decimal(weekday.calendar["weekday_factor"]))
+        self.assertIsNone(weekday.calendar["statutory_holiday_source"])
+        self.assertTrue(any("statutory_calendar_unavailable" in reason for reason in weekday.reasons))
+
+    def test_signed_clamp_contributions_reconcile_all_metrics_and_order_rounding(self):
+        points = [OperationDailyPoint(date(2026, 6, 30)-timedelta(days=i), "s1", "ticket", "p1", Decimal("10.01"), Decimal("6.33"), 3) for i in range(12)]
+        factors = [ForecastFactor(start_date=date(2026, 7, 1), end_date=date(2026, 7, 1), factor_type="活动", name=str(i), impact_rate=rate) for i, rate in enumerate(["2", "1", "-0.5"])]
+        factors.append(ForecastFactor(start_date=date(2026, 7, 2), end_date=date(2026, 7, 2), factor_type="节假日", name="outside", impact_rate="1"))
+        lines = forecast(points, request(factors=factors), all_metrics=True).lines
+        self.assertEqual(len(lines), 3)
+        for line in lines:
+            values = [Decimal(item["contribution"]) for item in line.factor_contributions]
+            self.assertEqual(sum(values), line.forecast-line.baseline)
+            self.assertLess(values[2], 0)
+            self.assertEqual(values[3], 0)
+            self.assertEqual(line.max_daily_factor, Decimal(2))
+            if line.metric == "order_count":
+                self.assertTrue(all(value == value.to_integral_value() for value in values))
+
+    def test_volatile_complete_history_downgrades_confidence(self):
+        line = forecast(period_points(date(2026, 6, 30), ["1", "100"] * 6), request()).lines[0]
+        self.assertEqual(line.confidence, "low")
+        self.assertTrue(any("high_history_volatility" in reason for reason in line.reasons))
 
     def test_sparse_platform_falls_back_to_business_share_with_low_confidence(self):
         points = period_points(date(2026, 6, 30), ["25"], platform="p1")

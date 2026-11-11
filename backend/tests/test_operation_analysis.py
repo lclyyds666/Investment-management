@@ -59,6 +59,17 @@ class OperationAnalysisTests(unittest.TestCase):
         )
         self.assertFalse(any(item.rule == "standard_deviation" for item in result.anomalies))
 
+    def test_divergence_and_platform_share_shift_have_reasons(self):
+        points = [point(date(2026, 9, 1), "180", orders=4, platform="a"),
+                  point(date(2026, 9, 1), "20", orders=1, platform="b"),
+                  point(date(2026, 8, 31), "20", orders=2, platform="a"),
+                  point(date(2026, 8, 31), "80", orders=8, platform="b")]
+        result = analyze(points, DateRange(date(2026, 9, 1), date(2026, 9, 1)), AnalysisFilters())
+        self.assertIn("amount_order_divergence", [item.rule for item in result.anomalies])
+        shifts = [item for item in result.anomalies if item.rule == "platform_concentration"]
+        self.assertEqual([item.dimension for item in shifts], ["a", "b"])
+        self.assertTrue(all(item.reason and item.suggestion for item in result.anomalies))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,6 +97,7 @@
             </p></el-card
           >
         </div>
+        <p class="muted">资金占用为期末未回款净投入余额；区间内按净投入加权占用时长：{{ analysis.summary.capital_occupation_days ?? '—' }} 天。付款日起计、回款日不计；酒店同一期共享付款只计一次，按平台筛选展示相关整期资金，平台资金不可相加。</p>
         <el-empty
           v-if="!analysis.rankings.length"
           description="当前范围暂无已确认经营数据，请调整筛选或确认台账。"
@@ -157,9 +158,10 @@
             }}，{{
               a.rule === 'mom_change'
                 ? `环比变化 ${rate(a.evidence)}`
-                : `偏离历史均值 ${a.evidence} 个标准差`
-            }}；当前 {{ display(a.current, a.metric) }}，基准
-            {{ display(a.baseline, a.metric) }}。
+                : a.rule === 'standard_deviation' ? `偏离历史均值 ${a.evidence} 个标准差` : a.reason
+            }}；当前 {{ a.rule === 'platform_concentration' ? `${a.current}%` : display(a.current, a.metric) }}，基准
+            {{ a.rule === 'platform_concentration' ? `${a.baseline}%` : display(a.baseline, a.metric) }}。
+            {{ a.reason }} {{ a.suggestion }}
           </p></el-card
         > </template
       ><el-empty v-else-if="!loading" description="选择时间和维度后查询分析" />
@@ -267,6 +269,10 @@
             ><el-table-column label="依据" min-width="260"
               ><template #default="{ row }"
                 >{{ row.reasons.join('；') }}
+                <div v-if="row.calendar?.weekday_applied">星期结构系数：{{ row.calendar.weekday_factor }}</div>
+                <div v-for="factor in row.factor_contributions || []" :key="factor.factor_index">
+                  {{ factor.name }}：{{ display(factor.contribution, row.metric) }}
+                </div>
                 <div v-for="(c, name) in row.components" :key="name">
                   {{ name }}：{{ display(c.value, row.metric) }}，权重
                   {{ Number(c.weight) * 100 }}%
@@ -382,7 +388,7 @@ const metrics = [
   { key: 'order_count', label: '订单量', comparison: 'orders' },
   {
     key: 'capital_occupation',
-    label: '资金占用',
+    label: '期末资金占用（万元）',
     comparison: 'capital_occupation',
   },
 ]

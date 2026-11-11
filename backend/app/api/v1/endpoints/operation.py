@@ -103,18 +103,22 @@ def build_forecast_workbook(result, request):
                         sum((line.forecast for line in lines if line.forecast is not None), Decimal(0)),
                         sum(line.forecast is None for line in lines)])
     details = workbook.create_sheet("分层明细")
-    fields = ["scenic_id", "business_type", "platform", "metric", "baseline", "factor_adjustment", "forecast", "interval_low", "interval_high", "confidence", "reasons", "components"]
+    fields = ["scenic_id", "business_type", "platform", "metric", "baseline", "factor_adjustment", "forecast", "interval_low", "interval_high", "confidence", "reasons", "components", "factor_contributions", "calendar"]
     details.append(fields)
     for line in result.lines:
-        values = line.model_dump(mode="json")
+        values = line.model_dump()
         details.append([str(values[field]) if isinstance(values[field], (dict, list)) else values[field] for field in fields])
     factors = workbook.create_sheet("影响因素")
     from app.schemas.operation_forecast import ForecastFactor
     fields = list(ForecastFactor.model_fields)
-    factors.append(fields)
-    for factor in request.factors:
-        values = factor.model_dump(mode="json")
-        factors.append([values[field] for field in fields])
+    metrics = ("settlement_amount", "writeoff_amount", "order_count")
+    factors.append(fields + [f"{metric}_contribution" for metric in metrics])
+    for index, factor in enumerate(request.factors):
+        values = factor.model_dump()
+        contributions = [sum((Decimal(item["contribution"]) for line in result.lines if line.metric == metric
+                              for item in line.factor_contributions if item["factor_index"] == index), Decimal(0))
+                         for metric in metrics]
+        factors.append([values[field] for field in fields] + contributions)
     quality = workbook.create_sheet("数据质量")
     quality.append(["row_id", "business_type", "code"])
     for issue in result.quality_issues:
@@ -160,7 +164,7 @@ def forecast_factor_template():
     "/forecast-factors/parse",
     response_model=Response[ForecastFactorParseResult],
     summary="解析预测影响因素 Excel",
-    dependencies=[Depends(_operation_guard)],
+    dependencies=[Depends(_operation_create_guard)],
 )
 async def parse_forecast_factor_file(
     file: UploadFile = File(..., description="预测影响因素 Excel(.xlsx)，≤5MB"),
@@ -205,8 +209,9 @@ def operation_analysis(
             business_types=business_type,
             platforms=platform,
         ),
+        financial_rows=(tickets, hotels),
     )
-    result.quality_issues = [DataQualityIssueOut.model_validate(issue.__dict__) for issue in issues]
+    result.quality_issues.extend(DataQualityIssueOut.model_validate(issue.__dict__) for issue in issues)
     return Response.ok(result)
 
 

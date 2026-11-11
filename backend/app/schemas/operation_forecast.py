@@ -71,6 +71,8 @@ class ForecastLine(BaseModel):
     components: dict[str, ForecastComponent] = Field(default_factory=dict)
     max_daily_factor: Decimal = Decimal("0.00")
     reasons: list[str] = Field(default_factory=list)
+    factor_contributions: list[dict] = Field(default_factory=list)
+    calendar: dict = Field(default_factory=dict)
 
 
 class ForecastOut(BaseModel):

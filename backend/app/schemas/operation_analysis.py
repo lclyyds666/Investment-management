@@ -11,6 +11,7 @@ class OperationMetricSummary(BaseModel):
     writeoff_amount: Decimal = Decimal("0.00")
     order_count: int = 0
     capital_occupation: Decimal = Decimal("0.00")
+    capital_occupation_days: Decimal | None = None
 
 
 class OperationTrendPoint(OperationMetricSummary):
@@ -50,10 +51,12 @@ class OperationAnomaly(BaseModel):
     metric: Literal["settlement_amount", "writeoff_amount", "order_count", "capital_occupation"]
     dimension: str = "all"
     severity: Literal["warning", "critical"]
-    rule: Literal["mom_change", "standard_deviation"]
+    rule: Literal["mom_change", "standard_deviation", "amount_order_divergence", "platform_concentration"]
     current: Decimal
     baseline: Decimal
     evidence: Decimal
+    reason: str = ""
+    suggestion: str = ""
 
 
 class DataQualityIssueOut(BaseModel):

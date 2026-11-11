@@ -184,6 +184,49 @@ def _confidence(periods: list[Decimal | None], fallback_used: bool) -> str:
     return "medium"
 
 
+def _calendar_profile(totals, request):
+    """Learn weekdays only from prior observations; never infer statutory holidays."""
+    history = {day: value for day, value in totals.items()
+               if request.start_date - timedelta(days=366) <= day < request.start_date}
+    groups = [[value for day, value in history.items() if day.weekday() == weekday]
+              for weekday in range(7)]
+    if any(len(values) < 2 for values in groups):
+        return None
+    means = [sum(values, Decimal(0)) / len(values) for values in groups]
+    historical_mean = sum(history.values(), Decimal(0)) / len(history)
+    if historical_mean <= 0:
+        return None
+    return [value / historical_mean for value in means]
+
+
+def _contributions(series, request, key, daily, rates):
+    raw = [Decimal(0) for _ in request.factors]
+    for offset, value in enumerate(daily):
+        day = request.start_date + timedelta(days=offset)
+        applicable = [i for i, factor in enumerate(request.factors)
+                      if _factor_rate(day, key, [factor]) != 0]
+        total = sum((request.factors[i].impact_rate for i in applicable), Decimal(0))
+        scale = rates[offset] / total if total else Decimal(1)
+        for i in applicable:
+            raw[i] += value * request.factors[i].impact_rate * scale
+    return raw
+
+
+def _rounded_contributions(raw, target, quantum):
+    # Largest-remainder apportionment also works for signed, cancelling factors.
+    values = [value.quantize(quantum, rounding=ROUND_HALF_UP) for value in raw]
+    remainder = target - sum(values, Decimal(0))
+    while remainder and values:
+        direction = quantum if remainder > 0 else -quantum
+        eligible = [i for i in range(len(values)) if raw[i] != 0]
+        if not eligible:
+            break
+        index = max(eligible, key=lambda i: ((raw[i] - values[i]) * direction, -i))
+        values[index] += direction
+        remainder -= direction
+    return values
+
+
 def _requested_keys(series, request: ForecastRequest) -> list[ForecastKey]:
     if request.scenic_ids and request.business_types and request.platforms:
         return [
@@ -238,6 +281,22 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
 
     days = (request.end_date - request.start_date).days + 1
     daily_baseline = _split_money(baseline, days)
+    profile = _calendar_profile(totals, request)
+    calendar = {"statutory_holiday_source": None, "weekday_applied": profile is not None,
+                "holiday_adjustment": "explicit_factors_only"}
+    reasons.append("statutory_calendar_unavailable: 未配置法定节假日日历，仅应用手工或导入的节假日因素")
+    if profile is not None:
+        weights = [profile[(request.start_date + timedelta(days=i)).weekday()] for i in range(days)]
+        adjusted = (baseline * sum(weights, Decimal(0)) / days).quantize(MONEY, rounding=ROUND_HALF_UP)
+        calendar.update(weekday_factor=str(adjusted / baseline if baseline else Decimal(1)),
+                        adjustment=str(adjusted - baseline), weekday_weights=[str(value) for value in profile])
+        baseline = adjusted
+        weight_total = sum(weights, Decimal(0))
+        daily_baseline = [(baseline * weight / weight_total).quantize(MONEY, rounding=ROUND_HALF_UP)
+                          for weight in weights] if weight_total else _split_money(baseline, days)
+        daily_baseline[-1] += baseline - sum(daily_baseline, Decimal(0))
+    else:
+        reasons.append("weekday_history_insufficient: 星期样本不足，未作日历调整")
     rates = [
         _factor_rate(request.start_date + timedelta(days=index), key, request.factors)
         for index in range(days)
@@ -250,6 +309,20 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
         Decimal("0"),
     ).quantize(MONEY)
     sigma = _sigma(periods, baseline)
+    confidence = _confidence(periods, fallback_used)
+    complete = [value for value in periods if value is not None]
+    mean = sum(complete, Decimal(0)) / len(complete) if complete else Decimal(0)
+    if mean > 0 and _sigma(periods, mean) / mean >= Decimal("0.50"):
+        confidence = "low"
+        reasons.append("high_history_volatility: 历史周期变异系数不低于50%")
+    history_start = request.start_date - timedelta(days=days * 12)
+    coverage = Decimal(sum(history_start <= day < request.start_date for day in totals)) / (days * 12)
+    calendar["history_date_coverage"] = str(coverage)
+    if coverage < Decimal("0.75"):
+        confidence = "low"
+        reasons.append("missing_history_dates: 最近12周期日期覆盖不足75%")
+    raw = _contributions(series, request, key, daily_baseline, rates)
+    contributions = _rounded_contributions(raw, forecast_value - baseline, MONEY)
     spread = sigma * Decimal("1.96")
     return ForecastLine(
         scenic_id=key.scenic_id,
@@ -260,10 +333,13 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
         forecast=forecast_value,
         interval_low=max(forecast_value - spread, Decimal("0")).quantize(MONEY),
         interval_high=(forecast_value + spread).quantize(MONEY),
-        confidence=_confidence(periods, fallback_used),
+        confidence=confidence,
         components=components,
         max_daily_factor=max(rates, default=Decimal("0")).quantize(RATE),
         reasons=reasons,
+        calendar=calendar,
+        factor_contributions=[{"factor_index": i, "name": factor.name, "contribution": str(value)}
+                              for i, (factor, value) in enumerate(zip(request.factors, contributions))],
     )
 
 
@@ -284,6 +360,9 @@ def forecast(series, request: ForecastRequest, *, all_metrics: bool = False) -> 
                         setattr(line, field, value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
                 if line.forecast is not None:
                     line.factor_adjustment = line.forecast - line.baseline
+                    values = _rounded_contributions([Decimal(item["contribution"]) for item in line.factor_contributions], line.factor_adjustment, Decimal(1))
+                    for item, value in zip(line.factor_contributions, values):
+                        item["contribution"] = str(value)
             lines.append(line)
     return ForecastOut(
         start_date=request.start_date,

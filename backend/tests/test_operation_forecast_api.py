@@ -42,6 +42,13 @@ class OperationForecastApiTests(unittest.TestCase):
                     response = self.client.post("/api/v1/operation/" + suffix, json={"start_date": start, "end_date": end})
                     self.assertEqual(response.status_code, 422)
         self.assertEqual(self.db.entities, [])
+
+    def test_factor_import_requires_create_permission(self):
+        self.user.is_superuser = False
+        with patch("app.api.deps.has_permission", side_effect=lambda db, user, permission, *args, **kwargs: permission == "supply.operation.view"):
+            response = self.client.post("/api/v1/operation/forecast-factors/parse", files={"file": ("factors.xlsx", b"invalid")})
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(self.client.get("/api/v1/operation/forecast-factors/template").status_code, 200)
         self.user.is_superuser = False
         with patch("app.api.deps.has_permission", return_value=False):
             for suffix in ("forecast", "forecast/export"):
@@ -57,6 +64,9 @@ class OperationForecastApiTests(unittest.TestCase):
         book = load_workbook(BytesIO(response.content))
         self.assertEqual(book.sheetnames, ["预测汇总", "分层明细", "影响因素", "数据质量"])
         self.assertEqual(book["分层明细"].max_row, 4)
+        self.assertEqual(book["分层明细"].cell(2, 5).data_type, "n")
+        self.assertEqual(book["分层明细"].cell(2, 7).data_type, "n")
+        self.assertEqual(book["影响因素"].cell(2, 8).data_type, "n")
         name_cell = book["影响因素"].cell(2, 7)
         self.assertEqual(name_cell.value, "=1+1")
         self.assertEqual(name_cell.data_type, "s")
