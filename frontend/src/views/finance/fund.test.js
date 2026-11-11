@@ -95,12 +95,12 @@ describe('fund management view', () => {
     const wrapper = mountView()
     await flushPromises()
     wrapper.vm.openEdit({ id: 1, execution_task_id: 2, direction: 'usage', category: 'business_payment',
-      amount: '100', occurred_on: '2026-01-01', bank_reference: 'BANK', counterparty: 'Supplier' })
+      amount: '100', occurred_on: '2026-01-01', bank_reference: 'BANK', counterparty: ' Supplier  ' })
     expect(wrapper.vm.editingExecution).toBe(true)
     wrapper.vm.form.summary = 'corrected'
     wrapper.vm.formRef = { validate: vi.fn().mockResolvedValue(true) }
     await wrapper.vm.submitForm()
-    expect(fundApi.updateFund).toHaveBeenCalledWith(1, expect.objectContaining({ bank_reference: 'BANK', amount: 100, summary: 'corrected' }))
+    expect(fundApi.updateFund).toHaveBeenCalledWith(1, expect.objectContaining({ bank_reference: 'BANK', counterparty: ' Supplier  ', amount: 100, summary: 'corrected' }))
   })
 
   it('uses a valid maturity deep link on the initial ledger request only once', async () => {

@@ -57,6 +57,7 @@ from app.services.invoice_generation import (
     InvoiceSourceLocked,
     source_invoice_has_approval_form,
     source_invoice_is_locked,
+    invoice_has_fund_allocation,
 )
 from app.services.invoice_reconciliation import (
     ReconciliationError,
@@ -394,6 +395,8 @@ def update_invoice(
         or ("contract_id" in changes and changes["contract_id"] != invoice.contract_id)
         or ("contract_no" in changes and changes["contract_no"] != invoice.contract_no)
     )
+    if changes_source_data and invoice_has_fund_allocation(db, invoice.id):
+        raise _source_locked_http(InvoiceSourceLocked())
     if invoice.generated_by_source and changes_source_data:
         if source_invoice_is_locked(db, invoice):
             raise _source_locked_http(InvoiceSourceLocked())

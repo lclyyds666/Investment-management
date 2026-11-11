@@ -551,7 +551,7 @@ function transactionPayload() {
     category: editingSettled.value ? lockedClassification.category : form.category,
     amount: wanToYuan(form.amountWan),
     occurred_on: form.occurred_on,
-    counterparty: form.counterparty?.trim() || '',
+    counterparty: editingExecution.value ? form.counterparty : (form.counterparty?.trim() || ''),
     summary: form.summary?.trim() || '',
     maturity_date: form.maturity_date || null,
     remark: form.remark?.trim() || '',

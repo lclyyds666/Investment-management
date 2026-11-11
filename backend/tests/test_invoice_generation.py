@@ -20,12 +20,25 @@ from app.models.ledger_contract import LedgerContractLink
 from app.models.ticket_ledger import TicketLedger
 from app.models.user import User
 from app.services.invoice_generation import (
+    invoice_has_fund_allocation,
     InvoiceSourceLocked,
     invalidate_period_invoices,
     remove_period_invoices,
     source_invoice_is_locked,
     sync_confirmed_period_invoices,
 )
+
+
+def test_allocation_existence_guard_is_mysql_current_locking_read(monkeypatch):
+    from sqlalchemy.dialects import mysql
+    from types import SimpleNamespace
+    statements = []
+    def current_read(statement):
+        statements.append(str(statement.compile(dialect=mysql.dialect())))
+        return 1
+    assert invoice_has_fund_allocation(SimpleNamespace(scalar=current_read), 123)
+    assert "FOR UPDATE" in statements[0]
+    assert "biz_invoice_fund_allocation.invoice_id" in statements[0]
 
 
 def _session():

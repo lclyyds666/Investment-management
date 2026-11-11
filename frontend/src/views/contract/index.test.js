@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { reactive } from 'vue'
+
+const routeState = vi.hoisted(() => ({ current: null }))
+vi.mock('vue-router', () => ({ useRoute: () => routeState.current }))
+beforeEach(() => { routeState.current = reactive({ query: {} }) })
 
 const contractApi = vi.hoisted(() => ({
   listContracts: vi.fn(), createContract: vi.fn(), updateContract: vi.fn(), deleteContract: vi.fn(), submitContract: vi.fn(),
@@ -90,6 +95,17 @@ describe('contract designated submit', () => {
     portal.isSuperuser = false
     legalApi.listLegalInitiatorOptions.mockResolvedValue([])
     workflowApi.getWorkflowSubmissionPlan.mockResolvedValue({ nodes: [] })
+  })
+
+  it('opens the initial contract deep link and follows query changes', async () => {
+    routeState.current.query = { contract_id: '42' }
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.vm.detailId).toBe(42)
+    expect(wrapper.vm.detailVisible).toBe(true)
+    routeState.current.query = { contract_id: '43' }
+    await flushPromises()
+    expect(wrapper.vm.detailId).toBe(43)
   })
 
   it('requires an initiator assignment when several legal origins are available', async () => {

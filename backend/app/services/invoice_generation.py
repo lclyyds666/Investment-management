@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import delete, inspect, select, text
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.enums import (
@@ -23,6 +23,7 @@ from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
 from app.models.ledger_contract import LedgerContractLink
 from app.models.ticket_ledger import TicketLedger
 from app.models.approval_form import ApprovalForm
+from app.models.cash_execution import InvoiceFundAllocation
 from app.services.ledger_period_lock import lock_period_rows
 
 
@@ -115,16 +116,14 @@ def source_invoice_has_approval_form(db: Session, invoice_id: int) -> bool:
     ) is not None
 
 
-def _source_invoice_has_fund_allocation(db: Session, invoice_id: int) -> bool:
-    connection = db.connection()
-    if not inspect(connection).has_table("biz_invoice_fund_allocation"):
-        return False
+def invoice_has_fund_allocation(db: Session, invoice_id: int) -> bool:
+    # The caller holds the invoice parent lock. A current locking read sees
+    # allocations committed while waiting, including under REPEATABLE READ.
     return db.scalar(
-        text(
-            "SELECT 1 FROM biz_invoice_fund_allocation "
-            "WHERE invoice_id = :invoice_id LIMIT 1"
-        ),
-        {"invoice_id": invoice_id},
+        select(InvoiceFundAllocation.id)
+        .where(InvoiceFundAllocation.invoice_id == invoice_id)
+        .limit(1)
+        .with_for_update(),
     ) is not None
 
 
@@ -140,7 +139,7 @@ def source_invoice_is_locked(db: Session, invoice: Invoice) -> bool:
             .limit(1)
         ) is not None
         or source_invoice_has_approval_form(db, invoice.id)
-        or _source_invoice_has_fund_allocation(db, invoice.id)
+        or invoice_has_fund_allocation(db, invoice.id)
     )
 
 

@@ -395,6 +395,29 @@ def test_fund_allocation_blocks_amount_and_contract_backfill(invoice_api):
     ).status_code == 409
 
 
+def test_allocated_manual_invoice_protects_financial_fields_and_allows_description(invoice_api):
+    db, client, _, _, _, _, _, _ = invoice_api
+    actor_id = db.scalar(select(User.id))
+    invoice = Invoice(invoice_title="Historical manual", amount=100,
+                      direction=InvoiceDirection.INPUT, contract_no="OLD-SNAPSHOT", generated_by_source=False)
+    fund = FundTransaction(direction="usage", category="business_payment", amount=100,
+                           occurred_on=date(2020, 1, 1), created_by=actor_id)
+    db.add_all([invoice, fund])
+    db.flush()
+    db.add(InvoiceFundAllocation(invoice_id=invoice.id, fund_transaction_id=fund.id,
+                                 amount=40, allocated_by=actor_id))
+    db.commit()
+    for changes in ({"amount": "30"}, {"contract_no": "CHANGED"}, {"contract_id": 999}):
+        response = client.put(f"/api/v1/invoices/{invoice.id}", json=changes)
+        assert response.status_code == 409, response.text
+    assert client.put(f"/api/v1/invoices/{invoice.id}", json={"direction": "output"}).status_code == 422
+    assert client.put(f"/api/v1/invoices/{invoice.id}", json={"amount": "100", "remark": "corrected"}).status_code == 200
+    db.refresh(invoice)
+    assert invoice.amount == Decimal("100") and invoice.contract_no == "OLD-SNAPSHOT"
+    assert invoice.contract_id is None and invoice.direction == InvoiceDirection.INPUT
+    assert invoice.remark == "corrected"
+
+
 def test_invoice_output_exposes_unified_source_lock_flags(invoice_api):
     db, client, _, users, invoice, _, _, _ = invoice_api
     db.add(ApprovalForm(
