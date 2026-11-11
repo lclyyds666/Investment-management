@@ -32,6 +32,18 @@ def request(**changes):
 
 
 class OperationForecastTests(unittest.TestCase):
+    def test_trend_predicts_next_linear_period_with_actual_offsets(self):
+        from app.services.operation_forecast import _bounded_trend
+        for periods, recent, expected in (
+            ([600, 500, 400, 300, 200, 100], "533.3333333333", "700"),
+            ([500, 600, 700, 800, 900, 1000], "566.6666666667", "400"),
+            ([600, None, 400, None, 200, 100], "500", "700"),
+            ([500, None, 700, None, 900, 1000], "600", "400"),
+        ):
+            with self.subTest(periods=periods):
+                values = [Decimal(value) if value is not None else None for value in periods]
+                self.assertEqual(_bounded_trend(values, Decimal(recent)), Decimal(expected))
+
     def test_tiny_calendar_baseline_is_preserved_without_negative_daily_tail(self):
         from app.services.operation_forecast import _allocate_daily
         start = date(2026, 7, 1)
@@ -51,7 +63,7 @@ class OperationForecastTests(unittest.TestCase):
 
         self.assertEqual(line.components["recent"].weight, Decimal("0.6667"))
         self.assertEqual(line.components["trend"].weight, Decimal("0.3333"))
-        self.assertEqual(line.baseline, Decimal("33.64"))
+        self.assertEqual(line.baseline, Decimal("29.00"))
 
     def test_factor_rates_add_and_are_capped_per_day_with_cent_tail_preserved(self):
         points = period_points(date(2026, 6, 30), ["10.01"] * 12)

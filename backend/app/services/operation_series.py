@@ -31,10 +31,11 @@ def _as_date(value):
 
 
 def _split_decimal(total: Decimal, days: int) -> list[Decimal]:
-    unit = (total / Decimal(days)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    values = [unit] * days
-    values[-1] += total - sum(values, Decimal("0"))
-    return values
+    # Apportion whole cents; signed corrections retain their original sign.
+    cents = int((abs(total) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    quotient, remainder = divmod(cents, days)
+    sign = Decimal("-1") if total < 0 else Decimal("1")
+    return [sign * Decimal(quotient + (index < remainder)) / 100 for index in range(days)]
 
 
 def _split_count(total: int, days: int) -> list[int]:

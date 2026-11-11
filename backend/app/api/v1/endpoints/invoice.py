@@ -84,6 +84,7 @@ router = APIRouter()
 
 _supply_context = lambda: PermissionContext(company_code=CompanyCode.SUPPLY_MANAGEMENT.value)
 _view_guard = require_permission("supply.invoice.view", _supply_context)
+_finance_view_guard = require_permission("supply.finance.view", _supply_context)
 _manage_guard = require_permission("supply.invoice.manage", _supply_context)
 _finance_update_guard = require_permission("supply.finance.update", _supply_context)
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -307,6 +308,7 @@ def invoice_stats(db: Session = Depends(get_db), _: User = Depends(_view_guard))
 
 @router.get(
     "/{invoice_id}/allocations",
+    dependencies=[Depends(_finance_view_guard)],
     response_model=Response[list[InvoiceAllocationOut]],
     summary="发票收付款核销明细",
 )

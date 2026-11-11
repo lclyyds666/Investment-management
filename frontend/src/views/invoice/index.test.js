@@ -48,7 +48,7 @@ function mountView() {
     global: {
       directives: { loading: () => {} },
       stubs: {
-        ProTable: { props: ['fetch'], mounted() { this.fetch() }, methods: { reload() { this.fetch() } }, template: '<div><slot name="toolbar" /><slot name="prepend" /><slot name="status" /><slot name="actions" /></div>' },
+        ProTable: { props: ['fetch'], mounted() { this.fetch() }, methods: { reload() { this.fetch() } }, template: '<div><slot name="toolbar" /><slot name="prepend" /><slot name="status" /><slot name="actions" :row="{ id: 6, direction: \'input\' }" /></div>' },
         ElTabs: { template: '<div><slot /></div>' },
         ElTabPane: { props: ['label'], template: '<div>{{ label }}<slot /></div>' },
         ElDialog: passthrough,
@@ -78,6 +78,8 @@ function mountView() {
 describe('invoice management redesign', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    portal.hasPermission.mockImplementation(code => ['supply.invoice.view', 'supply.invoice.manage',
+      'supply.invoice.approve', 'supply.finance.view', 'supply.finance.update'].includes(code))
     route.query = {}
     invoiceApi.listInvoices.mockResolvedValue([])
     invoiceApi.invoiceStats.mockResolvedValue({ pending: 0, issued: 0, issued_amount: 0 })
@@ -276,6 +278,48 @@ describe('invoice management redesign', () => {
     expect(wrapper.vm.reconciliation.allocations).toHaveLength(1)
     expect(wrapper.vm.reconciliation.candidates).toHaveLength(1)
     expect(wrapper.vm.reconciliationVisible).toBe(true)
+  })
+
+  it('shows reconciliation for finance handlers and hides it for business reviewers', async () => {
+    portal.hasPermission.mockImplementation(code => ['supply.invoice.view', 'supply.finance.view', 'supply.finance.update'].includes(code))
+    const finance = mountView()
+    expect(finance.vm.canManage).toBe(false)
+    expect(finance.text()).toContain('收付款核销')
+    await finance.vm.openReconciliation({ id: 6, direction: 'input', amount: 100 })
+    expect(invoiceApi.listInvoiceAllocations).toHaveBeenCalledWith(6)
+    finance.unmount()
+
+    invoiceApi.listInvoiceAllocations.mockClear()
+    portal.hasPermission.mockImplementation(code => ['supply.invoice.view', 'supply.invoice.manage'].includes(code))
+    const reviewer = mountView()
+    expect(reviewer.vm.canManage).toBe(true)
+    expect(reviewer.text()).not.toContain('收付款核销')
+    await reviewer.vm.openReconciliation({ id: 6 })
+    expect(invoiceApi.listInvoiceAllocations).not.toHaveBeenCalled()
+    reviewer.unmount()
+  })
+
+  it('displays and limits candidates to remaining funds and refreshes after add and remove', async () => {
+    invoiceApi.listInvoices.mockResolvedValue([{ id: 6, direction: 'input', amount: 100, unallocated_amount: 80 }])
+    fundApi.listFunds.mockResolvedValue({ items: [{ id: 9, amount: 100, allocated_amount: 40, unallocated_amount: 60 }] })
+    const wrapper = mountView()
+    await wrapper.vm.openReconciliation({ id: 6, direction: 'input', amount: 100 })
+    expect(wrapper.vm.fundOptionLabel(wrapper.vm.reconciliation.candidates[0])).toContain('总额 ¥100.00 / 可核销 ¥60.00')
+    wrapper.vm.allocationForm.fund_transaction_id = 9
+    wrapper.vm.onAllocationFundChange()
+    expect(wrapper.vm.allocationForm.amount).toBe(60)
+    expect(wrapper.vm.allocationLimit).toBe(60)
+    invoiceApi.listInvoices.mockResolvedValue([{ id: 6, direction: 'input', amount: 100, unallocated_amount: 20 }])
+    fundApi.listFunds.mockResolvedValue({ items: [] })
+    await wrapper.vm.addAllocation()
+    expect(wrapper.vm.currentInvoice.unallocated_amount).toBe(20)
+    expect(wrapper.vm.reconciliation.candidates).toEqual([])
+    invoiceApi.listInvoices.mockResolvedValue([{ id: 6, direction: 'input', amount: 100, unallocated_amount: 80 }])
+    fundApi.listFunds.mockResolvedValue({ items: [{ id: 9, amount: 100, unallocated_amount: 60 }] })
+    await wrapper.vm.removeAllocation({ id: 5 })
+    expect(wrapper.vm.currentInvoice.unallocated_amount).toBe(80)
+    expect(wrapper.vm.reconciliation.candidates[0].unallocated_amount).toBe(60)
+    wrapper.unmount()
   })
 
   it('adds and removes allocations then reloads reconciliation and invoice rows', async () => {

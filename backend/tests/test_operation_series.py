@@ -1,6 +1,6 @@
 import unittest
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.services.operation_series import build_confirmed_daily_series
@@ -20,6 +20,24 @@ class Row:
 
 
 class OperationSeriesTests(unittest.TestCase):
+    def test_tiny_signed_amounts_preserve_cents_and_partial_day_analysis(self):
+        from app.services.operation_analysis import AnalysisFilters, DateRange, analyze
+        for sign in (Decimal(1), Decimal(-1)):
+            for business in ("ticket", "hotel"):
+                row = Row(period_start=date(2026, 10, 1), period_end=date(2026, 10, 4),
+                          jinying_amount=sign * Decimal("0.02"), hexiao_amount=sign * Decimal("0.01"))
+                points, issues = build_confirmed_daily_series([row] if business == "ticket" else [],
+                                                             [row] if business == "hotel" else [])
+                self.assertEqual(issues, [])
+                self.assertEqual(sum(p.settlement_amount for p in points), row.jinying_amount)
+                self.assertEqual(sum(p.writeoff_amount for p in points), row.hexiao_amount)
+                for offset in range(4):
+                    day = row.period_start + timedelta(days=offset)
+                    result = analyze(points, DateRange(day, day), AnalysisFilters())
+                    self.assertGreaterEqual(result.summary.settlement_amount * sign, 0)
+                    self.assertGreaterEqual(result.summary.writeoff_amount * sign, 0)
+                    self.assertLessEqual(abs(result.summary.settlement_amount), abs(row.jinying_amount))
+
     def test_confirmed_three_day_period_is_split_without_losing_totals(self):
         points, issues = build_confirmed_daily_series([Row(
             period_start=date(2026, 10, 1), period_end=date(2026, 10, 3),

@@ -205,7 +205,7 @@ def _complete_current_task(
 def _approved_contract(db: Session, contract_id: int, current_user: User) -> Contract:
     try:
         return eligible_contract_for_user(
-            db, current_user, contract_id, for_update=True
+            db, current_user, contract_id, for_update=True, require_complete_context=True
         )
     except ContractEligibilityError:
         raise HTTPException(status_code=422, detail="请选择已审批合同")

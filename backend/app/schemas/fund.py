@@ -73,6 +73,8 @@ class FundTransactionOut(FundTransactionInput):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    allocated_amount: Decimal = Decimal("0.00")
+    unallocated_amount: Decimal = Decimal("0.00")
     settlement_status: str = "open"
     settled_on: date | None = None
     created_by: int | None = None

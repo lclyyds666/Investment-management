@@ -1,5 +1,6 @@
 """Fund transaction ledger endpoints."""
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -27,6 +28,7 @@ from app.schemas.cash_execution import CashExecutionIn, CashExecutionTaskOut
 from app.services.assignment_permissions import PermissionContext
 from app.services.cash_execution import CashExecutionError, execute_task
 from app.services.contract_eligibility import eligible_contracts_for_user
+from app.services.invoice_reconciliation import allocated_from_fund, money
 from app.services.fund import (
     BUSINESS_CATEGORIES, FundIntegrityError, locked_fund, has_allocations,
     validate_fund_edit, associate_legacy_fund,
@@ -46,9 +48,13 @@ _view_guard = require_permission("supply.finance.view", _supply_context)
 _update_guard = require_permission("supply.finance.update", _supply_context)
 
 
-def _out(row: FundTransaction, today: date | None = None) -> FundTransactionOut:
+def _out(row: FundTransaction, today: date | None = None, *, allocated: Decimal = Decimal("0.00")) -> FundTransactionOut:
     output = FundTransactionOut.model_validate(row)
-    return output.model_copy(update={"maturity_status": maturity_state(row, today or date.today())})
+    return output.model_copy(update={
+        "maturity_status": maturity_state(row, today or date.today()),
+        "allocated_amount": money(allocated),
+        "unallocated_amount": max(money(row.amount) - money(allocated), Decimal("0.00")),
+    })
 
 
 @router.get("", response_model=Response[dict], summary="资金流水台账")
@@ -120,7 +126,12 @@ def list_funds(
         page_rows = db.scalars(
             ordered_statement.offset((page - 1) * page_size).limit(page_size)
         ).all()
-    items = [_out(row, today) for row in page_rows]
+    allocated = dict(db.execute(
+        select(InvoiceFundAllocation.fund_transaction_id, func.sum(InvoiceFundAllocation.amount))
+        .where(InvoiceFundAllocation.fund_transaction_id.in_([row.id for row in page_rows]))
+        .group_by(InvoiceFundAllocation.fund_transaction_id)
+    ).all()) if page_rows else {}
+    items = [_out(row, today, allocated=allocated.get(row.id, Decimal("0.00"))) for row in page_rows]
     return Response.ok({"items": items, "total": total, "page": page, "page_size": page_size})
 
 
@@ -249,7 +260,7 @@ def update_fund(
         setattr(row, field, value)
     db.commit()
     db.refresh(row)
-    return Response.ok(_out(row), message="资金流水已更新")
+    return Response.ok(_out(row, allocated=allocated_from_fund(db, row.id)), message="资金流水已更新")
 
 
 @router.delete("/{fund_id}", response_model=Response[dict], summary="删除资金流水")
@@ -291,7 +302,7 @@ def settle_fund(
     row.settled_on = settled_on
     db.commit()
     db.refresh(row)
-    return Response.ok(_out(row), message="资金已结清")
+    return Response.ok(_out(row, allocated=allocated_from_fund(db, row.id)), message="资金已结清")
 
 
 @router.get("/legacy-contracts", response_model=Response[list[dict]])
@@ -322,4 +333,4 @@ def link_legacy_fund(
         raise HTTPException(status_code=409, detail=str(error)) from error
     db.commit()
     db.refresh(row)
-    return Response.ok(_out(row))
+    return Response.ok(_out(row, allocated=allocated_from_fund(db, row.id)))

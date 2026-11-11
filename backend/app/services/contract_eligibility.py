@@ -46,6 +46,7 @@ def eligible_contract_for_user(
     scenic_id: str | None = None,
     source_kind: InvoiceSourceKind | None = None,
     for_update: bool = False,
+    require_complete_context: bool = False,
 ) -> Contract:
     statement = select(Contract).where(
         Contract.id == contract_id,
@@ -57,6 +58,12 @@ def eligible_contract_for_user(
     contract = db.scalar(statement.execution_options(populate_existing=True))
     if contract is None:
         raise ContractEligibilityError("contract_not_approved")
+    if require_complete_context and (
+        not (contract.scenic_id or "").strip()
+        or not contract.business_scopes
+        or not set(contract.business_scopes) <= {"ticket", "hotel"}
+    ):
+        raise ContractEligibilityError("contract_context_incomplete")
     if scenic_id is not None and contract.scenic_id != scenic_id:
         raise ContractEligibilityError("contract_scenic_mismatch")
     if (

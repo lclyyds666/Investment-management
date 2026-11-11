@@ -91,18 +91,18 @@ def _weighted_recent(periods: list[Decimal | None]) -> Decimal | None:
 def _bounded_trend(periods: list[Decimal | None], recent: Decimal | None) -> Decimal | None:
     if recent is None:
         return None
-    complete = [value for value in reversed(periods[:6]) if value is not None]
-    if len(complete) < 3:
+    samples = [(index, value) for index, value in enumerate(reversed(periods[:6])) if value is not None]
+    if len(samples) < 3:
         return None
-    count = Decimal(len(complete))
-    x_mean = Decimal(len(complete) - 1) / Decimal("2")
-    y_mean = sum(complete, Decimal("0")) / count
+    count = Decimal(len(samples))
+    x_mean = sum((Decimal(index) for index, _ in samples), Decimal("0")) / count
+    y_mean = sum((value for _, value in samples), Decimal("0")) / count
     numerator = sum(
         (Decimal(index) - x_mean) * (value - y_mean)
-        for index, value in enumerate(complete)
+        for index, value in samples
     )
-    denominator = sum((Decimal(index) - x_mean) ** 2 for index in range(len(complete)))
-    projected = y_mean + (numerator / denominator) * Decimal(len(complete))
+    denominator = sum((Decimal(index) - x_mean) ** 2 for index, _ in samples)
+    projected = y_mean + (numerator / denominator) * (Decimal(len(periods[:6])) - x_mean)
     return min(max(projected, recent * Decimal("0.50")), recent * Decimal("2.00"))
 
 

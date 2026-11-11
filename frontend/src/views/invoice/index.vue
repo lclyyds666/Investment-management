@@ -32,7 +32,7 @@
       </template>
       <template #actions="{ row }">
         <template v-if="row">
-          <el-button v-if="canManage" size="small" type="warning" link @click="openReconciliation(row)">收付款核销</el-button>
+          <el-button v-if="canReconcile" size="small" type="warning" link @click="openReconciliation(row)">收付款核销</el-button>
           <el-button v-if="canManage" size="small" type="primary" link :icon="Edit" @click="openEdit(row)">编辑</el-button>
           <el-button v-if="canManage" size="small" type="success" link :icon="Upload" @click="chooseFiles(row)">上传发票</el-button>
           <template v-if="row.direction === 'output'">
@@ -117,14 +117,14 @@
       </el-descriptions>
       <el-form :model="allocationForm" inline class="allocation-form">
         <el-form-item label="资金流水">
-          <el-select v-model="allocationForm.fund_transaction_id" filterable placeholder="选择可核销流水" style="width: 360px">
+          <el-select v-model="allocationForm.fund_transaction_id" filterable placeholder="选择可核销流水" style="width: 420px" @change="onAllocationFundChange">
             <el-option v-for="fund in reconciliation.candidates" :key="fund.id" :value="fund.id" :label="fundOptionLabel(fund)" />
           </el-select>
         </el-form-item>
         <el-form-item label="核销金额">
-          <el-input-number v-model="allocationForm.amount" :min="0.01" :precision="2" />
+          <el-input-number v-model="allocationForm.amount" :min="0.01" :max="allocationLimit" :precision="2" />
         </el-form-item>
-        <el-button type="primary" :disabled="!allocationForm.fund_transaction_id || !allocationForm.amount" @click="addAllocation">添加核销</el-button>
+        <el-button type="primary" :disabled="!canReconcile || !allocationForm.fund_transaction_id || !allocationForm.amount || allocationForm.amount > allocationLimit" @click="addAllocation">添加核销</el-button>
       </el-form>
       <el-table :data="reconciliation.allocations" border stripe>
         <el-table-column prop="fund_occurred_on" label="流水日期" width="110" />
@@ -164,6 +164,8 @@ import ProTable from '@/components/ProTable.vue'
 const portalStore = usePortalStore()
 const canView = computed(() => canUsePermission(portalStore, 'supply.invoice.view'))
 const canManage = computed(() => canUsePermission(portalStore, 'supply.invoice.manage'))
+const canReconcile = computed(() => canUsePermission(portalStore, 'supply.finance.view')
+  && canUsePermission(portalStore, 'supply.finance.update'))
 const route = useRoute()
 const activeDirection = ref(route.query.direction === 'output' ? 'output' : 'input')
 const tableRef = ref()
@@ -215,27 +217,39 @@ const reconciliationVisible = ref(false)
 const currentInvoice = ref(null)
 const reconciliation = reactive({ allocations: [], candidates: [] })
 const allocationForm = reactive({ fund_transaction_id: null, amount: null })
+const allocationLimit = computed(() => {
+  const fund = reconciliation.candidates.find(row => row.id === allocationForm.fund_transaction_id)
+  return Math.min(Number(currentInvoice.value?.unallocated_amount ?? currentInvoice.value?.amount ?? 0),
+    Number(fund?.unallocated_amount ?? 0))
+})
+function onAllocationFundChange() {
+  allocationForm.amount = allocationLimit.value
+}
 function fundOptionLabel(fund) {
-  return `${fund.occurred_on || ''} ${fund.counterparty || fund.summary || ''} ¥${money(fund.amount)}`
+  return `${fund.occurred_on || ''} ${fund.counterparty || fund.summary || ''} 总额 ¥${money(fund.amount)} / 可核销 ¥${money(fund.unallocated_amount)}`
 }
 async function openReconciliation(invoice) {
+  if (!canReconcile.value) return
   currentInvoice.value = invoice
-  const [allocations, candidates] = await Promise.all([
+  const [allocations, candidates, invoices] = await Promise.all([
     listInvoiceAllocations(invoice.id),
     listFunds({
       contract_id: invoice.contract_id,
       direction: invoice.direction === 'input' ? 'usage' : 'increase',
       unallocated_only: true,
       page_size: 200
-    })
+    }),
+    listInvoices({ include_legacy: true, contract_id: invoice.contract_id })
   ])
+  currentInvoice.value = invoices.find(row => row.id === invoice.id) || invoice
   reconciliation.allocations = Array.isArray(allocations) ? allocations : (allocations?.items || [])
   reconciliation.candidates = Array.isArray(candidates) ? candidates : (candidates?.items || [])
   allocationForm.fund_transaction_id = null
-  allocationForm.amount = Number(invoice.unallocated_amount || invoice.amount || 0)
+  allocationForm.amount = Number(currentInvoice.value.unallocated_amount ?? currentInvoice.value.amount ?? 0)
   reconciliationVisible.value = true
 }
 async function addAllocation() {
+  if (!canReconcile.value) return
   await createInvoiceAllocation(currentInvoice.value.id, {
     fund_transaction_id: allocationForm.fund_transaction_id,
     amount: allocationForm.amount
@@ -244,6 +258,7 @@ async function addAllocation() {
   reload()
 }
 async function removeAllocation(allocation) {
+  if (!canReconcile.value) return
   await deleteInvoiceAllocation(currentInvoice.value.id, allocation.id)
   await openReconciliation(currentInvoice.value)
   reload()

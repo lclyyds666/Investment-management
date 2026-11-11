@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.main import create_app
+from app.models.cash_execution import InvoiceFundAllocation
 from app.models.fund import FundTransaction
 
 
@@ -309,6 +310,7 @@ class FundListDatabasePaginationTest(unittest.TestCase):
             poolclass=StaticPool,
         )
         FundTransaction.__table__.create(self.engine)
+        InvoiceFundAllocation.__table__.create(self.engine)
         self.db = Session(self.engine)
         self.executed_sql = []
         event.listen(
@@ -428,6 +430,14 @@ class FundListDatabasePaginationTest(unittest.TestCase):
             ),
             normalized_sql,
         )
+        allocation_queries = [statement for statement in normalized_sql if "from biz_invoice_fund_allocation" in statement]
+        self.assertEqual(len(allocation_queries), 1, normalized_sql)
+        self.assertIn("group by", allocation_queries[0])
+        self.executed_sql.clear()
+        first_page = self.client.get("/api/v1/funds", params={"direction": "usage", "page_size": 2})
+        self.assertEqual(first_page.status_code, 200, first_page.text)
+        self.assertEqual([item["id"] for item in first_page.json()["data"]["items"]], [6, 4])
+        self.assertEqual(sum("FROM biz_invoice_fund_allocation" in statement for statement in self.executed_sql), 1)
 
     def test_core_filters_run_through_http_and_preserve_sorting_and_totals(self):
         cases = (

@@ -24,7 +24,7 @@ from app.models.contract import Contract
 from app.models.cash_execution import InvoiceFundAllocation
 from app.models.fund import FundTransaction
 from app.models.invoice import Invoice, InvoiceAttachment, InvoiceDetail
-from app.models.organization import Organization, Position, UserAssignment
+from app.models.organization import Organization, Permission, Position, PositionPermission, UserAssignment
 from app.models.user import User
 from app.schemas.invoice import InvoiceCreate, InvoiceUpdate
 from app.api.v1.endpoints.invoice import update_invoice
@@ -72,6 +72,7 @@ def invoice_api(monkeypatch):
         "handler": add_user("handler", "supply.business_handler"),
         "reviewer": add_user("reviewer", "supply.business_reviewer"),
         "governance": add_user("governance", "governance.supply_leader"),
+        "finance": add_user("finance", "supply.finance_handler"),
     }
     invoice = Invoice(
         invoice_title="景区销项发票",
@@ -164,6 +165,52 @@ def test_invoice_permissions_are_separated(invoice_api):
         f"/api/v1/invoices/{invoice.id}/attachments",
         files=[("files", ("invoice.pdf", b"%PDF-x", "application/pdf"))],
     ).status_code == 403
+
+
+def test_allocation_details_require_invoice_and_finance_visibility(invoice_api):
+    db, client, current, users, invoice, _, _, _ = invoice_api
+    fund = FundTransaction(direction="increase", category="customer_payment", amount=100,
+                           occurred_on=date(2026, 10, 1), bank_reference="SECRET-BANK",
+                           counterparty="SECRET-CUSTOMER", summary="SECRET-SUMMARY")
+    db.add(fund)
+    db.flush()
+    db.add(InvoiceFundAllocation(invoice_id=invoice.id, fund_transaction_id=fund.id,
+                                 amount=40, allocated_by=users["finance"].id))
+    db.commit()
+    for role in ("handler", "reviewer", "governance"):
+        # Model an invoice-visible assignment with finance visibility removed.
+        assignment = db.scalar(select(UserAssignment).where(UserAssignment.user_id == users[role].id))
+        finance_view = db.scalar(select(Permission.id).where(Permission.code == "supply.finance.view"))
+        for grant in db.scalars(select(PositionPermission).where(
+            PositionPermission.position_id == assignment.position_id,
+            PositionPermission.permission_id == finance_view,
+        )).all():
+            db.delete(grant)
+        db.commit()
+        current["user"] = users[role]
+        assert client.get("/api/v1/invoices").status_code == 200
+        assert client.get("/api/v1/funds").status_code == 403
+        response = client.get(f"/api/v1/invoices/{invoice.id}/allocations")
+        assert response.status_code == 403, response.text
+        assert "SECRET" not in response.text
+    current["user"] = users["finance"]
+    response = client.get(f"/api/v1/invoices/{invoice.id}/allocations")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["fund_bank_reference"] == "SECRET-BANK"
+    created = client.post(f"/api/v1/invoices/{invoice.id}/allocations",
+                          json={"fund_transaction_id": fund.id, "amount": "20"})
+    assert created.status_code == 200, created.text
+    assert client.delete(f"/api/v1/invoices/{invoice.id}/allocations/{created.json()['data']['id']}").status_code == 200
+    assignment = db.scalar(select(UserAssignment).where(UserAssignment.user_id == users["finance"].id))
+    invoice_view = db.scalar(select(Permission.id).where(Permission.code == "supply.invoice.view"))
+    for grant in db.scalars(select(PositionPermission).where(
+        PositionPermission.position_id == assignment.position_id,
+        PositionPermission.permission_id == invoice_view,
+    )).all():
+        db.delete(grant)
+    db.commit()
+    assert client.get("/api/v1/funds").status_code == 200
+    assert client.get(f"/api/v1/invoices/{invoice.id}/allocations").status_code == 403
 
 
 def test_list_filters_and_global_stats_remain_compatible(invoice_api):

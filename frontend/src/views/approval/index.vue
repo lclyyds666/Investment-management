@@ -396,7 +396,9 @@ const approvedContracts = ref([])
 async function loadApprovedContracts() {
   try {
     const contracts = await listContracts({ status: 'approved', page_size: 200 })
-    approvedContracts.value = contracts.filter((item) => item.status === 'approved')
+    approvedContracts.value = contracts.filter((item) => item.status === 'approved'
+      && item.scenic_id?.trim() && item.business_scopes?.length
+      && item.business_scopes.every(scope => ['ticket', 'hotel'].includes(scope)))
   } catch {
     approvedContracts.value = []
   }

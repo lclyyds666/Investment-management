@@ -1697,6 +1697,33 @@ class ApprovalFormApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(response.json()["detail"], "请选择已审批合同")
 
+    def test_new_and_changed_approval_contracts_require_complete_context(self):
+        for scenic, scopes in ((None, ["ticket"]), ("", ["ticket"]),
+                               ("scenic-1", []), ("scenic-1", ["unknown"])):
+            with self.subTest(scenic=scenic, scopes=scopes):
+                self.draft_contract.status = ContractStatus.APPROVED
+                self.draft_contract.scenic_id = scenic
+                self.draft_contract.business_scopes = scopes
+                self.db.commit()
+                for form_type in ("payment", "business"):
+                    created = self.client.post("/api/v1/approval-forms", json={
+                        "form_type": form_type, "contract_id": self.draft_contract.id, "amount": "100"})
+                    self.assertEqual(created.status_code, 422, created.text)
+                changed = self.client.put(f"/api/v1/approval-forms/{self.payment.id}",
+                                          json={"contract_id": self.draft_contract.id})
+                self.assertEqual(changed.status_code, 422, changed.text)
+        self.db.refresh(self.payment)
+        self.assertEqual(self.payment.contract_id, self.approved_contract.id)
+        # Previously linked historical snapshots remain readable and editable.
+        self.approved_contract.scenic_id = None
+        self.approved_contract.business_scopes = []
+        self.db.commit()
+        viewed = self.client.get(f"/api/v1/approval-forms/{self.payment.id}")
+        self.assertEqual(viewed.status_code, 200, viewed.text)
+        edited = self.client.put(f"/api/v1/approval-forms/{self.payment.id}", json={"remark": "historic note"})
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertEqual(edited.json()["data"]["scenic_id"], "scenic-1")
+
     def test_payment_form_rejects_approved_contract_outside_user_scope(self):
         hidden = Contract(
             contract_no="HT-HIDDEN-SCOPE",

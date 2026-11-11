@@ -103,6 +103,12 @@
         <el-table-column label="金额（万元）" width="150" align="right">
           <template #default="{ row }"><span class="amount-cell">{{ formatAmount(row.amount) }}</span></template>
         </el-table-column>
+        <el-table-column label="已核销（元）" width="140" align="right">
+          <template #default="{ row }">{{ formatReconciliationAmount(row.allocated_amount) }}</template>
+        </el-table-column>
+        <el-table-column label="可核销（元）" width="140" align="right">
+          <template #default="{ row }">{{ formatReconciliationAmount(row.unallocated_amount) }}</template>
+        </el-table-column>
         <el-table-column prop="counterparty" label="对方单位" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.counterparty || '—' }}</template>
         </el-table-column>
@@ -417,6 +423,10 @@ const rules = {
 
 function formatAmount(value) {
   return formatWanFromYuan(value)
+}
+
+function formatReconciliationAmount(value) {
+  return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function directionLabel(direction) {

@@ -91,6 +91,15 @@ describe('fund management view', () => {
     expect(wrapper.vm.taskSource({ ...row, contract_id: 3 })).toContain('合同 #3')
   })
 
+  it('renders allocated and available fund balances in exact yuan', async () => {
+    fundApi.listFunds.mockResolvedValue({ items: [{ id: 1, amount: '100.00', allocated_amount: '40.00', unallocated_amount: '60.00' }], total: 1 })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.vm.formatReconciliationAmount(wrapper.vm.page.items[0].allocated_amount)).toBe('40.00')
+    expect(wrapper.vm.formatReconciliationAmount(wrapper.vm.page.items[0].unallocated_amount)).toBe('60.00')
+    wrapper.unmount()
+  })
+
   it('preserves execution bank evidence for descriptive corrections', async () => {
     const wrapper = mountView()
     await flushPromises()

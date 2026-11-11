@@ -60,7 +60,10 @@ describe('approval contract selection', () => {
     approvalApi.listForms.mockResolvedValue([])
     approvalApi.createForm.mockResolvedValue({ id: 15 })
     contractApi.listContracts.mockResolvedValue([
-      { id: 7, contract_no: 'HT-APPROVED', title: '已审批合同', status: 'approved', scenic_id: 'scenic-1', party_b: '客户甲' },
+      { id: 7, contract_no: 'HT-APPROVED', title: '已审批合同', status: 'approved', scenic_id: 'scenic-1', business_scopes: ['ticket'], party_b: '客户甲' },
+      { id: 9, status: 'approved', scenic_id: null, business_scopes: ['ticket'] },
+      { id: 10, status: 'approved', scenic_id: 'scenic-1', business_scopes: [] },
+      { id: 11, status: 'approved', scenic_id: 'scenic-1', business_scopes: ['unknown'] },
       { id: 8, contract_no: 'HT-DRAFT', title: '草稿合同', status: 'draft', scenic_id: 'scenic-2', party_b: '客户乙' }
     ])
   })

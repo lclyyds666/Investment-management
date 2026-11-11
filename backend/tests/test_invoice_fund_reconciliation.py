@@ -187,6 +187,25 @@ class InvoiceFundReconciliationApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["detail"]["code"], "direction_mismatch")
 
+    def test_fund_balances_refresh_after_allocation_and_removal(self):
+        def balance():
+            response = self.client.get("/api/v1/funds", params={"fund_id": self.fund.id})
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()["data"]["items"][0]
+
+        initial = balance()
+        self.assertEqual(Decimal(initial["allocated_amount"]), Decimal("0"))
+        self.assertEqual(Decimal(initial["unallocated_amount"]), Decimal("100"))
+        created = self.client.post(f"/api/v1/invoices/{self.invoice.id}/allocations",
+                                   json={"fund_transaction_id": self.fund.id, "amount": "40"})
+        self.assertEqual(created.status_code, 200, created.text)
+        partial = balance()
+        self.assertEqual(Decimal(partial["amount"]), Decimal("100"))
+        self.assertEqual(Decimal(partial["allocated_amount"]), Decimal("40"))
+        self.assertEqual(Decimal(partial["unallocated_amount"]), Decimal("60"))
+        self.client.delete(f"/api/v1/invoices/{self.invoice.id}/allocations/{created.json()['data']['id']}")
+        self.assertEqual(Decimal(balance()["unallocated_amount"]), Decimal("100"))
+
     def test_fund_candidates_filter_contract_direction_and_remaining(self):
         allocate(self.db, self.invoice.id, self.fund.id, Decimal("100.00"), actor_id=7)
         available = FundTransaction(
