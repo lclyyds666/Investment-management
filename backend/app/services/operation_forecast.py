@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR
 from itertools import product
 from statistics import pstdev
 
@@ -161,9 +161,21 @@ def _factor_rate(day: date, key: ForecastKey, factors) -> Decimal:
 
 
 def _split_money(total: Decimal, days: int) -> list[Decimal]:
-    unit = (total / Decimal(days)).quantize(MONEY, rounding=ROUND_HALF_UP)
-    values = [unit] * days
-    values[-1] += total - sum(values, Decimal("0"))
+    return _allocate_daily(total, [Decimal(1)] * days)
+
+
+def _allocate_daily(total: Decimal, weights: list[Decimal]) -> list[Decimal]:
+    """Apportion nonnegative cents without a potentially negative tail day."""
+    weight_total = sum(weights, Decimal(0))
+    if not weight_total:
+        weights = [Decimal(1)] * len(weights)
+        weight_total = Decimal(len(weights))
+    raw = [total * weight / weight_total for weight in weights]
+    values = [value.quantize(MONEY, rounding=ROUND_FLOOR) for value in raw]
+    remaining = int((total - sum(values, Decimal(0))) / MONEY)
+    priority = sorted(range(len(values)), key=lambda i: (-(raw[i] - values[i]), i))
+    for index in priority[:remaining]:
+        values[index] += MONEY
     return values
 
 
@@ -199,7 +211,7 @@ def _calendar_profile(totals, request):
     return [value / historical_mean for value in means]
 
 
-def _contributions(series, request, key, daily, rates):
+def _contributions(request, key, daily, rates):
     raw = [Decimal(0) for _ in request.factors]
     for offset, value in enumerate(daily):
         day = request.start_date + timedelta(days=offset)
@@ -291,10 +303,7 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
         calendar.update(weekday_factor=str(adjusted / baseline if baseline else Decimal(1)),
                         adjustment=str(adjusted - baseline), weekday_weights=[str(value) for value in profile])
         baseline = adjusted
-        weight_total = sum(weights, Decimal(0))
-        daily_baseline = [(baseline * weight / weight_total).quantize(MONEY, rounding=ROUND_HALF_UP)
-                          for weight in weights] if weight_total else _split_money(baseline, days)
-        daily_baseline[-1] += baseline - sum(daily_baseline, Decimal(0))
+        daily_baseline = _allocate_daily(baseline, weights)
     else:
         reasons.append("weekday_history_insufficient: 星期样本不足，未作日历调整")
     rates = [
@@ -321,7 +330,7 @@ def _forecast_line(series, request: ForecastRequest, key: ForecastKey) -> Foreca
     if coverage < Decimal("0.75"):
         confidence = "low"
         reasons.append("missing_history_dates: 最近12周期日期覆盖不足75%")
-    raw = _contributions(series, request, key, daily_baseline, rates)
+    raw = _contributions(request, key, daily_baseline, rates)
     contributions = _rounded_contributions(raw, forecast_value - baseline, MONEY)
     spread = sigma * Decimal("1.96")
     return ForecastLine(

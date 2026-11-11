@@ -150,7 +150,7 @@ def _build_contributions(current_points, previous_points, current_total: Decimal
     return sorted(contributions, key=lambda item: (item.dimension, -abs(item.settlement_change), item.value))
 
 
-def _detect_anomalies(points, period, filters, current, previous, mom_rate):
+def _detect_anomalies(points, period, filters, current, previous, mom_rate, financial_rows=None):
     anomalies = []
     for metric in METRICS:
         rate = mom_rate[metric]
@@ -167,7 +167,10 @@ def _detect_anomalies(points, period, filters, current, previous, mom_rate):
         for index in range(1, 7):
             comparison_range = period.shift(days=-period.days * index)
             comparison_points = _filter_points(points, comparison_range, filters)
-            if comparison_points:
+            if metric == "capital_occupation" and financial_rows is not None:
+                from app.services.operation_capital import capital_summary
+                historical.append(capital_summary(*financial_rows, comparison_range, filters)[0])
+            elif comparison_points:
                 historical.append(_metric(_aggregate(comparison_points), metric))
         if len(historical) == 6:
             mean = sum(historical, Decimal("0")) / Decimal(len(historical))
@@ -244,14 +247,33 @@ def analyze(points, date_range: DateRange, filters: AnalysisFilters, *, financia
         comparisons=comparisons,
         rankings=_build_rankings(current_points, current),
         contributions=_build_contributions(current_points, previous_points, current.settlement_amount),
-        anomalies=_detect_anomalies(points, date_range, filters, current, previous, mom_rates),
+        anomalies=_detect_anomalies(points, date_range, filters, current, previous, mom_rates, financial_rows),
         quality_issues=quality,
     )
     if financial_rows is not None:
+        existing = {(ranking.dimension, ranking.value) for ranking in result.rankings}
+        # Financial dimensions may carry principal without current operational activity.
+        for business, rows in zip(("ticket", "hotel"), financial_rows):
+            for row in rows:
+                if not row.confirmed:
+                    continue
+                for dimension, value in (("scenic_id", row.scenic_id), ("business_type", business), ("platform", row.platform)):
+                    if (dimension, value) in existing:
+                        continue
+                    values = dict(scenic_ids=filters.scenic_ids, business_types=filters.business_types, platforms=filters.platforms)
+                    field = {"scenic_id": "scenic_ids", "business_type": "business_types", "platform": "platforms"}[dimension]
+                    if values[field] and value not in values[field]:
+                        continue
+                    values[field] = [value]
+                    amount, days, _ = capital_summary(*financial_rows, date_range, AnalysisFilters(**values))
+                    if amount > 0 or days is not None:
+                        result.rankings.append(DimensionMetric(dimension=dimension, value=value, summary=OperationMetricSummary()))
+                        existing.add((dimension, value))
         for trend in result.trends:
             trend.capital_occupation, trend.capital_occupation_days, _ = capital_summary(*financial_rows, DateRange(trend.day, trend.day), filters)
         for ranking in result.rankings:
             values = dict(scenic_ids=filters.scenic_ids, business_types=filters.business_types, platforms=filters.platforms)
             values[{"scenic_id": "scenic_ids", "business_type": "business_types", "platform": "platforms"}[ranking.dimension]] = [ranking.value]
             ranking.summary.capital_occupation, ranking.summary.capital_occupation_days, _ = capital_summary(*financial_rows, date_range, AnalysisFilters(**values))
+        result.rankings.sort(key=lambda item: (item.dimension, -item.summary.settlement_amount, item.value))
     return result

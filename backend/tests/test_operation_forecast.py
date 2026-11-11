@@ -32,6 +32,19 @@ def request(**changes):
 
 
 class OperationForecastTests(unittest.TestCase):
+    def test_tiny_calendar_baseline_is_preserved_without_negative_daily_tail(self):
+        from app.services.operation_forecast import _allocate_daily
+        start = date(2026, 7, 1)
+        points = [point(start-timedelta(days=i+1), "0.01" if (i % 7 + i // 7) % 7 < 4 else "0") for i in range(84)]
+        line = forecast(points, request(end_date=start+timedelta(days=6))).lines[0]
+        self.assertEqual(line.baseline, Decimal("0.04"))
+        self.assertEqual(line.forecast, line.baseline)
+        self.assertEqual(line.factor_adjustment, 0)
+        self.assertEqual(line.factor_contributions, [])
+        allocated = _allocate_daily(Decimal("0.04"), [Decimal(1)] * 7)
+        self.assertEqual(sum(allocated), Decimal("0.04"))
+        self.assertTrue(all(value >= 0 for value in allocated))
+
     def test_forecast_normalizes_weights_when_same_period_is_missing(self):
         points = period_points(date(2026, 6, 30), ["30", "24", "18", "12", "6", "3"])
         line = forecast(points, request()).lines[0]
